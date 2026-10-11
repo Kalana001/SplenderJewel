@@ -217,7 +217,8 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
     const newOrder = newOrderRaw as { id: string; order_number: string; order_token: string } | null;
 
     if (orderInsertError || !newOrder) {
-      return { success: false, error: `Order creation failed: ${orderInsertError?.message || 'Database error'}` };
+      console.error('[OrderCreation] Database failed to insert order:', orderInsertError?.message || 'Unknown database error');
+      return { success: false, error: 'Unable to process your order at this time. Please check your details and try again.' };
     }
 
     // 6. Insert order items
@@ -238,7 +239,8 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       .insert(orderItemsPayload);
 
     if (itemsInsertError) {
-      return { success: false, error: `Failed to save order line items: ${itemsInsertError.message}` };
+      console.error('[OrderCreation] Database failed to insert order items for order ID:', newOrder.id, itemsInsertError.message);
+      return { success: false, error: 'Unable to finalize order line items. Please try again.' };
     }
 
     // 7. Insert initial status history
@@ -267,9 +269,10 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       orderToken: newOrder.order_token,
     };
   } catch (err: unknown) {
+    console.error('[OrderCreation] Unexpected server error processing order:', err instanceof Error ? err.message : err);
     return {
       success: false,
-      error: err instanceof Error ? err.message : 'An unexpected error occurred while processing your order.',
+      error: 'An unexpected error occurred while processing your order. Please try again later.',
     };
   }
 }
@@ -326,7 +329,6 @@ export async function getGuestOrderConfirmation(
         payment_status,
         order_status,
         tracking_number,
-        admin_notes,
         created_at,
         updated_at
       `)
@@ -357,6 +359,7 @@ export async function getGuestOrderConfirmation(
       .eq('order_id', orderRow.id);
 
     if (itemsError) {
+      console.error('[GuestOrderConfirmation] Database failed to retrieve order items:', itemsError.message);
       return { success: false, error: 'Failed to retrieve order line items.' };
     }
 
@@ -380,9 +383,10 @@ export async function getGuestOrderConfirmation(
       order,
     };
   } catch (err: unknown) {
+    console.error('[GuestOrderConfirmation] Unexpected server error retrieving order confirmation:', err instanceof Error ? err.message : err);
     return {
       success: false,
-      error: err instanceof Error ? err.message : 'An unexpected error occurred while retrieving order confirmation.',
+      error: 'An unexpected error occurred while retrieving order confirmation.',
     };
   }
 }

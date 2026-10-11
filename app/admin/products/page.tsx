@@ -1,6 +1,7 @@
 import { getAdminProducts } from '@/lib/catalog/products';
 import { getPublicCategories } from '@/lib/catalog/categories';
 import { ProductsList } from '@/components/admin/products-list';
+import { requireAdminPageAuth } from '@/lib/auth/server';
 
 export const metadata = {
   title: 'Products & Variants | Splender Jewel Admin',
@@ -8,6 +9,8 @@ export const metadata = {
 };
 
 export default async function AdminProductsPage() {
+  await requireAdminPageAuth();
+
   const [productsRes, categories] = await Promise.all([
     getAdminProducts(),
     getPublicCategories(),

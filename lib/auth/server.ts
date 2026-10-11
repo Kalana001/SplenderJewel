@@ -109,6 +109,24 @@ export async function getAdminUser(): Promise<AdminUser | null> {
   };
 }
 
+import { redirect } from 'next/navigation';
+
+/**
+ * Structured Admin Authorization Error distinguishing unauthenticated vs forbidden access.
+ */
+export class AdminAuthError extends Error {
+  readonly code: 'UNAUTHENTICATED' | 'FORBIDDEN';
+
+  constructor(
+    message = 'Unauthorized: Administrative credentials and active admin role are required.',
+    code: 'UNAUTHENTICATED' | 'FORBIDDEN' = 'FORBIDDEN'
+  ) {
+    super(message);
+    this.name = 'AdminAuthError';
+    this.code = code;
+  }
+}
+
 /**
  * Throws or redirects if caller is not an authenticated customer.
  */
@@ -121,12 +139,40 @@ export async function requireCustomerAuth(): Promise<UserProfile> {
 }
 
 /**
- * Throws or redirects if caller is not an authorized administrator.
+ * Throws a clean AdminAuthError if caller is not an authorized administrator.
+ * Distinguishes unauthenticated from forbidden (inactive or non-admin customer).
+ * Used by privileged server actions and mutations.
  */
 export async function requireAdminAuth(): Promise<AdminUser> {
+  const user = await getCurrentUser();
+  if (!user) {
+    throw new AdminAuthError('Authentication required. Please sign in as an administrator.', 'UNAUTHENTICATED');
+  }
+
   const admin = await getAdminUser();
   if (!admin) {
-    throw new Error('UNAUTHORIZED_ADMIN');
+    throw new AdminAuthError('Forbidden: Active administrative privileges are required.', 'FORBIDDEN');
   }
+
+  return admin;
+}
+
+/**
+ * Server-side authorization guard for protected Admin pages (Server Components).
+ * Evaluates `public.admin_users` table server-side.
+ * Redirects unauthenticated users cleanly to `/admin/login`, and ordinary customers to `/admin/login?error=unauthorized`.
+ * Prevents rendering of any protected admin UI or data.
+ */
+export async function requireAdminPageAuth(): Promise<AdminUser> {
+  const user = await getCurrentUser();
+  if (!user) {
+    redirect('/admin/login');
+  }
+
+  const admin = await getAdminUser();
+  if (!admin) {
+    redirect('/admin/login?error=unauthorized');
+  }
+
   return admin;
 }

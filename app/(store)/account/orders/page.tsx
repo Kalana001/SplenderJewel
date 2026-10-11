@@ -46,7 +46,26 @@ export default async function AccountOrdersPage() {
   }
 
   const { data: orders } = await (supabase.from('orders') as any)
-    .select('*')
+    .select(`
+      id,
+      order_number,
+      order_token,
+      user_id,
+      customer_name,
+      phone1,
+      address_line,
+      district,
+      city,
+      delivery_fee,
+      subtotal,
+      discount_amount,
+      total_amount,
+      payment_method,
+      payment_status,
+      order_status,
+      tracking_number,
+      created_at
+    `)
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
 
@@ -90,6 +109,9 @@ export default async function AccountOrdersPage() {
                 year: 'numeric',
               });
 
+              const status = (order.order_status || order.status || 'pending').toLowerCase();
+              const total = Number(order.total_amount ?? order.total ?? 0);
+
               return (
                 <Card
                   key={order.id}
@@ -102,8 +124,8 @@ export default async function AccountOrdersPage() {
                           <span className="font-mono text-sm font-bold text-foreground">
                             Order #{order.order_number}
                           </span>
-                          <Badge variant={getStatusBadgeVariant(order.status)}>
-                            {order.status.toUpperCase()}
+                          <Badge variant={getStatusBadgeVariant(status)}>
+                            {status.toUpperCase()}
                           </Badge>
                         </div>
                         <div className="flex items-center space-x-2 text-xs text-neutral-500 mt-1">
@@ -116,7 +138,7 @@ export default async function AccountOrdersPage() {
                         <div>
                           <div className="text-xs text-neutral-500">Total Amount</div>
                           <div className="font-semibold text-base sm:text-lg text-foreground">
-                            {formatCurrency(Number(order.total) || 0)}
+                            {formatCurrency(total)}
                           </div>
                         </div>
 

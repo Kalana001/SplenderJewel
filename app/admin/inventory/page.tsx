@@ -1,5 +1,6 @@
 import { getAdminInventoryVariants } from '@/lib/catalog/variants';
 import { InventoryManager } from '@/components/admin/inventory-manager';
+import { requireAdminPageAuth } from '@/lib/auth/server';
 
 export const metadata = {
   title: 'Inventory Control | Splender Jewel Admin',
@@ -7,6 +8,8 @@ export const metadata = {
 };
 
 export default async function AdminInventoryPage() {
+  await requireAdminPageAuth();
+
   const result = await getAdminInventoryVariants();
   const variants = result.success ? result.variants : [];
 

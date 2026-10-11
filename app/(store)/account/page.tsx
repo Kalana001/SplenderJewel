@@ -63,9 +63,15 @@ export default async function AccountDashboardPage() {
     .eq('id', user.id)
     .maybeSingle();
 
-  // Fetch orders overview
+  // Fetch orders overview with safe column projection omitting admin_notes
   const { data: recentOrders, count: totalOrders } = await (supabase.from('orders') as any)
-    .select('*', { count: 'exact' })
+    .select(`
+      id,
+      order_number,
+      order_status,
+      total_amount,
+      created_at
+    `, { count: 'exact' })
     .eq('user_id', user.id)
     .order('created_at', { ascending: false })
     .limit(3);
@@ -257,8 +263,8 @@ export default async function AccountDashboardPage() {
                       <span className="font-mono text-xs font-semibold text-foreground">
                         #{order.order_number}
                       </span>
-                      <Badge variant={getStatusBadgeVariant(order.status)}>
-                        {order.status.toUpperCase()}
+                      <Badge variant={getStatusBadgeVariant(order.order_status || order.status || 'pending')}>
+                        {(order.order_status || order.status || 'pending').toUpperCase()}
                       </Badge>
                     </div>
                     <div className="flex items-center space-x-3 text-xs text-neutral-500">
@@ -272,7 +278,7 @@ export default async function AccountDashboardPage() {
                       </span>
                       <span>&bull;</span>
                       <span className="font-medium text-foreground">
-                        {formatCurrency(Number(order.total) || 0)}
+                        {formatCurrency(Number(order.total_amount ?? order.total ?? 0))}
                       </span>
                     </div>
                   </div>

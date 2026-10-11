@@ -1,5 +1,6 @@
 import { getAdminCategories } from '@/lib/catalog/categories';
 import { CategoriesManager } from '@/components/admin/categories-manager';
+import { requireAdminPageAuth } from '@/lib/auth/server';
 
 export const metadata = {
   title: 'Category Management | Splender Jewel Admin',
@@ -7,6 +8,8 @@ export const metadata = {
 };
 
 export default async function AdminCategoriesPage() {
+  await requireAdminPageAuth();
+
   const result = await getAdminCategories();
   const categories = result.success ? result.categories : [];
 

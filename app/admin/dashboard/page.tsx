@@ -12,8 +12,11 @@ import {
   Tag,
   ArrowRight,
 } from 'lucide-react';
+import { requireAdminPageAuth } from '@/lib/auth/server';
 
-export default function AdminDashboardPage() {
+export default async function AdminDashboardPage() {
+  await requireAdminPageAuth();
+
   const adminModules = [
     {
       title: 'Order Management',

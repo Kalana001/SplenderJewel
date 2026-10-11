@@ -1,5 +1,6 @@
 import { getPublicCategories } from '@/lib/catalog/categories';
 import { ProductForm } from '@/components/admin/product-form';
+import { requireAdminPageAuth } from '@/lib/auth/server';
 
 export const metadata = {
   title: 'New Product | Splender Jewel Admin',
@@ -7,6 +8,8 @@ export const metadata = {
 };
 
 export default async function AdminNewProductPage() {
+  await requireAdminPageAuth();
+
   const categories = await getPublicCategories();
 
   return (

@@ -75,7 +75,7 @@ export interface OrderDbRow {
   payment_status: PaymentStatus;
   order_status: OrderStatus;
   tracking_number: string | null;
-  admin_notes: string | null;
+  admin_notes?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -136,7 +136,7 @@ export function mapDbOrderToDomain(row: OrderDbRow, items: OrderItem[] = []): Or
     couponCode: row.coupon_code,
     totalAmount: row.total_amount,
     trackingNumber: row.tracking_number,
-    adminNotes: row.admin_notes,
+    adminNotes: row.admin_notes ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

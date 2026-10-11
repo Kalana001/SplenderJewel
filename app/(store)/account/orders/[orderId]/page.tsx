@@ -45,9 +45,47 @@ export default async function AccountOrderDetailPage({ params }: AccountOrderDet
     redirect(`/login?redirectTo=/account/orders/${orderId}`);
   }
 
-  // Strictly enforce customer ownership: query by order id AND user_id
+  // Strictly enforce customer ownership: query by order id AND user_id with safe column projection
   const { data: order, error } = await (supabase.from('orders') as any)
-    .select('*, order_items(*)')
+    .select(`
+      id,
+      order_number,
+      order_token,
+      user_id,
+      customer_name,
+      email,
+      phone1,
+      phone2,
+      address_line,
+      city,
+      district,
+      province,
+      postal_code,
+      delivery_notes,
+      delivery_fee,
+      subtotal,
+      discount_amount,
+      coupon_code,
+      total_amount,
+      payment_method,
+      payment_status,
+      order_status,
+      tracking_number,
+      created_at,
+      updated_at,
+      order_items (
+        id,
+        order_id,
+        product_id,
+        variant_id,
+        product_name,
+        variant_title,
+        sku,
+        unit_price,
+        quantity,
+        total_price
+      )
+    `)
     .eq('id', orderId)
     .eq('user_id', user.id)
     .maybeSingle();
@@ -62,6 +100,10 @@ export default async function AccountOrderDetailPage({ params }: AccountOrderDet
     day: 'numeric',
     year: 'numeric',
   });
+
+  const currentStatus = (order.order_status || order.status || 'pending').toLowerCase();
+  const deliveryFee = Number(order.delivery_fee ?? order.shipping_fee ?? 0);
+  const grandTotal = Number(order.total_amount ?? order.total ?? 0);
 
   return (
     <div className="py-8 sm:py-12 bg-neutral-50/50 dark:bg-neutral-950/30 min-h-[80vh]">
@@ -84,8 +126,8 @@ export default async function AccountOrderDetailPage({ params }: AccountOrderDet
               <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
                 Order #{order.order_number}
               </h1>
-              <Badge variant={getStatusBadgeVariant(order.status)}>
-                {order.status.toUpperCase()}
+              <Badge variant={getStatusBadgeVariant(currentStatus)}>
+                {currentStatus.toUpperCase()}
               </Badge>
             </div>
             <div className="flex items-center space-x-2 text-xs text-neutral-500 mt-1">
@@ -190,10 +232,10 @@ export default async function AccountOrderDetailPage({ params }: AccountOrderDet
                 <div className="flex justify-between text-neutral-600 dark:text-neutral-400">
                   <span>Delivery Fee</span>
                   <span>
-                    {Number(order.shipping_fee) === 0 ? (
+                    {deliveryFee === 0 ? (
                       <span className="text-emerald-600 font-medium">Free</span>
                     ) : (
-                      formatCurrency(Number(order.shipping_fee) || 0)
+                      formatCurrency(deliveryFee)
                     )}
                   </span>
                 </div>
@@ -207,7 +249,7 @@ export default async function AccountOrderDetailPage({ params }: AccountOrderDet
 
                 <div className="pt-3 border-t border-neutral-200 dark:border-neutral-800 flex justify-between font-bold text-base text-foreground">
                   <span>Grand Total</span>
-                  <span>{formatCurrency(Number(order.total) || 0)}</span>
+                  <span>{formatCurrency(grandTotal)}</span>
                 </div>
 
                 <div className="pt-4 border-t border-neutral-100 dark:border-neutral-850">

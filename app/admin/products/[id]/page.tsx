@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { getAdminProductById } from '@/lib/catalog/products';
 import { getPublicCategories } from '@/lib/catalog/categories';
 import { ProductEditManager } from '@/components/admin/product-edit-manager';
+import { requireAdminPageAuth } from '@/lib/auth/server';
 
 export const metadata = {
   title: 'Edit Product | Splender Jewel Admin',
@@ -13,6 +14,8 @@ interface AdminEditProductPageProps {
 }
 
 export default async function AdminEditProductPage({ params }: AdminEditProductPageProps) {
+  await requireAdminPageAuth();
+
   const { id } = await params;
 
   const [productRes, categories] = await Promise.all([

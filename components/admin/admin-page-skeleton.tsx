@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Shield, ArrowRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
+import { requireAdminPageAuth } from '@/lib/auth/server';
+
 interface AdminPageSkeletonProps {
   title: string;
   category: string;
@@ -13,13 +15,15 @@ interface AdminPageSkeletonProps {
   capabilities?: string[];
 }
 
-export function AdminPageSkeleton({
+export async function AdminPageSkeleton({
   title,
   category,
   description,
   targetPhase = 'Phase 4 (Admin Panel Implementation)',
   capabilities = [],
 }: AdminPageSkeletonProps) {
+  await requireAdminPageAuth();
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-neutral-800">
