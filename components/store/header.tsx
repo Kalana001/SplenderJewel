@@ -2,10 +2,12 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { ShoppingBag, Search, User, Menu, X, Heart } from 'lucide-react';
 import { Container } from '@/components/ui/container';
 import { getStoreConfig, getInstagramLink } from '@/lib/config/store';
 import { InstagramIcon } from '@/components/icons/instagram';
+import { twMerge } from 'tailwind-merge';
 
 interface HeaderProps {
   logoUrl?: string | null;
@@ -13,6 +15,7 @@ interface HeaderProps {
 
 export function StoreHeader({ logoUrl }: HeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const pathname = usePathname();
   const config = getStoreConfig();
 
   const navLinks = [
@@ -27,72 +30,66 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
   ];
 
   return (
-    <header className="sticky top-0 z-40 w-full bg-luxury-black/95 text-white backdrop-blur-md border-b border-neutral-800">
+    <header className="sticky top-0 z-40 w-full bg-luxury-black/95 text-white backdrop-blur-md border-b border-neutral-850">
       {/* Optional Top Announcement Bar */}
       {config.announcementBanner?.enabled && (
-        <div className="bg-luxury-gold/20 text-luxury-gold-light text-xs text-center py-1.5 px-4 font-medium border-b border-luxury-gold/20">
+        <div className="bg-luxury-gold/15 text-luxury-gold-light text-xs text-center py-1.5 px-4 font-medium border-b border-luxury-gold/20 tracking-wider">
           {config.announcementBanner.text}
         </div>
       )}
 
-      {/* Main Centered Header Bar */}
+      {/* Main Header Bar */}
       <Container size="xl">
-        <div className="grid grid-cols-3 items-center py-3 sm:py-4">
-          {/* Left Column: Mobile Menu Toggle & Desktop Search Action */}
-          <div className="flex items-center space-x-2 sm:space-x-4">
+        <div className="relative flex items-center justify-between h-14 sm:h-16">
+          {/* Left: Mobile Menu Toggle & Search Action */}
+          <div className="flex items-center space-x-1 sm:space-x-2 z-10">
             <button
               type="button"
-              className="inline-flex lg:hidden p-2 text-neutral-300 hover:text-white"
+              className="inline-flex lg:hidden p-2 text-neutral-300 hover:text-white transition-colors"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               aria-label="Toggle Navigation Menu"
             >
-              {mobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
 
             <Link
               href="/search"
-              className="hidden sm:inline-flex items-center space-x-2 text-xs uppercase tracking-widest text-neutral-300 hover:text-luxury-gold transition-colors py-1.5 px-3 rounded border border-neutral-800 hover:border-luxury-gold/40 bg-neutral-900/50"
+              className="inline-flex items-center space-x-2 text-xs tracking-wider text-neutral-400 hover:text-white transition-colors p-2 sm:py-1.5 sm:px-3 rounded-full sm:border sm:border-neutral-800 sm:hover:border-luxury-gold/40 sm:bg-neutral-900/60"
               aria-label="Search Catalog"
             >
-              <Search className="h-3.5 w-3.5 text-luxury-gold" />
-              <span>Search</span>
+              <Search className="h-4 w-4 text-luxury-gold" />
+              <span className="hidden sm:inline text-[11px] uppercase tracking-widest text-neutral-300 font-medium">Search</span>
             </Link>
           </div>
 
-          {/* Center Column: Perfectly Centered Brand Logo & Typography */}
-          <div className="flex justify-center items-center">
-            <Link href="/" className="flex flex-col items-center group text-center">
+          {/* Center: Truly Centered Brand Logo & Typography */}
+          <div className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center text-center">
+            <Link href="/" className="flex items-center space-x-2 sm:space-x-2.5 group py-1" aria-label="Splender Jewel Home">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={logoUrl || config.logoUrl || '/images/logo.png'}
                 alt={config.storeName}
-                className="h-10 sm:h-12 md:h-14 w-auto object-contain rounded border border-luxury-gold/40 p-0.5 bg-black transition-transform duration-300 group-hover:scale-105 shadow-md shadow-black"
+                className="h-7 sm:h-8 md:h-9 w-auto object-contain transition-transform duration-300 group-hover:scale-105"
               />
-              <span className="font-serif text-lg sm:text-xl md:text-2xl font-bold tracking-[0.25em] text-white group-hover:text-luxury-gold-hover transition-colors uppercase mt-1 leading-none">
-                Splender
-              </span>
-              <span className="text-[8px] sm:text-[9px] uppercase tracking-[0.35em] text-luxury-gold font-medium mt-0.5">
-                The Jewel Gallery
-              </span>
+              <div className="flex flex-col text-left whitespace-nowrap">
+                <span className="font-serif text-sm sm:text-base md:text-lg font-bold tracking-[0.22em] text-white group-hover:text-luxury-gold transition-colors uppercase leading-none">
+                  Splender
+                </span>
+                <span className="text-[7px] sm:text-[8px] uppercase tracking-[0.3em] text-luxury-gold font-medium mt-1 leading-none">
+                  The Jewel Gallery
+                </span>
+              </div>
             </Link>
           </div>
 
-          {/* Right Column: Customer Utilities (Search on mobile, Wishlist, Account, Cart) */}
-          <div className="flex items-center justify-end space-x-2 sm:space-x-3">
-            <Link
-              href="/search"
-              className="inline-flex sm:hidden p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
-              aria-label="Search Catalog"
-            >
-              <Search className="h-5 w-5" />
-            </Link>
-
+          {/* Right: Customer Utilities (Wishlist, Account, Cart) */}
+          <div className="flex items-center justify-end space-x-0.5 sm:space-x-1 z-10">
             <Link
               href="/account/wishlist"
-              className="p-2 text-neutral-300 hover:text-luxury-ruby transition-colors"
+              className="p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
               aria-label="Wishlist"
             >
-              <Heart className="h-5 w-5" />
+              <Heart className="h-4.5 w-4.5 sm:h-5 sm:w-5" />
             </Link>
 
             <Link
@@ -100,7 +97,7 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
               className="hidden sm:inline-flex p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
               aria-label="Account"
             >
-              <User className="h-5 w-5" />
+              <User className="h-4.5 w-4.5 sm:h-5 sm:w-5" />
             </Link>
 
             <Link
@@ -108,52 +105,78 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
               className="relative p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
               aria-label="Shopping Cart"
             >
-              <ShoppingBag className="h-5 w-5" />
+              <ShoppingBag className="h-4.5 w-4.5 sm:h-5 sm:w-5" />
             </Link>
           </div>
         </div>
       </Container>
 
       {/* Dedicated Centered Navigation Row */}
-      <nav className="hidden lg:block border-t border-neutral-800/80 bg-black/60">
+      <nav className="hidden lg:block border-t border-neutral-850/80 bg-neutral-950/80">
         <Container size="xl">
-          <div className="flex items-center justify-center space-x-8 py-2.5 text-xs tracking-[0.2em] uppercase font-medium">
-            {navLinks.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className="text-neutral-300 hover:text-luxury-gold transition-colors py-1 relative group"
-              >
-                <span>{link.label}</span>
-                <span className="absolute bottom-0 left-0 w-0 h-0.5 bg-luxury-gold transition-all duration-300 group-hover:w-full" />
-              </Link>
-            ))}
+          <div className="flex items-center justify-center space-x-6 xl:space-x-8 py-2 text-[11px] xl:text-xs tracking-[0.18em] uppercase font-medium whitespace-nowrap">
+            {navLinks.map((link) => {
+              const isActive = pathname === link.href || (link.href !== '/' && (pathname === link.href || pathname.startsWith(`${link.href}/`)));
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className={twMerge(
+                    'py-1 relative group transition-colors',
+                    isActive ? 'text-luxury-gold font-semibold' : 'text-neutral-300 hover:text-luxury-gold'
+                  )}
+                >
+                  <span>{link.label}</span>
+                  <span
+                    className={twMerge(
+                      'absolute bottom-0 left-0 h-[1.5px] bg-luxury-gold transition-all duration-300',
+                      isActive ? 'w-full' : 'w-0 group-hover:w-full'
+                    )}
+                  />
+                </Link>
+              );
+            })}
           </div>
         </Container>
       </nav>
 
       {/* Mobile Navigation Drawer */}
       {mobileMenuOpen && (
-        <div className="lg:hidden border-t border-neutral-800 bg-luxury-black/98 px-4 py-6 space-y-4">
-          <nav className="flex flex-col space-y-3">
-            {navLinks.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                onClick={() => setMobileMenuOpen(false)}
-                className="text-sm font-medium uppercase tracking-wider text-neutral-300 hover:text-luxury-gold py-2 border-b border-neutral-800/50"
-              >
-                {link.label}
-              </Link>
-            ))}
+        <div className="lg:hidden border-t border-neutral-800 bg-luxury-black/98 px-4 py-5 space-y-4 shadow-xl">
+          <nav className="flex flex-col space-y-1">
+            {navLinks.map((link) => {
+              const isActive = pathname === link.href || (link.href !== '/' && (pathname === link.href || pathname.startsWith(`${link.href}/`)));
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={twMerge(
+                    'text-xs uppercase tracking-wider py-2.5 px-2 rounded-sm transition-colors border-b border-neutral-900',
+                    isActive ? 'text-luxury-gold font-semibold bg-luxury-gold/5' : 'text-neutral-300 hover:text-luxury-gold'
+                  )}
+                >
+                  {link.label}
+                </Link>
+              );
+            })}
           </nav>
 
-          <div className="pt-2 border-t border-neutral-850">
+          <div className="pt-3 border-t border-neutral-800/80 flex flex-col space-y-2">
+            <Link
+              href="/account"
+              onClick={() => setMobileMenuOpen(false)}
+              className="inline-flex items-center space-x-2 text-xs text-neutral-400 hover:text-luxury-gold transition-colors py-1 px-2"
+            >
+              <User className="h-4 w-4" />
+              <span>My Account & Orders</span>
+            </Link>
+
             <a
               href={getInstagramLink(config)}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center space-x-2 text-xs text-luxury-gold hover:text-luxury-gold-light transition-colors py-1.5"
+              className="inline-flex items-center space-x-2 text-xs text-luxury-gold hover:text-luxury-gold-light transition-colors py-1 px-2"
             >
               <InstagramIcon className="h-4 w-4" />
               <span>Follow @splender_jewel on Instagram</span>
