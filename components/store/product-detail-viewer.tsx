@@ -123,7 +123,7 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
             {/* Badges Overlay */}
             <div className="absolute top-3 left-3 flex flex-col gap-1.5 z-10">
               {hasDiscount && (
-                <span className="bg-luxury-gold text-luxury-black text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-sm shadow-md">
+                <span className="bg-luxury-ruby text-white text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-sm shadow-md shadow-luxury-ruby/20 border border-luxury-ruby-light/30">
                   -{discountPercent}% OFF
                 </span>
               )}

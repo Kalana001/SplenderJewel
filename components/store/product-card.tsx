@@ -64,7 +64,7 @@ export function ProductCard({ product }: ProductCardProps) {
         {/* Badges Container */}
         <div className="absolute top-2 left-2 flex flex-col gap-1.5 z-10">
           {hasDiscount && (
-            <span className="bg-luxury-gold text-luxury-black text-[10px] sm:text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm shadow-md">
+            <span className="bg-luxury-ruby text-white text-[10px] sm:text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm shadow-md shadow-luxury-ruby/20 border border-luxury-ruby-light/30">
               -{discountPercent}% OFF
             </span>
           )}

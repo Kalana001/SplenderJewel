@@ -48,24 +48,21 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
 
           {/* Brand / Logo Architecture */}
           <div className="flex items-center">
-            <Link href="/" className="flex items-center space-x-2 group">
-              {logoUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={logoUrl}
-                  alt={config.storeName}
-                  className="h-8 sm:h-10 w-auto object-contain"
-                />
-              ) : (
-                <div className="flex flex-col">
-                  <span className="font-serif text-lg sm:text-xl md:text-2xl font-bold tracking-[0.2em] text-white group-hover:text-luxury-gold-hover transition-colors uppercase">
-                    Splender Jewel
-                  </span>
-                  <span className="text-[9px] uppercase tracking-[0.3em] text-luxury-gold/80 hidden sm:block">
-                    Luxury & Elegance
-                  </span>
-                </div>
-              )}
+            <Link href="/" className="flex items-center space-x-3 group">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={logoUrl || config.logoUrl || '/images/logo.png'}
+                alt={config.storeName}
+                className="h-10 sm:h-12 w-auto object-contain rounded border border-luxury-gold/30 p-0.5 bg-black transition-transform duration-300 group-hover:scale-105"
+              />
+              <div className="flex flex-col">
+                <span className="font-serif text-lg sm:text-xl md:text-2xl font-bold tracking-[0.2em] text-white group-hover:text-luxury-gold-hover transition-colors uppercase">
+                  Splender
+                </span>
+                <span className="text-[9px] uppercase tracking-[0.3em] text-luxury-gold hidden sm:block font-medium">
+                  The Jewel Gallery
+                </span>
+              </div>
             </Link>
           </div>
 
@@ -94,7 +91,7 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
 
             <Link
               href="/account/wishlist"
-              className="hidden sm:inline-flex p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
+              className="hidden sm:inline-flex p-2 text-neutral-300 hover:text-luxury-ruby transition-colors"
               aria-label="Wishlist"
             >
               <Heart className="h-5 w-5" />

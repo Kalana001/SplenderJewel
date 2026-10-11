@@ -14,9 +14,22 @@ export function StoreFooter() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10 mb-12">
           {/* Brand & Mission */}
           <div className="space-y-4">
-            <span className="font-serif text-lg font-bold tracking-[0.2em] text-white uppercase block">
-              {config.storeName}
-            </span>
+            <div className="flex items-center space-x-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={config.logoUrl || '/images/logo.png'}
+                alt={config.storeName}
+                className="h-12 w-auto object-contain rounded border border-luxury-gold/30 p-0.5 bg-black"
+              />
+              <div className="flex flex-col">
+                <span className="font-serif text-lg font-bold tracking-[0.2em] text-white uppercase block">
+                  Splender
+                </span>
+                <span className="text-[10px] uppercase tracking-[0.3em] text-luxury-gold font-medium">
+                  The Jewel Gallery
+                </span>
+              </div>
+            </div>
             <p className="text-xs text-neutral-400 leading-relaxed">
               Curated fine fashion jewelry designed for enduring beauty and timeless sophistication.
               Gold-plated, tiger eye, pearl jewelry, and modern accents for women and men.

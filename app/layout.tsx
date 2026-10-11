@@ -9,16 +9,28 @@ const siteUrl =
 
 export const metadata: Metadata = {
   title: {
-    template: '%s | Splender Jewel',
-    default: 'Splender Jewel | Timeless Elegance & Luxury Jewelry',
+    template: '%s | Splender — The Jewel Gallery',
+    default: 'Splender — The Jewel Gallery | Timeless Elegance & Luxury Jewelry',
   },
   description:
     'Curated fine fashion jewelry collections for women and men. Discover gold-plated, tiger eye, pearl jewelry, rings, necklaces, bracelets, and earrings with islandwide home delivery in Sri Lanka.',
   metadataBase: new URL(siteUrl),
+  icons: {
+    icon: '/images/logo.png',
+    apple: '/images/logo.png',
+  },
   openGraph: {
     type: 'website',
     locale: 'en_LK',
-    siteName: 'Splender Jewel',
+    siteName: 'Splender — The Jewel Gallery',
+    images: [
+      {
+        url: '/images/logo.png',
+        width: 800,
+        height: 800,
+        alt: 'Splender — The Jewel Gallery',
+      },
+    ],
   },
 };
 

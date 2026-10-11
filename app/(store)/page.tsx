@@ -18,13 +18,24 @@ export default function HomePage() {
   return (
     <div className="space-y-16 sm:space-y-24 pb-20">
       {/* Hero Section */}
-      <section className="relative overflow-hidden bg-gradient-to-b from-luxury-black via-neutral-900 to-neutral-950 py-20 sm:py-32 border-b border-neutral-800">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-luxury-gold/10 via-transparent to-transparent pointer-events-none" />
+      <section className="relative overflow-hidden bg-gradient-to-b from-black via-luxury-black to-neutral-950 py-16 sm:py-24 border-b border-neutral-800">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-luxury-gold/15 via-luxury-ruby/5 to-transparent pointer-events-none" />
 
         <Container size="xl" className="relative text-center">
-          <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-luxury-gold/10 border border-luxury-gold/30 text-luxury-gold-light text-xs uppercase tracking-widest mb-6">
+          {/* Business Logo Emblem Display */}
+          <div className="inline-block relative mb-6">
+            <div className="absolute -inset-4 rounded-full bg-gradient-to-r from-luxury-gold/20 via-luxury-ruby/20 to-luxury-gold/20 blur-xl opacity-60 pointer-events-none" />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/images/logo.png"
+              alt="Splender — The Jewel Gallery"
+              className="relative h-24 sm:h-32 md:h-40 w-auto mx-auto object-contain rounded-lg border border-luxury-gold/30 p-1 bg-black/80 shadow-2xl shadow-luxury-gold/10"
+            />
+          </div>
+
+          <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-luxury-gold/10 border border-luxury-gold/30 text-luxury-gold-light text-xs uppercase tracking-widest mb-4">
             <Sparkles className="h-3.5 w-3.5 text-luxury-gold" />
-            <span>Splender Jewel — Fine Fashion Jewelry</span>
+            <span>Splender — The Jewel Gallery</span>
           </div>
 
           <h1 className="font-serif text-3xl sm:text-5xl md:text-6xl font-bold tracking-tight text-white uppercase max-w-4xl mx-auto leading-tight">
@@ -33,14 +44,19 @@ export default function HomePage() {
           </h1>
 
           <p className="mt-6 text-sm sm:text-base text-neutral-300 max-w-2xl mx-auto leading-relaxed font-light">
-            Discover exquisite jewelry crafted for everyday distinction and special occasions.
-            Gold-plated designs, tiger eye, pearl jewelry, and modern fashion pieces for women and men.
+            Discover exquisite fashion jewelry crafted for everyday distinction and special occasions.
+            Gold-plated designs, tiger eye, pearl jewelry, and bespoke modern accents for women and men.
           </p>
 
           <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
             <Link href="/shop">
-              <Button variant="gold" size="lg" className="min-w-[160px]">
+              <Button variant="gold" size="lg" className="min-w-[160px] shadow-lg shadow-luxury-gold/10">
                 Explore Catalog
+              </Button>
+            </Link>
+            <Link href="/category/rings">
+              <Button variant="ruby" size="lg" className="min-w-[160px]">
+                Featured Rings
               </Button>
             </Link>
             <a
@@ -48,9 +64,9 @@ export default function HomePage() {
               target="_blank"
               rel="noopener noreferrer"
             >
-              <Button variant="outline" size="lg" className="min-w-[160px] space-x-2">
+              <Button variant="outline" size="lg" className="min-w-[160px] space-x-2 border-neutral-700 hover:border-luxury-gold">
                 <MessageCircle className="h-4 w-4 text-luxury-gold" />
-                <span>WhatsApp Contact</span>
+                <span>WhatsApp Care</span>
               </Button>
             </a>
           </div>

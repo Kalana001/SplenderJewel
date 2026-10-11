@@ -12,6 +12,7 @@
 export interface StoreConfig {
   storeName: string;
   tagline: string;
+  logoUrl?: string;
   currency: string;
   currencySymbol: string;
   whatsAppNumber: string;
@@ -31,7 +32,8 @@ export interface StoreConfig {
  */
 export const DEFAULT_DEV_STORE_CONFIG: StoreConfig = {
   storeName: 'Splender Jewel',
-  tagline: 'Timeless Elegance & Modern Luxury Jewelry',
+  tagline: 'The Jewel Gallery — Timeless Elegance & Modern Luxury',
+  logoUrl: '/images/logo.png',
   currency: 'LKR',
   currencySymbol: 'Rs.',
   whatsAppNumber: process.env.NEXT_PUBLIC_DEFAULT_WHATSAPP_NUMBER || '+94764689907',

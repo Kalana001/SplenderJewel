@@ -79,13 +79,21 @@ export function AdminSidebar({ mobileOpen, onCloseMobile }: AdminSidebarProps) {
     <div className="flex h-full flex-col bg-luxury-black text-neutral-300 border-r border-neutral-800">
       {/* Brand Header */}
       <div className="flex h-16 items-center justify-between px-6 border-b border-neutral-800">
-        <Link href="/admin/dashboard" className="flex flex-col">
-          <span className="font-serif text-sm font-bold tracking-[0.15em] text-white uppercase">
-            Splender Jewel
-          </span>
-          <span className="text-[10px] text-luxury-gold uppercase tracking-widest">
-            Admin Workspace
-          </span>
+        <Link href="/admin/dashboard" className="flex items-center space-x-2.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/images/logo.png"
+            alt="Splender Jewel"
+            className="h-9 w-auto object-contain rounded border border-luxury-gold/30 p-0.5 bg-black"
+          />
+          <div className="flex flex-col">
+            <span className="font-serif text-sm font-bold tracking-[0.15em] text-white uppercase">
+              Splender
+            </span>
+            <span className="text-[9px] text-luxury-gold uppercase tracking-widest font-medium">
+              Admin Workspace
+            </span>
+          </div>
         </Link>
         {onCloseMobile && (
           <button

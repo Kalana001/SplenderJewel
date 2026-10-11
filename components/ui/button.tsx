@@ -12,6 +12,8 @@ const buttonVariants = cva(
           'bg-luxury-black text-white hover:bg-neutral-900 border border-luxury-gold/40 hover:border-luxury-gold shadow-sm',
         gold:
           'bg-luxury-gold text-luxury-black hover:bg-luxury-gold-hover font-semibold shadow-sm',
+        ruby:
+          'bg-luxury-ruby text-white hover:bg-luxury-ruby-light font-semibold shadow-sm shadow-luxury-ruby/20 border border-luxury-ruby/40 hover:border-luxury-ruby',
         outline:
           'border border-neutral-300 dark:border-neutral-700 bg-transparent hover:bg-neutral-100 dark:hover:bg-neutral-800 text-foreground',
         secondary:

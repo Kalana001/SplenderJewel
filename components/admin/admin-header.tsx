@@ -31,7 +31,7 @@ export function AdminHeader({ onOpenMobileSidebar }: AdminHeaderProps) {
 
       <div className="flex items-center space-x-3">
         <Badge variant="gold" className="text-[10px]">
-          Phase 0 Foundation
+          The Jewel Gallery
         </Badge>
       </div>
     </header>
