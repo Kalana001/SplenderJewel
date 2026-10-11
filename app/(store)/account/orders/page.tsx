@@ -49,7 +49,6 @@ export default async function AccountOrdersPage() {
     .select(`
       id,
       order_number,
-      order_token,
       user_id,
       customer_name,
       phone1,

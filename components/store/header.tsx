@@ -8,6 +8,7 @@ import { Container } from '@/components/ui/container';
 import { getStoreConfig, getInstagramLink } from '@/lib/config/store';
 import { InstagramIcon } from '@/components/icons/instagram';
 import { twMerge } from 'tailwind-merge';
+import { useCart } from '@/lib/cart/cart-context';
 
 interface HeaderProps {
   logoUrl?: string | null;
@@ -17,6 +18,7 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const pathname = usePathname();
   const config = getStoreConfig();
+  const { totalCount, isLoaded } = useCart();
 
   const navLinks = [
     { label: 'Shop All', href: '/shop' },
@@ -106,6 +108,11 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
               aria-label="Shopping Cart"
             >
               <ShoppingBag className="h-4.5 w-4.5 sm:h-5 sm:w-5" />
+              {isLoaded && totalCount > 0 && (
+                <span className="absolute 0 top-0.5 right-0.5 sm:top-1 sm:right-1 flex h-4 w-4 items-center justify-center rounded-full bg-luxury-gold text-[10px] font-bold text-luxury-black shadow-sm">
+                  {totalCount > 99 ? '99+' : totalCount}
+                </span>
+              )}
             </Link>
           </div>
         </div>

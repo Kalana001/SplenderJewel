@@ -1,24 +1,32 @@
-import { AdminPageSkeleton } from '@/components/admin/admin-page-skeleton';
+import React from 'react';
+import { notFound } from 'next/navigation';
+import { requireAdminPageAuth } from '@/lib/auth/server';
+import { getAdminOrderById } from '@/lib/orders/admin-actions';
+import { OrderFulfillmentManager } from '@/components/admin/orders/order-fulfillment-manager';
 
 interface AdminOrderDetailPageProps {
   params: Promise<{ id: string }>;
 }
 
+export async function generateMetadata({ params }: AdminOrderDetailPageProps) {
+  const { id } = await params;
+  return {
+    title: `Fulfill Order #${id} | Splender Jewel Admin`,
+  };
+}
+
 export default async function AdminOrderDetailPage({ params }: AdminOrderDetailPageProps) {
+  await requireAdminPageAuth();
   const { id } = await params;
 
+  const res = await getAdminOrderById(id);
+  if (!res.success || !res.order) {
+    notFound();
+  }
+
   return (
-    <AdminPageSkeleton
-      title={`Order Detail: #${id}`}
-      category="Orders Management"
-      description="Inspect order items, customer address, payment verification status, tracking number assignment, and package label printing."
-      targetPhase="Phase 3 (Orders & Checkout Execution)"
-      capabilities={[
-        'Full line items with variants, quantities, and selling prices',
-        'Confidential purchase cost and profit calculation (Admin only)',
-        'Order status transitions with audit history notes',
-        'Customer package shipping label generation',
-      ]}
-    />
+    <div className="space-y-6">
+      <OrderFulfillmentManager order={res.order} />
+    </div>
   );
 }

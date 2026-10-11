@@ -50,7 +50,6 @@ export default async function AccountOrderDetailPage({ params }: AccountOrderDet
     .select(`
       id,
       order_number,
-      order_token,
       user_id,
       customer_name,
       email,
@@ -134,13 +133,6 @@ export default async function AccountOrderDetailPage({ params }: AccountOrderDet
               <Clock className="h-3.5 w-3.5" />
               <span>Placed on {orderDate}</span>
             </div>
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <span className="text-xs text-neutral-500">Order Token:</span>
-            <code className="text-xs font-mono bg-neutral-100 dark:bg-neutral-800 px-2 py-1 rounded text-foreground">
-              {order.order_token ? `${order.order_token.slice(0, 8)}...` : 'N/A'}
-            </code>
           </div>
         </div>
 

@@ -14,10 +14,15 @@ import {
   Layers,
   Heart,
   Share2,
+  ShoppingBag,
+  Plus,
+  Minus,
+  Check,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/lib/config/store';
+import { useCart } from '@/lib/cart/cart-context';
 import type { ProductPublic, ProductVariantPublic, ProductImage } from '@/types/product';
 
 interface ProductDetailViewerProps {
@@ -30,6 +35,10 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
   const [selectedVariant, setSelectedVariant] = useState<ProductVariantPublic>(
     product.variants[0] || null
   );
+
+  const [quantity, setQuantity] = useState(1);
+  const [addedToBag, setAddedToBag] = useState(false);
+  const { addItem } = useCart();
 
   // Gallery image selection: default to primary image or first image
   const primaryImage = product.images.find((img) => img.isPrimary) || product.images[0] || null;
@@ -63,6 +72,26 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
     if (variantImage) {
       setActiveImage(variantImage);
     }
+  }
+
+  function handleAddToBag() {
+    if (!selectedVariant || isOutOfStock) return;
+    addItem(
+      {
+        variantId: selectedVariant.id,
+        productId: product.id,
+        productName: product.name,
+        variantTitle: selectedVariant.title,
+        sku: selectedVariant.sku,
+        price: selectedVariant.price,
+        discountPrice: selectedVariant.discountPrice,
+        imageUrl: activeImage?.url || null,
+        slug: product.slug,
+      },
+      quantity
+    );
+    setAddedToBag(true);
+    setTimeout(() => setAddedToBag(false), 3500);
   }
 
   // Build safe WhatsApp pre-filled enquiry URL
@@ -266,22 +295,83 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
             </div>
           )}
 
-          {/* WhatsApp Direct Order CTA Button */}
+          {/* Shopping Bag & WhatsApp Actions */}
           <div className="space-y-3 pt-3">
+            <div className="flex items-center gap-3">
+              {/* Quantity Selector */}
+              <div className="flex items-center border border-neutral-700 rounded bg-neutral-900/80 h-12 px-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                  disabled={quantity <= 1 || isOutOfStock}
+                  className="p-1.5 text-neutral-400 hover:text-white disabled:opacity-30 transition-colors"
+                  aria-label="Decrease quantity"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
+                <span className="w-8 text-center font-semibold text-sm text-white select-none">
+                  {quantity}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setQuantity((q) => q + 1)}
+                  disabled={isOutOfStock}
+                  className="p-1.5 text-neutral-400 hover:text-white disabled:opacity-30 transition-colors"
+                  aria-label="Increase quantity"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              {/* Add to Bag Button */}
+              <Button
+                type="button"
+                variant="gold"
+                size="lg"
+                disabled={isOutOfStock}
+                onClick={handleAddToBag}
+                className="flex-1 h-12 text-sm sm:text-base font-semibold flex items-center justify-center gap-2 shadow-lg shadow-luxury-gold/10 hover:shadow-luxury-gold/20"
+              >
+                {addedToBag ? (
+                  <>
+                    <Check className="h-5 w-5 text-luxury-black stroke-[2.5]" />
+                    <span>Added to Bag!</span>
+                  </>
+                ) : (
+                  <>
+                    <ShoppingBag className="h-5 w-5 text-luxury-black" />
+                    <span>{isOutOfStock ? 'Currently Out of Stock' : 'Add to Bag'}</span>
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {/* Instant Confirmation Toast / Banner */}
+            {addedToBag && (
+              <div className="flex items-center justify-between text-xs bg-emerald-950/80 border border-emerald-800/60 text-emerald-300 px-3.5 py-2.5 rounded shadow-md animate-fadeIn">
+                <span>Item successfully added to your shopping bag.</span>
+                <Link href="/cart" className="underline font-semibold hover:text-white ml-2 shrink-0">
+                  View Bag &rarr;
+                </Link>
+              </div>
+            )}
+
+            {/* Concierge WhatsApp Enquiry Button */}
             <a
               href={whatsAppLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="block"
+              className="block pt-1"
             >
               <Button
-                variant="gold"
+                type="button"
+                variant="outline"
                 size="lg"
                 disabled={isOutOfStock}
-                className="w-full text-base py-4 font-semibold flex items-center justify-center gap-3 shadow-lg shadow-luxury-gold/10 hover:shadow-luxury-gold/20"
+                className="w-full text-xs py-3 font-medium flex items-center justify-center gap-2 border-neutral-800 bg-neutral-900/60 text-neutral-300 hover:text-luxury-gold hover:border-luxury-gold/40 transition-colors"
               >
-                <MessageCircle className="h-5 w-5 fill-current" />
-                {isOutOfStock ? 'Currently Out of Stock' : 'Order / Enquire via WhatsApp'}
+                <MessageCircle className="h-4 w-4 text-emerald-400 shrink-0" />
+                <span>Order or Enquire via WhatsApp (+94 76 468 9907)</span>
               </Button>
             </a>
 

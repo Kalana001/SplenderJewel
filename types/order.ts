@@ -54,7 +54,7 @@ export interface OrderStatusHistoryItem {
 export interface OrderDbRow {
   id: string;
   order_number: string;
-  order_token: string;
+  order_token?: string;
   user_id: string | null;
   customer_name: string;
   email: string | null;
@@ -112,7 +112,7 @@ export function mapDbOrderToDomain(row: OrderDbRow, items: OrderItem[] = []): Or
   return {
     id: row.id,
     orderNumber: row.order_number,
-    orderToken: row.order_token,
+    orderToken: row.order_token ?? undefined,
     userId: row.user_id,
     status: row.order_status,
     paymentMethod: row.payment_method,
