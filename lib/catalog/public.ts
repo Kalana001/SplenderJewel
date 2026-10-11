@@ -424,7 +424,12 @@ export async function getPublicCategoryBySlug(slug: string): Promise<Category | 
         .eq('is_active', true)
         .maybeSingle();
 
-      if (!error && data) {
+      if (error) {
+        console.error(`[getPublicCategoryBySlug] Database error querying category "${normalizedSlug}":`, error.message);
+        throw new Error(`Database error querying category: ${error.message}`);
+      }
+
+      if (data) {
         return {
           id: data.id,
           name: data.name,
@@ -438,10 +443,14 @@ export async function getPublicCategoryBySlug(slug: string): Promise<Category | 
       }
     }
 
-    // Fallback to curated store categories when database is unseeded
+    // Category absent from database (0 rows returned with no error):
+    // Check if it matches one of the recognized curated store categories.
     const fallback = DEFAULT_STORE_CATEGORIES.find((c) => c.slug === normalizedSlug);
     return fallback || null;
-  } catch {
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.startsWith('Database error querying category:')) {
+      throw err;
+    }
     const fallback = DEFAULT_STORE_CATEGORIES.find((c) => c.slug === normalizedSlug);
     return fallback || null;
   }

@@ -1,8 +1,9 @@
 import React from 'react';
 import Link from 'next/link';
 import { Container } from '@/components/ui/container';
-import { getStoreConfig, getWhatsAppLink } from '@/lib/config/store';
+import { getStoreConfig, getWhatsAppLink, getInstagramLink } from '@/lib/config/store';
 import { MessageCircle } from 'lucide-react';
+import { InstagramIcon } from '@/components/icons/instagram';
 
 export function StoreFooter() {
   const config = getStoreConfig();
@@ -34,16 +35,27 @@ export function StoreFooter() {
               Curated fine fashion jewelry designed for enduring beauty and timeless sophistication.
               Gold-plated, tiger eye, pearl jewelry, and modern accents for women and men.
             </p>
-            <div>
+            <div className="space-y-2 pt-1">
               <a
                 href={getWhatsAppLink('Hello Splender Jewel, I have an enquiry.')}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center space-x-2 text-xs text-luxury-gold hover:text-luxury-gold-light transition-colors"
               >
-                <MessageCircle className="h-4 w-4" />
+                <MessageCircle className="h-4 w-4 shrink-0" />
                 <span>Chat with us on WhatsApp</span>
               </a>
+              <div>
+                <a
+                  href={getInstagramLink(config)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center space-x-2 text-xs text-luxury-gold hover:text-luxury-gold-light transition-colors"
+                >
+                  <InstagramIcon className="h-4 w-4 shrink-0" />
+                  <span>Follow @splender_jewel on Instagram</span>
+                </a>
+              </div>
             </div>
           </div>
 
@@ -136,9 +148,22 @@ export function StoreFooter() {
 
         <div className="pt-8 border-t border-neutral-900 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-neutral-500">
           <p>© {currentYear} {config.storeName}. All rights reserved.</p>
-          <p className="text-[11px] text-neutral-600">
-            Secure Home Delivery across Sri Lanka
-          </p>
+          <div className="flex items-center space-x-4">
+            <a
+              href={getInstagramLink(config)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-neutral-400 hover:text-luxury-gold transition-colors inline-flex items-center space-x-1.5"
+              aria-label="Follow Splender Jewel on Instagram"
+            >
+              <InstagramIcon className="h-3.5 w-3.5" />
+              <span className="text-[11px]">@splender_jewel</span>
+            </a>
+            <span className="text-neutral-700">|</span>
+            <p className="text-[11px] text-neutral-600">
+              Secure Home Delivery across Sri Lanka
+            </p>
+          </div>
         </div>
       </Container>
     </footer>

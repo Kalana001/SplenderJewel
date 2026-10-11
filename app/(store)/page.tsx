@@ -3,7 +3,8 @@ import Link from 'next/link';
 import { Container } from '@/components/ui/container';
 import { Button } from '@/components/ui/button';
 import { Sparkles, Shield, Truck, MessageCircle } from 'lucide-react';
-import { getWhatsAppLink } from '@/lib/config/store';
+import { getWhatsAppLink, getInstagramLink } from '@/lib/config/store';
+import { InstagramIcon } from '@/components/icons/instagram';
 
 export default function HomePage() {
   const categories = [
@@ -144,6 +145,36 @@ export default function HomePage() {
                 <p className="text-[11px] text-neutral-500 mt-1">{cat.count}</p>
               </Link>
             ))}
+          </div>
+        </Container>
+      </section>
+
+      {/* Instagram Community Section */}
+      <section className="border-t border-neutral-800/80 bg-gradient-to-b from-neutral-950/60 to-black py-16">
+        <Container size="xl" className="text-center">
+          <div className="max-w-xl mx-auto space-y-4">
+            <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-luxury-gold/10 border border-luxury-gold/30 text-luxury-gold-light text-xs uppercase tracking-widest">
+              <InstagramIcon className="h-3.5 w-3.5 text-luxury-gold" />
+              <span>@splender_jewel</span>
+            </div>
+            <h2 className="font-serif text-2xl sm:text-3xl font-bold text-white uppercase tracking-wide">
+              Follow Our Journey
+            </h2>
+            <p className="text-xs sm:text-sm text-neutral-400 leading-relaxed font-light">
+              Join our Instagram gallery for daily jewelry inspirations, new arrival drops, styling ideas, and behind-the-scenes craft.
+            </p>
+            <div className="pt-2">
+              <a
+                href={getInstagramLink()}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Button variant="outline" size="lg" className="border-luxury-gold/40 text-luxury-gold hover:bg-luxury-gold/10 hover:border-luxury-gold space-x-2 shadow-lg shadow-black">
+                  <InstagramIcon className="h-4 w-4" />
+                  <span>Follow @splender_jewel on Instagram</span>
+                </Button>
+              </a>
+            </div>
           </div>
         </Container>
       </section>

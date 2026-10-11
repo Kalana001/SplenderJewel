@@ -4,7 +4,8 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { ShoppingBag, Search, User, Menu, X, Heart } from 'lucide-react';
 import { Container } from '@/components/ui/container';
-import { getStoreConfig } from '@/lib/config/store';
+import { getStoreConfig, getInstagramLink } from '@/lib/config/store';
+import { InstagramIcon } from '@/components/icons/instagram';
 
 interface HeaderProps {
   logoUrl?: string | null;
@@ -146,6 +147,18 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
               </Link>
             ))}
           </nav>
+
+          <div className="pt-2 border-t border-neutral-850">
+            <a
+              href={getInstagramLink(config)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center space-x-2 text-xs text-luxury-gold hover:text-luxury-gold-light transition-colors py-1.5"
+            >
+              <InstagramIcon className="h-4 w-4" />
+              <span>Follow @splender_jewel on Instagram</span>
+            </a>
+          </div>
         </div>
       )}
     </header>

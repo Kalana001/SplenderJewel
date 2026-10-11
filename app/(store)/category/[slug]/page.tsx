@@ -11,24 +11,29 @@ interface CategoryPageProps {
 
 export async function generateMetadata({ params }: CategoryPageProps): Promise<Metadata> {
   const { slug } = await params;
-  const category = await getPublicCategoryBySlug(slug);
+  let category: Awaited<ReturnType<typeof getPublicCategoryBySlug>> = null;
+  try {
+    category = await getPublicCategoryBySlug(slug);
+  } catch (err) {
+    console.error(`[generateMetadata] Error fetching category for slug "${slug}":`, err);
+  }
 
   if (!category) {
     return {
-      title: 'Category Not Found | Splender Jewel',
+      title: 'Category Not Found | Splender — The Jewel Gallery',
     };
   }
 
   return {
-    title: `${category.name} Collection | Splender Jewel`,
-    description: category.description || `Browse curated ${category.name} in Sri Lanka. Fine fashion jewelry by Splender Jewel.`,
+    title: `${category.name} Collection | Splender — The Jewel Gallery`,
+    description: category.description || `Browse curated ${category.name} in Sri Lanka. Fine fashion jewelry by Splender — The Jewel Gallery.`,
     alternates: {
       canonical: `/category/${category.slug}`,
     },
     openGraph: {
-      title: `${category.name} | Splender Jewel`,
+      title: `${category.name} | Splender — The Jewel Gallery`,
       description: category.description || `Explore ${category.name} fine jewelry collection.`,
-      images: category.imageUrl ? [category.imageUrl] : [],
+      images: category.imageUrl ? [category.imageUrl] : ['/images/logo.png'],
     },
   };
 }

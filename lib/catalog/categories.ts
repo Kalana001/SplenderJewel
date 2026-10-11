@@ -110,7 +110,12 @@ export async function getPublicCategories(): Promise<Category[]> {
       .order('display_order', { ascending: true })
       .order('name', { ascending: true });
 
-    if (error || !data || (data as any[]).length === 0) {
+    if (error) {
+      console.error('[getPublicCategories] Database error querying categories:', error.message);
+      throw new Error(`Database error querying categories: ${error.message}`);
+    }
+
+    if (!data || (data as any[]).length === 0) {
       return DEFAULT_STORE_CATEGORIES;
     }
 
@@ -124,7 +129,10 @@ export async function getPublicCategories(): Promise<Category[]> {
       isActive: row.is_active,
       createdAt: row.created_at,
     }));
-  } catch {
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.startsWith('Database error querying categories:')) {
+      throw err;
+    }
     return DEFAULT_STORE_CATEGORIES;
   }
 }
