@@ -94,7 +94,7 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
 
             <Link
               href="/account"
-              className="hidden sm:inline-flex p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
+              className="p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
               aria-label="Account"
             >
               <User className="h-4.5 w-4.5 sm:h-5 sm:w-5" />

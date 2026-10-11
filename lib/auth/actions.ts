@@ -2,7 +2,7 @@
 
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
-import { getPasswordResetRedirectUrl } from '@/lib/auth/redirect';
+import { getPasswordResetRedirectUrl, getCanonicalSiteUrl } from '@/lib/auth/redirect';
 
 export interface AuthActionResult {
   success: boolean;
@@ -35,10 +35,12 @@ export async function signUpCustomer(formData: {
     return { success: false, error: 'Password must be at least 8 characters long.' };
   }
 
+  const emailRedirectTo = `${getCanonicalSiteUrl()}/auth/callback?next=/account`;
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
+      emailRedirectTo,
       data: {
         full_name: fullName,
         phone1: phone1 || null,
