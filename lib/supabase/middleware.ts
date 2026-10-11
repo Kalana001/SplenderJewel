@@ -1,5 +1,8 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { resolveRootAuthRedirect } from '@/lib/auth/redirect';
+
+export { resolveRootAuthRedirect };
 
 /**
  * Updates Supabase session tokens and enforces route protection.
@@ -14,6 +17,16 @@ export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
   });
+
+  const pathname = request.nextUrl.pathname;
+
+  // Intercept recovery callbacks or expired links that fall back to the root homepage
+  if (pathname === '/') {
+    const redirectUrl = resolveRootAuthRedirect(request.nextUrl.searchParams, request.url);
+    if (redirectUrl) {
+      return NextResponse.redirect(redirectUrl);
+    }
+  }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -43,8 +56,6 @@ export async function updateSession(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-
-  const pathname = request.nextUrl.pathname;
 
   // 1. Customer Protected Routes: /account/*
   if (pathname.startsWith('/account')) {

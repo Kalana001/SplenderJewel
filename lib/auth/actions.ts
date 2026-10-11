@@ -2,6 +2,7 @@
 
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
+import { getPasswordResetRedirectUrl } from '@/lib/auth/redirect';
 
 export interface AuthActionResult {
   success: boolean;
@@ -119,9 +120,9 @@ export async function requestPasswordReset(email: string): Promise<AuthActionRes
     return { success: false, error: 'Email address is required.' };
   }
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+  const redirectTo = getPasswordResetRedirectUrl();
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${siteUrl}/auth/callback?next=/reset-password`,
+    redirectTo,
   });
 
   if (error) {

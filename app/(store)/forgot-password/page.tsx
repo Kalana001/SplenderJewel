@@ -2,6 +2,7 @@
 
 import React, { useState, Suspense } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -9,6 +10,12 @@ import { requestPasswordReset } from '@/lib/auth/actions';
 import { Mail, AlertCircle, CheckCircle2, ArrowLeft } from 'lucide-react';
 
 function ForgotPasswordForm() {
+  const searchParams = useSearchParams();
+  const urlError = searchParams.get('error') || searchParams.get('error_code');
+  const isExpired =
+    urlError === 'otp_expired' ||
+    (typeof urlError === 'string' && urlError.toLowerCase().includes('expired'));
+
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -97,6 +104,18 @@ function ForgotPasswordForm() {
           </CardHeader>
 
           <CardContent>
+            {isExpired && !errorMessage && (
+              <div
+                className="mb-4 p-3 rounded-sm bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-800 dark:text-amber-200 text-xs flex items-start space-x-2"
+                role="alert"
+              >
+                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                <span className="leading-relaxed">
+                  Your previous password reset link was invalid or has expired. Please enter your email below to receive a fresh reset link.
+                </span>
+              </div>
+            )}
+
             {errorMessage && (
               <div
                 className="mb-4 p-3 rounded-sm bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 text-xs flex items-start space-x-2"

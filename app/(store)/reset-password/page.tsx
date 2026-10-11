@@ -2,15 +2,23 @@
 
 import React, { useState, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { updatePassword } from '@/lib/auth/actions';
-import { Eye, EyeOff, Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Eye, EyeOff, Lock, AlertCircle, CheckCircle2, RotateCcw } from 'lucide-react';
 
 function ResetPasswordForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const urlError = searchParams.get('error') || searchParams.get('error_code');
+  const isExpiredOrInvalid =
+    urlError === 'otp_expired' ||
+    urlError === 'access_denied' ||
+    urlError === 'invalid_link' ||
+    (typeof urlError === 'string' && urlError.toLowerCase().includes('expired'));
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -60,6 +68,54 @@ function ResetPasswordForm() {
     }
   };
 
+  // State 1: Reset link expired or invalid
+  if (isExpiredOrInvalid) {
+    return (
+      <div className="min-h-[75vh] flex items-center justify-center py-12 px-4 sm:px-6">
+        <div className="w-full max-w-md">
+          <div className="text-center mb-6">
+            <span className="text-[10px] uppercase tracking-[0.3em] text-luxury-gold font-semibold">
+              Splender Jewel Security
+            </span>
+            <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight text-foreground mt-1">
+              Reset Link Expired
+            </h1>
+          </div>
+
+          <Card className="border border-neutral-200 dark:border-neutral-800 shadow-xl bg-white dark:bg-luxury-surface text-center p-6">
+            <div className="mx-auto w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-950 flex items-center justify-center text-amber-600 dark:text-amber-400 mb-4">
+              <AlertCircle className="h-6 w-6" />
+            </div>
+            <h2 className="font-serif text-xl font-bold tracking-tight text-foreground">
+              Link Invalid or Expired
+            </h2>
+            <p className="text-xs sm:text-sm text-neutral-600 dark:text-neutral-400 mt-2 leading-relaxed">
+              This password reset link is invalid or has already expired. Password recovery links can only be used once and expire quickly for your security.
+            </p>
+
+            <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800 space-y-3">
+              <Button asChild variant="gold" size="md" className="w-full uppercase tracking-wider text-xs font-semibold">
+                <Link href="/forgot-password" className="inline-flex items-center justify-center space-x-2">
+                  <RotateCcw className="h-4 w-4 mr-1.5" />
+                  <span>Request a New Reset Link</span>
+                </Link>
+              </Button>
+              <div>
+                <Link
+                  href="/login"
+                  className="text-xs text-neutral-500 hover:text-luxury-gold transition-colors"
+                >
+                  Return to Customer Sign In
+                </Link>
+              </div>
+            </div>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  // State 2: Password successfully updated
   if (success) {
     return (
       <div className="min-h-[75vh] flex items-center justify-center py-12 px-4 sm:px-6">
@@ -86,6 +142,7 @@ function ResetPasswordForm() {
     );
   }
 
+  // State 3: Enter new password form
   return (
     <div className="min-h-[75vh] flex items-center justify-center py-12 px-4 sm:px-6">
       <div className="w-full max-w-md">
@@ -111,13 +168,36 @@ function ResetPasswordForm() {
           </CardHeader>
 
           <CardContent>
+            {urlError && !isExpiredOrInvalid && (
+              <div
+                className="mb-4 p-3 rounded-sm bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 text-xs flex items-start space-x-2"
+                role="alert"
+              >
+                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-red-600 dark:text-red-400" />
+                <span className="leading-relaxed">
+                  Authentication error: {urlError}. If this persists, please{' '}
+                  <Link href="/forgot-password" className="underline font-semibold">
+                    request a new reset link
+                  </Link>
+                  .
+                </span>
+              </div>
+            )}
+
             {errorMessage && (
               <div
                 className="mb-4 p-3 rounded-sm bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 text-xs flex items-start space-x-2"
                 role="alert"
               >
                 <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-red-600 dark:text-red-400" />
-                <span className="leading-relaxed">{errorMessage}</span>
+                <div className="leading-relaxed">
+                  <span>{errorMessage}</span>
+                  <div className="mt-1">
+                    <Link href="/forgot-password" className="underline font-semibold hover:text-luxury-gold">
+                      Request a fresh reset link
+                    </Link>
+                  </div>
+                </div>
               </div>
             )}
 
