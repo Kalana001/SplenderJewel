@@ -1,18 +1,33 @@
-import { AdminPageSkeleton } from '@/components/admin/admin-page-skeleton';
+import React from 'react';
+import { requireAdminPageAuth } from '@/lib/auth/server';
+import { getAdminCoupons } from '@/lib/coupons/admin-actions';
+import { CouponsManager } from '@/components/admin/coupons/coupons-manager';
 
-export default function AdminCouponsPage() {
+export const metadata = {
+  title: 'Coupons & Discounts | Splender Jewel Admin',
+  description: 'Manage store coupons, percentage discounts, fixed vouchers, and redemption limits',
+};
+
+export default async function AdminCouponsPage() {
+  await requireAdminPageAuth();
+
+  const res = await getAdminCoupons();
+  const coupons = res.success ? res.coupons : [];
+
   return (
-    <AdminPageSkeleton
-      title="Coupons & Promotional Discounts"
-      category="Marketing"
-      description="Create and manage coupon codes (percentage discount, fixed amount discount, minimum order limits, expiration dates)."
-      targetPhase="Phase 3 (Cart, Checkout & Coupons)"
-      capabilities={[
-        'Coupon code generation and validation rules',
-        'Discount type: percentage vs fixed LKR amount',
-        'Usage limits (total and per-customer)',
-        'Active date ranges and minimum purchase requirements',
-      ]}
-    />
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-neutral-800 pb-5">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-serif font-bold text-white tracking-wide">
+            Promotional Coupons & Discounts
+          </h1>
+          <p className="text-xs sm:text-sm text-neutral-400 mt-1">
+            Create and track promotional codes, configure percentage and fixed discounts, and monitor usage limits.
+          </p>
+        </div>
+      </div>
+
+      <CouponsManager initialCoupons={coupons} />
+    </div>
   );
 }

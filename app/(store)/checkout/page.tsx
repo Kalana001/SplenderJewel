@@ -12,6 +12,9 @@ import {
   Banknote,
   MessageCircle,
   ShoppingBag,
+  Tag,
+  CheckCircle2,
+  X,
 } from 'lucide-react';
 import { Container } from '@/components/ui/container';
 import { Button } from '@/components/ui/button';
@@ -21,6 +24,7 @@ import { formatCurrency } from '@/lib/config/store';
 import { SRI_LANKA_DISTRICTS, getEstimatedDeliveryFee, type SriLankaDistrict } from '@/lib/config/districts';
 import { PAYMENT_METHODS, type PaymentMethod } from '@/lib/config/constants';
 import { createOrderAction } from '@/lib/orders/actions';
+import { validateCouponAction } from '@/lib/coupons/actions';
 
 export default function CheckoutPage() {
   const router = useRouter();
@@ -38,13 +42,53 @@ export default function CheckoutPage() {
   const [deliveryNotes, setDeliveryNotes] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(PAYMENT_METHODS.COD);
 
+  // Coupon State
+  const [couponInput, setCouponInput] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; calculatedDiscount: number } | null>(null);
+  const [isValidatingCoupon, setIsValidatingCoupon] = useState(false);
+  const [couponError, setCouponError] = useState<string | null>(null);
+
   // Submission State
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Delivery fee dynamically calculated by selected district
   const deliveryFee = getEstimatedDeliveryFee(district);
-  const grandTotal = subtotal + deliveryFee;
+  const discountAmount = appliedCoupon?.calculatedDiscount || 0;
+  const grandTotal = Math.max(0, subtotal - discountAmount) + deliveryFee;
+
+  // Handle Coupon Apply
+  async function handleApplyCoupon(e: React.FormEvent) {
+    e.preventDefault();
+    if (!couponInput.trim()) return;
+    setCouponError(null);
+    setIsValidatingCoupon(true);
+
+    try {
+      const res = await validateCouponAction(couponInput.trim(), subtotal);
+      if (!res.valid || res.calculatedDiscount === undefined) {
+        setCouponError(res.error || 'Invalid coupon code.');
+        setAppliedCoupon(null);
+      } else {
+        setAppliedCoupon({
+          code: res.code || couponInput.trim().toUpperCase(),
+          calculatedDiscount: res.calculatedDiscount,
+        });
+        setCouponInput('');
+      }
+    } catch {
+      setCouponError('Unable to validate coupon at this time.');
+    } finally {
+      setIsValidatingCoupon(false);
+    }
+  }
+
+  // Handle Coupon Removal
+  function handleRemoveCoupon() {
+    setAppliedCoupon(null);
+    setCouponError(null);
+    setCouponInput('');
+  }
 
   // Handle Form Submit
   async function handleSubmit(e: React.FormEvent) {
@@ -90,6 +134,7 @@ export default function CheckoutPage() {
         postalCode: postalCode.trim() || null,
         deliveryNotes: deliveryNotes.trim() || null,
         paymentMethod,
+        couponCode: appliedCoupon?.code || null,
         items: items.map((i) => ({
           variantId: i.variantId,
           quantity: i.quantity,
@@ -454,12 +499,80 @@ export default function CheckoutPage() {
                   })}
                 </div>
 
+                {/* Promotional Coupon Section */}
+                <div className="pt-3 border-t border-neutral-800 space-y-2">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-300">
+                    <Tag className="h-3.5 w-3.5 text-luxury-gold" />
+                    <span>Promotional Code</span>
+                  </div>
+
+                  {appliedCoupon ? (
+                    <div className="flex items-center justify-between p-2.5 bg-luxury-gold/10 border border-luxury-gold/40 rounded-md">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-luxury-gold" />
+                        <div>
+                          <span className="text-xs font-bold text-luxury-gold">{appliedCoupon.code}</span>
+                          <span className="text-xs text-neutral-300 ml-1.5">
+                            (-{formatCurrency(appliedCoupon.calculatedDiscount)})
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleRemoveCoupon}
+                        className="p-1 text-neutral-400 hover:text-rose-400 transition-colors"
+                        title="Remove coupon"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <div className="flex gap-2">
+                        <Input
+                          type="text"
+                          placeholder="e.g. WELCOME10"
+                          value={couponInput}
+                          onChange={(e) => {
+                            setCouponInput(e.target.value.toUpperCase());
+                            setCouponError(null);
+                          }}
+                          className="bg-neutral-950 border-neutral-700 text-xs text-white uppercase focus:border-luxury-gold h-9"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={isValidatingCoupon || !couponInput.trim()}
+                          onClick={(e) => handleApplyCoupon(e)}
+                          className="h-9 px-3 border-luxury-gold/50 text-luxury-gold hover:bg-luxury-gold hover:text-neutral-950 text-xs shrink-0 font-medium"
+                        >
+                          {isValidatingCoupon ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Apply'}
+                        </Button>
+                      </div>
+                      {couponError && (
+                        <p className="text-[11px] text-rose-400 flex items-center gap-1">
+                          <AlertCircle className="h-3 w-3 shrink-0" />
+                          <span>{couponError}</span>
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {/* Financial Totals */}
                 <div className="space-y-3 pt-3 border-t border-neutral-800 text-sm">
                   <div className="flex justify-between text-neutral-300">
                     <span>Bag Subtotal</span>
                     <span className="font-semibold text-white">{formatCurrency(subtotal)}</span>
                   </div>
+
+                  {appliedCoupon && (
+                    <div className="flex justify-between text-luxury-gold">
+                      <span>Coupon Discount ({appliedCoupon.code})</span>
+                      <span className="font-semibold">-{formatCurrency(appliedCoupon.calculatedDiscount)}</span>
+                    </div>
+                  )}
 
                   <div className="flex justify-between text-neutral-300">
                     <span>Delivery ({district})</span>
@@ -469,6 +582,17 @@ export default function CheckoutPage() {
                   <div className="pt-3 border-t border-neutral-800 flex justify-between items-baseline">
                     <span className="text-base font-bold text-white">Total Amount</span>
                     <span className="text-xl font-bold text-luxury-gold">{formatCurrency(grandTotal)}</span>
+                  </div>
+                </div>
+
+                {/* Storefront Preview / Testing Mode Notice */}
+                <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-lg text-amber-200 text-xs flex items-start gap-2.5">
+                  <AlertCircle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <strong className="block font-semibold text-amber-300">Storefront Testing Mode</strong>
+                    <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                      Online checkout submission is currently in development testing mode. Live customer orders are not being processed yet. For order inquiries, please contact our team via WhatsApp.
+                    </p>
                   </div>
                 </div>
 

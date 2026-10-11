@@ -1,12 +1,15 @@
-import { StorePageSkeleton } from '@/components/store/store-page-skeleton';
+import { notFound } from 'next/navigation';
+import { getPublicContentPage } from '@/lib/cms/public';
+import { ContentPageViewer } from '@/components/store/content-page-viewer';
 
-export default function TermsPage() {
-  return (
-    <StorePageSkeleton
-      title="Terms & Conditions"
-      category="Policies"
-      description="Standard terms of service governing store purchases, delivery, and payment verification."
-      phase="Phase 4 (Content & Admin Control)"
-    />
-  );
+export const metadata = {
+  title: 'Terms & Conditions | Splender Jewel',
+  description: 'Purchasing and service terms for Splender Jewel fine fashion jewelry.',
+};
+
+export default async function TermsPage() {
+  const page = await getPublicContentPage('terms');
+  if (!page) notFound();
+
+  return <ContentPageViewer page={page} />;
 }

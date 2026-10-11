@@ -50,10 +50,15 @@ export async function getAdminCustomers(filter: AdminCustomerFilter = {}) {
       return { success: false, error: 'Failed to load customers directory.', customers: [], total: 0 };
     }
 
-    // Fetch orders to aggregate customer spending
-    const { data: allOrders } = await (adminClient.from('orders') as any)
-      .select('user_id, total_amount')
-      .not('user_id', 'is', null);
+    // Fetch orders to aggregate customer spending for currently loaded profiles
+    const profileIds = (profiles || []).map((p: any) => p.id);
+    let allOrders: any[] = [];
+    if (profileIds.length > 0) {
+      const { data: pOrders } = await (adminClient.from('orders') as any)
+        .select('user_id, total_amount')
+        .in('user_id', profileIds);
+      allOrders = pOrders || [];
+    }
 
     const spendMap = new Map<string, { count: number; total: number }>();
     if (allOrders) {

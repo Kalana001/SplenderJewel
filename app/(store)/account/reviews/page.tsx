@@ -1,12 +1,35 @@
-import { StorePageSkeleton } from '@/components/store/store-page-skeleton';
+import React from 'react';
+import { redirect } from 'next/navigation';
+import { Container } from '@/components/ui/container';
+import { CustomerReviewsManager } from '@/components/store/customer-reviews-manager';
+import { getCustomerReviews, getEligibleReviewProducts } from '@/lib/reviews/customer-actions';
+import { getCurrentUser } from '@/lib/auth/server';
 
-export default function AccountReviewsPage() {
+export const metadata = {
+  title: 'My Product Reviews | Splender Jewel',
+  description: 'Submit and manage verified purchase product reviews for delivered jewelry pieces.',
+};
+
+export default async function AccountReviewsPage() {
+  const user = await getCurrentUser();
+  if (!user) {
+    redirect('/login?redirectTo=/account/reviews');
+  }
+
+  const [reviewsRes, eligibleRes] = await Promise.all([
+    getCustomerReviews(),
+    getEligibleReviewProducts(),
+  ]);
+
+  const reviews = reviewsRes.success ? reviewsRes.reviews : [];
+  const eligible = eligibleRes.success ? eligibleRes.eligibleItems : [];
+
   return (
-    <StorePageSkeleton
-      title="My Reviews"
-      category="Customer Account"
-      description="Submit and manage reviews for verified delivered purchases."
-      phase="Phase 4 (Reviews & Customer Engagement)"
-    />
+    <Container size="xl" className="py-10 sm:py-16">
+      <CustomerReviewsManager
+        initialReviews={reviews}
+        initialEligible={eligible}
+      />
+    </Container>
   );
 }

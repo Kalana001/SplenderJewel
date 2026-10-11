@@ -1,12 +1,15 @@
-import { StorePageSkeleton } from '@/components/store/store-page-skeleton';
+import { notFound } from 'next/navigation';
+import { getPublicContentPage } from '@/lib/cms/public';
+import { ContentPageViewer } from '@/components/store/content-page-viewer';
 
-export default function ShippingPage() {
-  return (
-    <StorePageSkeleton
-      title="Shipping & Delivery Information"
-      category="Help & Support"
-      description="Details regarding home delivery across all 25 Sri Lankan districts, delivery rates configured in Admin, and dispatch schedules."
-      phase="Phase 4 (Content & Admin Control)"
-    />
-  );
+export const metadata = {
+  title: 'Shipping & Delivery | Splender Jewel',
+  description: 'Doorstep courier delivery across all 25 districts in Sri Lanka. Fast, insured, and tracked dispatch.',
+};
+
+export default async function ShippingPage() {
+  const page = await getPublicContentPage('shipping');
+  if (!page) notFound();
+
+  return <ContentPageViewer page={page} />;
 }

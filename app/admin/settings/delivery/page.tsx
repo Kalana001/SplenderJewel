@@ -1,18 +1,39 @@
-import { AdminPageSkeleton } from '@/components/admin/admin-page-skeleton';
+import React from 'react';
+import { requireAdminPageAuth } from '@/lib/auth/server';
+import { getAdminDeliverySettings } from '@/lib/settings/admin-actions';
+import { DeliverySettingsManager } from '@/components/admin/settings/delivery-settings-manager';
 
-export default function AdminDeliverySettingsPage() {
+export const metadata = {
+  title: 'Delivery Matrix | Splender Jewel Admin',
+  description: 'Manage shipping fees and delivery zones for all 25 administrative districts in Sri Lanka',
+};
+
+export default async function AdminDeliverySettingsPage() {
+  await requireAdminPageAuth();
+
+  const res = await getAdminDeliverySettings();
+  const districts = res.success ? res.districts : [];
+  const globalConfig = res.success
+    ? res.globalConfig
+    : { freeDeliveryEnabled: false, freeDeliveryThreshold: 10000, defaultDeliveryFee: 400 };
+
   return (
-    <AdminPageSkeleton
-      title="Delivery Matrix (25 Sri Lanka Districts)"
-      category="Settings"
-      description="Manage home delivery rates for all 25 administrative districts in Sri Lanka, configure estimated delivery days, and toggle free delivery options."
-      targetPhase="Phase 3 (Delivery Matrix & Checkout)"
-      capabilities={[
-        'Configure custom delivery fee per district (Colombo, Gampaha, Kandy, Galle, etc.)',
-        'Set estimated delivery timelines per district',
-        'Toggle free delivery threshold (initially set to OFF)',
-        'Enable or disable home delivery to specific regions',
-      ]}
-    />
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-neutral-800 pb-5">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-serif font-bold text-white tracking-wide">
+            Delivery Matrix & Shipping Rates
+          </h1>
+          <p className="text-xs sm:text-sm text-neutral-400 mt-1">
+            Configure courier delivery charges, free shipping thresholds, and active status for all 25 Sri Lankan districts.
+          </p>
+        </div>
+      </div>
+
+      <DeliverySettingsManager
+        initialDistricts={districts}
+        initialGlobalConfig={globalConfig}
+      />
+    </div>
   );
 }

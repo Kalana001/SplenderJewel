@@ -6,6 +6,7 @@ import { getCurrentUser } from '@/lib/auth/server';
 import { isValidDistrict } from '@/lib/config/districts';
 import { PAYMENT_METHODS, ORDER_STATUSES, PAYMENT_STATUSES, type PaymentMethod } from '@/lib/config/constants';
 import { mapDbOrderToDomain, type Order, type OrderDbRow, type OrderItem } from '@/types/order';
+import { validateCouponAction } from '@/lib/coupons/actions';
 
 export interface CreateOrderItemInput {
   variantId: string;
@@ -24,6 +25,7 @@ export interface CreateOrderInput {
   postalCode?: string | null;
   deliveryNotes?: string | null;
   paymentMethod: PaymentMethod;
+  couponCode?: string | null;
   items: CreateOrderItemInput[];
 }
 
@@ -70,6 +72,15 @@ interface VariantWithProductRow {
  */
 export async function createOrderAction(input: CreateOrderInput): Promise<CreateOrderResult> {
   try {
+    // 0. Development & Testing Mode Guardrail
+    // Online order submission is safely blocked while checkout transactional database verification remains pending.
+    if (process.env.NEXT_PUBLIC_ENABLE_LIVE_CHECKOUT !== 'true') {
+      return {
+        success: false,
+        error: 'The storefront is currently in development preview mode. Online checkout submission is temporarily disabled while transactional database verification is underway. For priority inquiries, please contact us on WhatsApp.',
+      };
+    }
+
     // 1. Validate customer & address inputs
     if (!input.customerName?.trim()) {
       return { success: false, error: 'Full name is required.' };
@@ -186,9 +197,67 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       });
     }
 
-    const totalAmount = subtotal + deliveryFee;
+    // 5. Validate coupon if provided
+    let discountAmount = 0;
+    let appliedCouponCode: string | null = null;
+    let couponId: string | null = null;
 
-    // 5. Insert order row into database
+    if (input.couponCode?.trim()) {
+      const couponRes = await validateCouponAction(input.couponCode, subtotal);
+      if (!couponRes.valid) {
+        return { success: false, error: couponRes.error || 'Invalid coupon code.' };
+      }
+      discountAmount = couponRes.calculatedDiscount || 0;
+      appliedCouponCode = couponRes.code || input.couponCode.trim().toUpperCase();
+      couponId = couponRes.couponId || null;
+    }
+
+    // 6. Attempt atomic RPC checkout procedure first (PostgreSQL transactional execution)
+    try {
+      const { data: rpcData, error: rpcError } = await (adminClient as any).rpc('process_order_checkout', {
+        p_order_data: {
+          user_id: userId,
+          customer_name: input.customerName.trim(),
+          email: input.email?.trim() || null,
+          phone1: input.phone1.trim(),
+          phone2: input.phone2?.trim() || null,
+          address_line: input.addressLine.trim(),
+          city: input.city?.trim() || null,
+          district: input.district,
+          province: input.province?.trim() || null,
+          postal_code: input.postalCode?.trim() || null,
+          delivery_notes: input.deliveryNotes?.trim() || null,
+          delivery_fee: deliveryFee,
+          payment_method: input.paymentMethod,
+        },
+        p_items_data: input.items.map((i) => ({
+          variant_id: i.variantId,
+          quantity: i.quantity,
+        })),
+        p_coupon_code: appliedCouponCode,
+      });
+
+      if (!rpcError && rpcData && rpcData.success) {
+        return {
+          success: true,
+          orderNumber: rpcData.order_number,
+          orderId: rpcData.order_id,
+          orderToken: rpcData.order_token,
+        };
+      }
+
+      // If it's a domain/validation error raised by the database procedure (e.g. out of stock)
+      if (rpcError && rpcError.code !== 'PGRST202' && rpcError.code !== '42883' && !rpcError.message?.toLowerCase().includes('does not exist')) {
+        return { success: false, error: rpcError.message || 'Unable to place order.' };
+      }
+    } catch {
+      // Stored procedure unavailable or not yet migrated on remote environment; proceed with compensation sequence
+    }
+
+    // 7. Resilient application-level checkout sequence with compensation rollback
+    const totalAmount = Math.max(0, subtotal - discountAmount) + deliveryFee;
+
+    // Insert order row into database
     const { data: newOrderRaw, error: orderInsertError } = await (adminClient.from('orders') as any)
       .insert({
         user_id: userId,
@@ -204,8 +273,8 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
         delivery_notes: input.deliveryNotes?.trim() || null,
         subtotal,
         delivery_fee: deliveryFee,
-        discount_amount: 0,
-        coupon_code: null,
+        discount_amount: discountAmount,
+        coupon_code: appliedCouponCode,
         total_amount: totalAmount,
         payment_method: input.paymentMethod,
         payment_status: PAYMENT_STATUSES.PENDING,
@@ -221,7 +290,7 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       return { success: false, error: 'Unable to process your order at this time. Please check your details and try again.' };
     }
 
-    // 6. Insert order items
+    // Insert order items
     const orderItemsPayload = validatedItems.map((item) => ({
       order_id: newOrder.id,
       product_id: item.productId,
@@ -239,11 +308,77 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       .insert(orderItemsPayload);
 
     if (itemsInsertError) {
-      console.error('[OrderCreation] Database failed to insert order items for order ID:', newOrder.id, itemsInsertError.message);
+      console.error('[OrderCreation] Database failed to insert order items, rolling back stranded order ID:', newOrder.id, itemsInsertError.message);
+      // Compensation: remove the stranded header order
+      await (adminClient.from('orders') as any).delete().eq('id', newOrder.id);
       return { success: false, error: 'Unable to finalize order line items. Please try again.' };
     }
 
-    // 7. Insert initial status history
+    // Deduct variant inventory and log movements with compensation rollback
+    const updatedVariants: Array<{ id: string; previousQty: number; previousStatus: string }> = [];
+    let inventoryError: string | null = null;
+
+    for (const item of validatedItems) {
+      const currentVariant = variantMap.get(item.variantId);
+      if (!currentVariant) continue;
+
+      const previousQty = currentVariant.stock_quantity;
+      const newQty = previousQty - item.quantity;
+      let newStatus: string;
+      if (newQty <= 0) {
+        newStatus = 'out_of_stock';
+      } else if (newQty <= 5) {
+        newStatus = 'low_stock';
+      } else {
+        newStatus = 'in_stock';
+      }
+
+      const { error: variantUpdateError } = await (adminClient.from('product_variants') as any)
+        .update({
+          stock_quantity: Math.max(0, newQty),
+          stock_status: newStatus,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', item.variantId);
+
+      if (variantUpdateError) {
+        inventoryError = variantUpdateError.message;
+        break;
+      }
+
+      updatedVariants.push({
+        id: item.variantId,
+        previousQty,
+        previousStatus: currentVariant.stock_quantity <= 0 ? 'out_of_stock' : (currentVariant.stock_quantity <= 5 ? 'low_stock' : 'in_stock'),
+      });
+
+      // Record inventory movement
+      await (adminClient.from('inventory_movements') as any).insert({
+        variant_id: item.variantId,
+        quantity_change: -item.quantity,
+        previous_quantity: previousQty,
+        new_quantity: Math.max(0, newQty),
+        reason: 'order_sold',
+        reference_id: newOrder.order_number,
+        created_by: null,
+      });
+    }
+
+    if (inventoryError) {
+      console.error('[OrderCreation] Inventory update failed, rolling back order and stock:', inventoryError);
+      // Compensation: restore updated variants
+      for (const v of updatedVariants) {
+        await (adminClient.from('product_variants') as any)
+          .update({ stock_quantity: v.previousQty, stock_status: v.previousStatus, updated_at: new Date().toISOString() })
+          .eq('id', v.id);
+      }
+      // Compensation: remove line items and order header
+      await (adminClient.from('order_items') as any).delete().eq('order_id', newOrder.id);
+      await (adminClient.from('orders') as any).delete().eq('id', newOrder.id);
+      return { success: false, error: 'Failed to reserve inventory for your order. Please try again.' };
+    }
+
+    // Insert initial status history
     await (adminClient.from('order_status_history') as any).insert({
       order_id: newOrder.id,
       previous_status: null,
@@ -251,7 +386,17 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       notes: 'Order placed by customer (Pending verification)',
     });
 
-    // 8. If Bank Transfer, insert payment tracking record
+    // Record coupon usage if coupon applied
+    if (couponId && appliedCouponCode) {
+      await (adminClient.from('coupon_usage') as any).insert({
+        coupon_id: couponId,
+        order_id: newOrder.id,
+        user_id: userId,
+        discount_amount: discountAmount,
+      });
+    }
+
+    // If Bank Transfer, insert payment tracking record
     if (input.paymentMethod === PAYMENT_METHODS.BANK_TRANSFER) {
       await (adminClient.from('payments') as any).insert({
         order_id: newOrder.id,

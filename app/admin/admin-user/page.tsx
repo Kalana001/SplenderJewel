@@ -1,17 +1,28 @@
-import { AdminPageSkeleton } from '@/components/admin/admin-page-skeleton';
+import React from 'react';
+import { requireAdminPageAuth } from '@/lib/auth/server';
+import { getAdminUsersList } from '@/lib/admin-users/admin-actions';
+import { AdminUsersManager } from '@/components/admin/admin-users-manager';
 
-export default function AdminUsersManagementPage() {
+export const metadata = {
+  title: 'Admin Users & RBAC | Splender Jewel Admin',
+  description: 'Manage staff administrators, role assignments, and privileged access control.',
+};
+
+export default async function AdminUsersPage() {
+  await requireAdminPageAuth();
+
+  const res = await getAdminUsersList();
+  const admins = res.success ? res.admins : [];
+  const currentAdminId = res.currentAdminId || '';
+  const currentAdminRole = res.currentAdminRole || 'staff';
+
   return (
-    <AdminPageSkeleton
-      title="Admin Users & Role Permissions"
-      category="Security & Access"
-      description="Manage administrator accounts, assign access roles (Super Admin, Store Manager, Order Manager), and revoke administrative privileges."
-      targetPhase="Phase 1 (Authentication & Authorization)"
-      capabilities={[
-        'Invite and manage store administrative staff',
-        'Role-based access control (RBAC)',
-        'Authentication log and active session tracking',
-      ]}
-    />
+    <div className="space-y-6">
+      <AdminUsersManager
+        initialAdmins={admins}
+        currentAdminId={currentAdminId}
+        currentAdminRole={currentAdminRole}
+      />
+    </div>
   );
 }
