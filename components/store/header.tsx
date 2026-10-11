@@ -42,10 +42,10 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
       <Container size="xl">
         <div className="relative flex items-center justify-between h-14 sm:h-16">
           {/* Left: Mobile Menu Toggle & Search Action */}
-          <div className="flex items-center space-x-1 sm:space-x-2 z-10">
+          <div className="flex items-center space-x-0.5 sm:space-x-2 z-10 shrink-0">
             <button
               type="button"
-              className="inline-flex lg:hidden p-2 text-neutral-300 hover:text-white transition-colors"
+              className="inline-flex lg:hidden p-1.5 sm:p-2 text-neutral-300 hover:text-white transition-colors"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               aria-label="Toggle Navigation Menu"
             >
@@ -54,7 +54,7 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
 
             <Link
               href="/search"
-              className="inline-flex items-center space-x-2 text-xs tracking-wider text-neutral-400 hover:text-white transition-colors p-2 sm:py-1.5 sm:px-3 rounded-full sm:border sm:border-neutral-800 sm:hover:border-luxury-gold/40 sm:bg-neutral-900/60"
+              className="inline-flex items-center space-x-2 text-xs tracking-wider text-neutral-400 hover:text-white transition-colors p-1.5 sm:py-1.5 sm:px-3 rounded-full sm:border sm:border-neutral-800 sm:hover:border-luxury-gold/40 sm:bg-neutral-900/60"
               aria-label="Search Catalog"
             >
               <Search className="h-4 w-4 text-luxury-gold" />
@@ -63,19 +63,19 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
           </div>
 
           {/* Center: Truly Centered Brand Logo & Typography */}
-          <div className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center text-center">
-            <Link href="/" className="flex items-center space-x-2 sm:space-x-2.5 group py-1" aria-label="Splender Jewel Home">
+          <div className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center text-center max-w-[50%] sm:max-w-none">
+            <Link href="/" className="flex items-center space-x-1.5 sm:space-x-2.5 group py-1" aria-label="Splender Jewel Home">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={logoUrl || config.logoUrl || '/images/logo.png'}
                 alt={config.storeName}
-                className="h-7 sm:h-8 md:h-9 w-auto object-contain transition-transform duration-300 group-hover:scale-105"
+                className="h-6 sm:h-8 md:h-9 w-auto object-contain transition-transform duration-300 group-hover:scale-105 shrink-0"
               />
               <div className="flex flex-col text-left whitespace-nowrap">
-                <span className="font-serif text-sm sm:text-base md:text-lg font-bold tracking-[0.22em] text-white group-hover:text-luxury-gold transition-colors uppercase leading-none">
+                <span className="font-serif text-xs sm:text-base md:text-lg font-bold tracking-[0.16em] sm:tracking-[0.22em] text-white group-hover:text-luxury-gold transition-colors uppercase leading-none">
                   Splender
                 </span>
-                <span className="text-[7px] sm:text-[8px] uppercase tracking-[0.3em] text-luxury-gold font-medium mt-1 leading-none">
+                <span className="hidden sm:block text-[7px] sm:text-[8px] uppercase tracking-[0.3em] text-luxury-gold font-medium mt-1 leading-none">
                   The Jewel Gallery
                 </span>
               </div>
@@ -83,10 +83,10 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
           </div>
 
           {/* Right: Customer Utilities (Wishlist, Account, Cart) */}
-          <div className="flex items-center justify-end space-x-0.5 sm:space-x-1 z-10">
+          <div className="flex items-center justify-end space-x-0.5 sm:space-x-1 z-10 shrink-0">
             <Link
               href="/account/wishlist"
-              className="p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
+              className="p-1.5 sm:p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
               aria-label="Wishlist"
             >
               <Heart className="h-4.5 w-4.5 sm:h-5 sm:w-5" />
@@ -94,7 +94,7 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
 
             <Link
               href="/account"
-              className="p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
+              className="p-1.5 sm:p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
               aria-label="Account"
             >
               <User className="h-4.5 w-4.5 sm:h-5 sm:w-5" />
@@ -102,7 +102,7 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
 
             <Link
               href="/cart"
-              className="relative p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
+              className="relative p-1.5 sm:p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
               aria-label="Shopping Cart"
             >
               <ShoppingBag className="h-4.5 w-4.5 sm:h-5 sm:w-5" />
