@@ -28,6 +28,14 @@ export async function updateSession(request: NextRequest) {
     }
   }
 
+  const isCustomerProtected = pathname.startsWith('/account');
+  const isAdminProtected = pathname.startsWith('/admin') && pathname !== '/admin/login';
+
+  // Performance Optimization: Bypass Supabase Auth remote network call on public routes to eliminate 300ms-600ms latency on every public page click
+  if (!isCustomerProtected && !isAdminProtected) {
+    return supabaseResponse;
+  }
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -52,13 +60,13 @@ export async function updateSession(request: NextRequest) {
     },
   });
 
-  // Refresh auth session
+  // Refresh auth session only on protected routes
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   // 1. Customer Protected Routes: /account/*
-  if (pathname.startsWith('/account')) {
+  if (isCustomerProtected) {
     if (!user) {
       const redirectUrl = new URL('/login', request.url);
       redirectUrl.searchParams.set('redirectTo', pathname);
@@ -67,7 +75,7 @@ export async function updateSession(request: NextRequest) {
   }
 
   // 2. Admin Protected Routes: /admin/* (excluding /admin/login)
-  if (pathname.startsWith('/admin') && pathname !== '/admin/login') {
+  if (isAdminProtected) {
     if (!user) {
       const redirectUrl = new URL('/admin/login', request.url);
       return NextResponse.redirect(redirectUrl);

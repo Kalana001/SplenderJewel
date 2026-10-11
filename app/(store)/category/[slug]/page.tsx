@@ -5,6 +5,8 @@ import { getPublicCategories } from '@/lib/catalog/categories';
 import { CatalogBrowser } from '@/components/store/catalog-browser';
 import { Container } from '@/components/ui/container';
 
+export const revalidate = 300;
+
 interface CategoryPageProps {
   params: Promise<{ slug: string }>;
 }

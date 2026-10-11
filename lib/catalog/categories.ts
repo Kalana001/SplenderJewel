@@ -2,7 +2,7 @@
 
 import 'server-only';
 import { revalidatePath } from 'next/cache';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createPublicSupabaseClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAdminAuth } from '@/lib/auth/server';
 import { DEFAULT_STORE_CATEGORIES } from '@/lib/config/store';
@@ -100,7 +100,7 @@ export async function getAdminCategories(): Promise<{
  */
 export async function getPublicCategories(client?: any): Promise<Category[]> {
   try {
-    const supabase = client !== undefined ? client : await createServerSupabaseClient();
+    const supabase = client !== undefined ? client : createPublicSupabaseClient();
     if (!supabase) return DEFAULT_STORE_CATEGORIES;
 
     const { data, error } = await supabase

@@ -4,6 +4,8 @@ import { getPublicProductBySlug, getStoreWhatsAppNumber } from '@/lib/catalog/pu
 import { ProductDetailViewer } from '@/components/store/product-detail-viewer';
 import { Container } from '@/components/ui/container';
 
+export const revalidate = 300;
+
 interface ProductDetailPageProps {
   params: Promise<{ slug: string }>;
 }

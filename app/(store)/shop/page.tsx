@@ -3,6 +3,8 @@ import { getPublicCategories } from '@/lib/catalog/categories';
 import { CatalogBrowser } from '@/components/store/catalog-browser';
 import { Container } from '@/components/ui/container';
 
+export const revalidate = 300;
+
 export const metadata = {
   title: 'Jewelry Catalog | Splender Jewel',
   description: 'Explore the full fine fashion jewelry collection by Splender Jewel. 18K gold-plated rings, necklaces, bracelets, and earrings.',

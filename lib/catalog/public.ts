@@ -1,6 +1,6 @@
-'use server';
-
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import 'server-only';
+import { cache } from 'react';
+import { createPublicSupabaseClient } from '@/lib/supabase/server';
 import type { ProductPublic, ProductVariantPublic, ProductImage, Category } from '@/types/product';
 import type { StockStatus } from '@/lib/config/constants';
 import { DEFAULT_DEV_STORE_CONFIG, DEFAULT_STORE_CATEGORIES } from '@/lib/config/store';
@@ -32,7 +32,7 @@ export interface PublicProductsResult {
  * - Selects only active variants (`is_active = true`)
  * - NEVER retrieves or exposes `purchase_cost`
  */
-export async function getPublicProducts(
+export const getPublicProducts = cache(async function getPublicProducts(
   filters?: PublicProductsFilter
 ): Promise<PublicProductsResult> {
   const emptyResult: PublicProductsResult = {
@@ -44,7 +44,7 @@ export async function getPublicProducts(
   };
 
   try {
-    const supabase = await createServerSupabaseClient();
+    const supabase = createPublicSupabaseClient();
     if (!supabase) return emptyResult;
 
     const page = Math.max(1, filters?.page || 1);
@@ -268,15 +268,17 @@ export async function getPublicProducts(
   } catch {
     return emptyResult;
   }
-}
+});
 
 /**
  * Retrieves a single active product by slug for the product details page.
  * Returns null if the product does not exist or is inactive.
  */
-export async function getPublicProductBySlug(slug: string): Promise<ProductPublic | null> {
+export const getPublicProductBySlug = cache(async function getPublicProductBySlug(
+  slug: string
+): Promise<ProductPublic | null> {
   try {
-    const supabase = await createServerSupabaseClient();
+    const supabase = createPublicSupabaseClient();
     if (!supabase || !slug?.trim()) return null;
 
     const { data: row, error } = await (supabase.from('products') as any)
@@ -406,7 +408,7 @@ export async function getPublicProductBySlug(slug: string): Promise<ProductPubli
   } catch {
     return null;
   }
-}
+});
 
 /**
  * Retrieves category details by slug.
@@ -421,14 +423,14 @@ export async function getPublicProductBySlug(slug: string): Promise<ProductPubli
  * 6. Intentional fallback behavior is preserved for a genuinely unconfigured Supabase client
  *    (identified safely by createServerSupabaseClient() returning null in offline dev).
  */
-export async function getPublicCategoryBySlug(
+export const getPublicCategoryBySlug = cache(async function getPublicCategoryBySlug(
   slug: string,
   client?: any
 ): Promise<Category | null> {
   const normalizedSlug = slug?.trim().toLowerCase();
   if (!normalizedSlug) return null;
 
-  const supabase = client !== undefined ? client : await createServerSupabaseClient();
+  const supabase = client !== undefined ? client : createPublicSupabaseClient();
   if (!supabase) {
     // Supabase client is genuinely unconfigured (e.g. offline development without credentials)
     const fallback = DEFAULT_STORE_CATEGORIES.find((c) => c.slug === normalizedSlug);
@@ -467,14 +469,14 @@ export async function getPublicCategoryBySlug(
   // Check if it matches one of the recognized curated fallback categories:
   const fallback = DEFAULT_STORE_CATEGORIES.find((c) => c.slug === normalizedSlug);
   return fallback || null;
-}
+});
 
 /**
  * Fetches configured store WhatsApp number from store_settings table, falling back to store config.
  */
-export async function getStoreWhatsAppNumber(): Promise<string> {
+export const getStoreWhatsAppNumber = cache(async function getStoreWhatsAppNumber(): Promise<string> {
   try {
-    const supabase = await createServerSupabaseClient();
+    const supabase = createPublicSupabaseClient();
     if (!supabase) return DEFAULT_DEV_STORE_CONFIG.whatsAppNumber;
 
     const { data } = await (supabase.from('store_settings') as any)
@@ -489,4 +491,4 @@ export async function getStoreWhatsAppNumber(): Promise<string> {
     // fallback
   }
   return DEFAULT_DEV_STORE_CONFIG.whatsAppNumber;
-}
+});
