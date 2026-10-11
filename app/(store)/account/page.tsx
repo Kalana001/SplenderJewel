@@ -17,6 +17,8 @@ import {
   Clock,
   ShieldCheck,
   ShoppingBag,
+  Gem,
+  ArrowUpRight,
 } from 'lucide-react';
 
 export const metadata = {
@@ -118,10 +120,16 @@ export default async function AccountDashboardPage() {
           </div>
 
           <div className="flex items-center space-x-3">
-            <Button asChild variant="outline" size="sm">
-              <Link href="/shop">
-                <ShoppingBag className="h-4 w-4 mr-1.5" />
-                Browse Catalog
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="border-luxury-gold/40 hover:border-luxury-gold text-neutral-800 dark:text-neutral-200 hover:text-luxury-gold hover:bg-luxury-gold/10 uppercase tracking-[0.16em] text-[11px] font-semibold transition-all duration-300 shadow-sm"
+            >
+              <Link href="/shop" className="inline-flex items-center space-x-1.5">
+                <Gem className="h-3.5 w-3.5 text-luxury-gold" />
+                <span>Explore Catalog</span>
+                <ArrowUpRight className="h-3 w-3 opacity-60" />
               </Link>
             </Button>
             <SignOutButton variant="ghost" size="sm" />
@@ -170,7 +178,7 @@ export default async function AccountDashboardPage() {
                   Personal Details
                 </CardTitle>
                 <CardDescription className="text-xs mt-1">
-                  Update contact phone, name, and password
+                  Manage contact numbers, identity, and security
                 </CardDescription>
               </CardContent>
             </Card>

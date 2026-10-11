@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { signUpCustomer } from '@/lib/auth/actions';
 import { getSafeRedirectUrl } from '@/lib/auth/redirect';
-import { Eye, EyeOff, Lock, Mail, User, Phone, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, User, Phone, AlertCircle, CheckCircle2, ArrowRight, Gem } from 'lucide-react';
 
 function RegisterForm() {
   const router = useRouter();
@@ -104,8 +104,12 @@ function RegisterForm() {
                 </Link>
               </Button>
               <div>
-                <Link href="/shop" className="text-xs text-neutral-400 hover:text-foreground transition-colors">
-                  Continue browsing catalog
+                <Link
+                  href="/shop"
+                  className="inline-flex items-center space-x-1.5 text-xs text-neutral-400 hover:text-luxury-gold transition-colors"
+                >
+                  <Gem className="h-3 w-3 text-luxury-gold" />
+                  <span>Explore Fine Jewelry Catalog</span>
                 </Link>
               </div>
             </div>

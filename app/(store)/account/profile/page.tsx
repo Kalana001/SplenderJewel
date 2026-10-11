@@ -31,10 +31,14 @@ export default async function AccountProfilePage() {
     .eq('id', user.id)
     .maybeSingle();
 
+  // Sanitize phone1: ensure legacy or autofilled email addresses are never treated as phone numbers
+  const rawPhone1 = profile?.phone1 || (user.user_metadata?.phone1 as string) || '';
+  const sanitizedPhone1 = rawPhone1 && !rawPhone1.includes('@') ? rawPhone1 : '';
+
   const initialProfile = {
     fullName: profile?.full_name || (user.user_metadata?.full_name as string) || '',
     email: user.email || '',
-    phone1: profile?.phone1 || (user.user_metadata?.phone1 as string) || '',
+    phone1: sanitizedPhone1,
     phone2: profile?.phone2 || null,
   };
 
@@ -55,15 +59,15 @@ export default async function AccountProfilePage() {
         {/* Page Header */}
         <div className="mb-8">
           <div className="flex items-center space-x-3">
-            <div className="p-2 rounded-sm bg-luxury-gold/15 text-luxury-gold">
+            <div className="p-2.5 rounded-sm bg-luxury-gold/15 text-luxury-gold border border-luxury-gold/30">
               <UserCircle className="h-6 w-6" />
             </div>
             <div>
               <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
-                Profile Details & Security
+                Personal Details
               </h1>
               <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 mt-1">
-                Manage your personal contact details and update your account password.
+                Manage your contact information and account security.
               </p>
             </div>
           </div>

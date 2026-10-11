@@ -4,8 +4,8 @@ import React, { useState } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { updateCustomerProfile, updatePassword } from '@/lib/auth/actions';
-import { User, Phone, Mail, Lock, Eye, EyeOff, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { updateCustomerProfile, requestPasswordReset } from '@/lib/auth/actions';
+import { User, Phone, Mail, ShieldCheck, KeyRound, AlertCircle, CheckCircle2, Send } from 'lucide-react';
 
 interface ProfileEditorProps {
   initialProfile: {
@@ -25,13 +25,10 @@ export function ProfileEditor({ initialProfile }: ProfileEditorProps) {
   const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
 
-  // Password Update State
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [passwordLoading, setPasswordLoading] = useState(false);
-  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
-  const [passwordError, setPasswordError] = useState<string | null>(null);
+  // Email-Verified Password Reset State
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState<string | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,42 +61,24 @@ export function ProfileEditor({ initialProfile }: ProfileEditorProps) {
     }
   };
 
-  const handleUpdatePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPasswordSuccess(null);
-    setPasswordError(null);
-
-    if (!newPassword) {
-      setPasswordError('Please enter a new password.');
-      return;
-    }
-
-    if (newPassword.length < 8) {
-      setPasswordError('Password must be at least 8 characters long.');
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      setPasswordError('Passwords do not match.');
-      return;
-    }
-
-    setPasswordLoading(true);
+  const handleSendResetEmail = async () => {
+    setResetSuccess(null);
+    setResetError(null);
+    setResetLoading(true);
 
     try {
-      const result = await updatePassword(newPassword);
-
+      const result = await requestPasswordReset(initialProfile.email);
       if (!result.success) {
-        setPasswordError(result.error || 'Failed to update password.');
+        setResetError(result.error || 'Failed to send password reset email.');
       } else {
-        setPasswordSuccess('Your password has been updated successfully.');
-        setNewPassword('');
-        setConfirmPassword('');
+        setResetSuccess(
+          `A secure password reset link has been dispatched to ${initialProfile.email}. Check your inbox and click the link to update your password.`
+        );
       }
     } catch (err: any) {
-      setPasswordError(err?.message || 'An unexpected error occurred.');
+      setResetError(err?.message || 'An unexpected error occurred while requesting password reset.');
     } finally {
-      setPasswordLoading(false);
+      setResetLoading(false);
     }
   };
 
@@ -110,7 +89,7 @@ export function ProfileEditor({ initialProfile }: ProfileEditorProps) {
         <CardHeader className="pb-4">
           <CardTitle className="text-lg font-serif">Personal Information</CardTitle>
           <CardDescription className="text-xs">
-            Update your contact details for ordering and shipping updates.
+            Update your contact details for ordering and Sri Lankan delivery updates.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -139,7 +118,9 @@ export function ProfileEditor({ initialProfile }: ProfileEditorProps) {
               <div className="relative">
                 <Input
                   id="profileFullName"
+                  name="fullName"
                   type="text"
+                  autoComplete="name"
                   required
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
@@ -159,17 +140,19 @@ export function ProfileEditor({ initialProfile }: ProfileEditorProps) {
                 Email Address
               </label>
               <div className="relative">
-                <Input
+                <input
                   id="profileEmail"
+                  name="email"
                   type="email"
-                  disabled
+                  readOnly
                   value={initialProfile.email}
-                  className="pl-9 text-sm bg-neutral-100 dark:bg-neutral-850 cursor-not-allowed opacity-80"
+                  className="flex h-10 w-full rounded-sm border border-neutral-300 dark:border-neutral-700 bg-neutral-100/80 dark:bg-neutral-900/90 px-3 py-2 pl-9 text-sm font-medium text-neutral-900 dark:text-neutral-100 select-all cursor-default focus:outline-none"
                 />
-                <Mail className="h-4 w-4 text-neutral-400 absolute left-3 top-3 pointer-events-none" />
+                <Mail className="h-4 w-4 text-luxury-gold absolute left-3 top-3 pointer-events-none" />
               </div>
-              <p className="text-[11px] text-neutral-400 mt-1">
-                Your email address is your primary account identity.
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-1.5 flex items-center gap-1.5">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <span>Primary account identity (Read-only)</span>
               </p>
             </div>
 
@@ -178,12 +161,14 @@ export function ProfileEditor({ initialProfile }: ProfileEditorProps) {
                 htmlFor="profilePhone1"
                 className="block text-xs uppercase tracking-wider font-medium text-neutral-700 dark:text-neutral-300 mb-1"
               >
-                Primary Phone Number
+                Primary Contact Number
               </label>
               <div className="relative">
                 <Input
                   id="profilePhone1"
+                  name="phone1"
                   type="tel"
+                  autoComplete="tel"
                   value={phone1}
                   onChange={(e) => setPhone1(e.target.value)}
                   placeholder="07X XXX XXXX"
@@ -192,6 +177,9 @@ export function ProfileEditor({ initialProfile }: ProfileEditorProps) {
                 />
                 <Phone className="h-4 w-4 text-neutral-400 absolute left-3 top-3 pointer-events-none" />
               </div>
+              <p className="text-[11px] text-neutral-400 mt-1">
+                Used by courier delivery services for shipping notifications.
+              </p>
             </div>
 
             <div>
@@ -204,7 +192,9 @@ export function ProfileEditor({ initialProfile }: ProfileEditorProps) {
               <div className="relative">
                 <Input
                   id="profilePhone2"
+                  name="phone2"
                   type="tel"
+                  autoComplete="tel"
                   value={phone2}
                   onChange={(e) => setPhone2(e.target.value)}
                   placeholder="07X XXX XXXX (optional)"
@@ -228,94 +218,65 @@ export function ProfileEditor({ initialProfile }: ProfileEditorProps) {
         </CardContent>
       </Card>
 
-      {/* 2. Security & Password Update */}
+      {/* 2. Account Security & Password Protection */}
       <Card className="border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-luxury-surface">
         <CardHeader className="pb-4">
-          <CardTitle className="text-lg font-serif">Security & Password</CardTitle>
-          <CardDescription className="text-xs">
-            Change your account password regularly to keep your orders secure.
-          </CardDescription>
+          <div className="flex items-center space-x-2.5">
+            <div className="p-2 rounded-sm bg-luxury-gold/15 text-luxury-gold">
+              <ShieldCheck className="h-5 w-5" />
+            </div>
+            <div>
+              <CardTitle className="text-lg font-serif">Account Security</CardTitle>
+              <CardDescription className="text-xs">
+                Password recovery and account authentication
+              </CardDescription>
+            </div>
+          </div>
         </CardHeader>
-        <CardContent>
-          {passwordError && (
-            <div className="mb-4 p-3 rounded-sm bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 text-xs flex items-start space-x-2">
+        <CardContent className="space-y-5">
+          <div className="p-4 rounded-sm border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/50 space-y-2">
+            <div className="flex items-center space-x-2 text-xs font-semibold uppercase tracking-wider text-neutral-800 dark:text-neutral-200">
+              <KeyRound className="h-4 w-4 text-luxury-gold shrink-0" />
+              <span>Password Protection</span>
+            </div>
+            <p className="text-xs text-neutral-600 dark:text-neutral-400 leading-relaxed">
+              To keep your orders and personal data safe, password changes require email verification. When you request a password change, an encrypted one-time reset link is dispatched directly to your registered email address.
+            </p>
+          </div>
+
+          {resetError && (
+            <div className="p-3 rounded-sm bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 text-xs flex items-start space-x-2">
               <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-red-600 dark:text-red-400" />
-              <span>{passwordError}</span>
+              <span className="leading-relaxed">{resetError}</span>
             </div>
           )}
 
-          {passwordSuccess && (
-            <div className="mb-4 p-3 rounded-sm bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 text-emerald-800 dark:text-emerald-300 text-xs flex items-start space-x-2">
-              <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-              <span>{passwordSuccess}</span>
+          {resetSuccess ? (
+            <div className="p-4 rounded-sm bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 text-emerald-800 dark:text-emerald-300 text-xs flex items-start space-x-2.5">
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-semibold text-xs">Reset Instructions Sent</p>
+                <p className="leading-relaxed text-[11px] opacity-90">{resetSuccess}</p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3 pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="md"
+                onClick={handleSendResetEmail}
+                disabled={resetLoading}
+                className="w-full border-neutral-300 dark:border-neutral-700 hover:border-luxury-gold hover:text-luxury-gold uppercase tracking-[0.14em] text-xs font-semibold space-x-2 transition-colors"
+              >
+                <Send className="h-3.5 w-3.5 text-luxury-gold" />
+                <span>{resetLoading ? 'Sending Reset Link...' : 'Send Password Reset Link to Email'}</span>
+              </Button>
+              <p className="text-[11px] text-center text-neutral-500 dark:text-neutral-400">
+                You will receive an official verification email with a link to securely enter a new password.
+              </p>
             </div>
           )}
-
-          <form onSubmit={handleUpdatePassword} className="space-y-4">
-            <div>
-              <label
-                htmlFor="newPassword"
-                className="block text-xs uppercase tracking-wider font-medium text-neutral-700 dark:text-neutral-300 mb-1"
-              >
-                New Password (8+ characters)
-              </label>
-              <div className="relative">
-                <Input
-                  id="newPassword"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="new-password"
-                  required
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Minimum 8 characters"
-                  disabled={passwordLoading}
-                  className="pl-9 pr-10 text-sm"
-                />
-                <Lock className="h-4 w-4 text-neutral-400 absolute left-3 top-3 pointer-events-none" />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-2.5 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label
-                htmlFor="confirmNewPassword"
-                className="block text-xs uppercase tracking-wider font-medium text-neutral-700 dark:text-neutral-300 mb-1"
-              >
-                Confirm New Password
-              </label>
-              <div className="relative">
-                <Input
-                  id="confirmNewPassword"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="new-password"
-                  required
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Re-enter new password"
-                  disabled={passwordLoading}
-                  className="pl-9 text-sm"
-                />
-                <Lock className="h-4 w-4 text-neutral-400 absolute left-3 top-3 pointer-events-none" />
-              </div>
-            </div>
-
-            <Button
-              type="submit"
-              variant="outline"
-              size="md"
-              disabled={passwordLoading}
-              className="w-full mt-2 uppercase tracking-wider text-xs font-semibold hover:border-luxury-gold"
-            >
-              {passwordLoading ? 'Updating Password...' : 'Update Password'}
-            </Button>
-          </form>
         </CardContent>
       </Card>
     </div>

@@ -7,7 +7,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatCurrency } from '@/lib/config/store';
-import { Package, ArrowLeft, Clock, ShoppingBag, Eye, Truck } from 'lucide-react';
+import { Package, ArrowLeft, Clock, Eye, Truck, Gem, ArrowRight } from 'lucide-react';
 
 export const metadata = {
   title: 'Order History | Splender Jewel',
@@ -154,10 +154,11 @@ export default async function AccountOrdersPage() {
             <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 max-w-md mx-auto mt-1 mb-6">
               When you purchase pieces from Splender Jewel, your order tracking, courier details, and itemized receipts will appear here.
             </p>
-            <Button asChild variant="gold" size="md" className="uppercase tracking-wider text-xs font-semibold">
-              <Link href="/shop">
-                <ShoppingBag className="h-4 w-4 mr-2" />
-                Browse Catalog
+            <Button asChild variant="gold" size="md" className="uppercase tracking-[0.18em] text-xs font-semibold shadow-md shadow-luxury-gold/10">
+              <Link href="/shop" className="inline-flex items-center space-x-2">
+                <Gem className="h-4 w-4" />
+                <span>Explore Catalog</span>
+                <ArrowRight className="h-3.5 w-3.5 ml-1" />
               </Link>
             </Button>
           </Card>
