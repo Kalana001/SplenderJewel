@@ -121,7 +121,7 @@ export async function requestPasswordReset(email: string): Promise<AuthActionRes
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${siteUrl}/account/profile`,
+    redirectTo: `${siteUrl}/auth/callback?next=/reset-password`,
   });
 
   if (error) {
@@ -130,7 +130,33 @@ export async function requestPasswordReset(email: string): Promise<AuthActionRes
 
   return {
     success: true,
-    message: 'Password reset instructions have been sent to your email.',
+    message: 'If an account exists with this email address, password reset instructions have been sent.',
+  };
+}
+
+/**
+ * Customer Password Update (requires active authenticated or recovery session).
+ */
+export async function updatePassword(newPassword: string): Promise<AuthActionResult> {
+  const supabase = await createServerSupabaseClient();
+  if (!supabase) {
+    return { success: false, error: 'Database service is currently unavailable.' };
+  }
+
+  if (!newPassword || newPassword.length < 8) {
+    return { success: false, error: 'Password must be at least 8 characters long.' };
+  }
+
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  revalidatePath('/', 'layout');
+  return {
+    success: true,
+    message: 'Your password has been updated successfully.',
   };
 }
 
