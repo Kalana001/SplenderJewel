@@ -410,50 +410,63 @@ export async function getPublicProductBySlug(slug: string): Promise<ProductPubli
 
 /**
  * Retrieves category details by slug.
+ *
+ * Rules:
+ * 1. A successful Supabase query returning no matching category may use fallback metadata
+ *    for the six recognized slugs ('rings', 'necklaces', 'bracelets', 'earrings', 'men', 'sets').
+ * 2. A successful query returning a real category must return the real database record.
+ * 3. A Supabase query error must propagate.
+ * 4. Any unexpected exception must propagate rather than silently returning fallback metadata.
+ * 5. An unrecognized slug should return null only after a successful query confirms no matching category exists.
+ * 6. Intentional fallback behavior is preserved for a genuinely unconfigured Supabase client
+ *    (identified safely by createServerSupabaseClient() returning null in offline dev).
  */
-export async function getPublicCategoryBySlug(slug: string): Promise<Category | null> {
+export async function getPublicCategoryBySlug(
+  slug: string,
+  client?: any
+): Promise<Category | null> {
   const normalizedSlug = slug?.trim().toLowerCase();
   if (!normalizedSlug) return null;
 
-  try {
-    const supabase = await createServerSupabaseClient();
-    if (supabase) {
-      const { data, error } = await (supabase.from('categories') as any)
-        .select('id, name, slug, description, image_url, display_order, is_active, created_at')
-        .eq('slug', normalizedSlug)
-        .eq('is_active', true)
-        .maybeSingle();
-
-      if (error) {
-        console.error(`[getPublicCategoryBySlug] Database error querying category "${normalizedSlug}":`, error.message);
-        throw new Error(`Database error querying category: ${error.message}`);
-      }
-
-      if (data) {
-        return {
-          id: data.id,
-          name: data.name,
-          slug: data.slug,
-          description: data.description,
-          imageUrl: data.image_url,
-          displayOrder: data.display_order,
-          isActive: data.is_active,
-          createdAt: data.created_at,
-        };
-      }
-    }
-
-    // Category absent from database (0 rows returned with no error):
-    // Check if it matches one of the recognized curated store categories.
-    const fallback = DEFAULT_STORE_CATEGORIES.find((c) => c.slug === normalizedSlug);
-    return fallback || null;
-  } catch (err: unknown) {
-    if (err instanceof Error && err.message.startsWith('Database error querying category:')) {
-      throw err;
-    }
+  const supabase = client !== undefined ? client : await createServerSupabaseClient();
+  if (!supabase) {
+    // Supabase client is genuinely unconfigured (e.g. offline development without credentials)
     const fallback = DEFAULT_STORE_CATEGORIES.find((c) => c.slug === normalizedSlug);
     return fallback || null;
   }
+
+  // Execute query on Supabase. Any unexpected exception during execution will propagate.
+  const { data, error } = await (supabase.from('categories') as any)
+    .select('id, name, slug, description, image_url, display_order, is_active, created_at')
+    .eq('slug', normalizedSlug)
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (error) {
+    console.error(`[getPublicCategoryBySlug] Database error querying category "${normalizedSlug}":`, error.message);
+    const dbError = new Error(`Database error querying category: ${error.message}`);
+    (dbError as any).code = error.code;
+    (dbError as any).details = error.details;
+    throw dbError;
+  }
+
+  if (data) {
+    return {
+      id: data.id,
+      name: data.name,
+      slug: data.slug,
+      description: data.description,
+      imageUrl: data.image_url,
+      displayOrder: data.display_order,
+      isActive: data.is_active,
+      createdAt: data.created_at,
+    };
+  }
+
+  // The query succeeded without error, confirming no category exists in the database.
+  // Check if it matches one of the recognized curated fallback categories:
+  const fallback = DEFAULT_STORE_CATEGORIES.find((c) => c.slug === normalizedSlug);
+  return fallback || null;
 }
 
 /**

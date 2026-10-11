@@ -98,9 +98,9 @@ export async function getAdminCategories(): Promise<{
 /**
  * Retrieves all active categories for public storefront navigation and filters.
  */
-export async function getPublicCategories(): Promise<Category[]> {
+export async function getPublicCategories(client?: any): Promise<Category[]> {
   try {
-    const supabase = await createServerSupabaseClient();
+    const supabase = client !== undefined ? client : await createServerSupabaseClient();
     if (!supabase) return DEFAULT_STORE_CATEGORIES;
 
     const { data, error } = await supabase
@@ -112,7 +112,8 @@ export async function getPublicCategories(): Promise<Category[]> {
 
     if (error) {
       console.error('[getPublicCategories] Database error querying categories:', error.message);
-      throw new Error(`Database error querying categories: ${error.message}`);
+      // Fallback to default categories so catalog navigation and filters on other storefront pages do not break
+      return DEFAULT_STORE_CATEGORIES;
     }
 
     if (!data || (data as any[]).length === 0) {
@@ -130,9 +131,10 @@ export async function getPublicCategories(): Promise<Category[]> {
       createdAt: row.created_at,
     }));
   } catch (err: unknown) {
-    if (err instanceof Error && err.message.startsWith('Database error querying categories:')) {
+    if ((err as any)?.digest === 'DYNAMIC_SERVER_USAGE') {
       throw err;
     }
+    console.error('[getPublicCategories] Unexpected exception querying categories:', err);
     return DEFAULT_STORE_CATEGORIES;
   }
 }
