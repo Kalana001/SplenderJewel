@@ -47,6 +47,72 @@ export const DEFAULT_DEV_STORE_CONFIG: StoreConfig = {
 };
 
 /**
+ * Curated store categories fallback when database is empty.
+ */
+export const DEFAULT_STORE_CATEGORIES = [
+  {
+    id: 'default-rings',
+    name: 'Rings',
+    slug: 'rings',
+    description: 'Curated collection of fine gold-plated, statement, and gemstone rings.',
+    imageUrl: null as string | null,
+    displayOrder: 1,
+    isActive: true,
+    createdAt: '2026-01-01T00:00:00Z',
+  },
+  {
+    id: 'default-necklaces',
+    name: 'Necklaces & Pendants',
+    slug: 'necklaces',
+    description: 'Exquisite necklaces, chains, and radiant pendants crafted for elegance.',
+    imageUrl: null as string | null,
+    displayOrder: 2,
+    isActive: true,
+    createdAt: '2026-01-01T00:00:00Z',
+  },
+  {
+    id: 'default-bracelets',
+    name: 'Bracelets & Bangles',
+    slug: 'bracelets',
+    description: 'Sophisticated bangles, charm bracelets, and modern wristwear.',
+    imageUrl: null as string | null,
+    displayOrder: 3,
+    isActive: true,
+    createdAt: '2026-01-01T00:00:00Z',
+  },
+  {
+    id: 'default-earrings',
+    name: 'Earrings',
+    slug: 'earrings',
+    description: 'Delicate studs, drop earrings, and hoops designed with fine detail.',
+    imageUrl: null as string | null,
+    displayOrder: 4,
+    isActive: true,
+    createdAt: '2026-01-01T00:00:00Z',
+  },
+  {
+    id: 'default-men',
+    name: "Men's Collection",
+    slug: 'men',
+    description: 'Distinctive jewelry pieces and modern accents tailored for men.',
+    imageUrl: null as string | null,
+    displayOrder: 5,
+    isActive: true,
+    createdAt: '2026-01-01T00:00:00Z',
+  },
+  {
+    id: 'default-sets',
+    name: 'Jewelry Sets',
+    slug: 'sets',
+    description: 'Coordinated fine fashion jewelry sets for memorable occasions.',
+    imageUrl: null as string | null,
+    displayOrder: 6,
+    isActive: true,
+    createdAt: '2026-01-01T00:00:00Z',
+  },
+];
+
+/**
  * Accessor for the active store configuration.
  * In later phases, this will read from Supabase cache / server context.
  */

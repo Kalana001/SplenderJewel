@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAdminAuth } from '@/lib/auth/server';
+import { DEFAULT_STORE_CATEGORIES } from '@/lib/config/store';
 import type { Category } from '@/types/product';
 
 export interface CategoryWithProductCount extends Category {
@@ -100,7 +101,7 @@ export async function getAdminCategories(): Promise<{
 export async function getPublicCategories(): Promise<Category[]> {
   try {
     const supabase = await createServerSupabaseClient();
-    if (!supabase) return [];
+    if (!supabase) return DEFAULT_STORE_CATEGORIES;
 
     const { data, error } = await supabase
       .from('categories')
@@ -109,8 +110,8 @@ export async function getPublicCategories(): Promise<Category[]> {
       .order('display_order', { ascending: true })
       .order('name', { ascending: true });
 
-    if (error || !data) {
-      return [];
+    if (error || !data || (data as any[]).length === 0) {
+      return DEFAULT_STORE_CATEGORIES;
     }
 
     return (data as any[]).map((row) => ({
@@ -124,7 +125,7 @@ export async function getPublicCategories(): Promise<Category[]> {
       createdAt: row.created_at,
     }));
   } catch {
-    return [];
+    return DEFAULT_STORE_CATEGORIES;
   }
 }
 

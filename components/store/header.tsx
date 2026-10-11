@@ -34,56 +34,53 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
         </div>
       )}
 
+      {/* Main Centered Header Bar */}
       <Container size="xl">
-        <div className="flex h-16 sm:h-20 items-center justify-between gap-4">
-          {/* Mobile Menu Button */}
-          <button
-            type="button"
-            className="inline-flex lg:hidden p-2 text-neutral-300 hover:text-white"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            aria-label="Toggle Navigation Menu"
-          >
-            {mobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
-          </button>
+        <div className="grid grid-cols-3 items-center py-3 sm:py-4">
+          {/* Left Column: Mobile Menu Toggle & Desktop Search Action */}
+          <div className="flex items-center space-x-2 sm:space-x-4">
+            <button
+              type="button"
+              className="inline-flex lg:hidden p-2 text-neutral-300 hover:text-white"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-label="Toggle Navigation Menu"
+            >
+              {mobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+            </button>
 
-          {/* Brand / Logo Architecture */}
-          <div className="flex items-center">
-            <Link href="/" className="flex items-center space-x-3 group">
+            <Link
+              href="/search"
+              className="hidden sm:inline-flex items-center space-x-2 text-xs uppercase tracking-widest text-neutral-300 hover:text-luxury-gold transition-colors py-1.5 px-3 rounded border border-neutral-800 hover:border-luxury-gold/40 bg-neutral-900/50"
+              aria-label="Search Catalog"
+            >
+              <Search className="h-3.5 w-3.5 text-luxury-gold" />
+              <span>Search</span>
+            </Link>
+          </div>
+
+          {/* Center Column: Perfectly Centered Brand Logo & Typography */}
+          <div className="flex justify-center items-center">
+            <Link href="/" className="flex flex-col items-center group text-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={logoUrl || config.logoUrl || '/images/logo.png'}
                 alt={config.storeName}
-                className="h-10 sm:h-12 w-auto object-contain rounded border border-luxury-gold/30 p-0.5 bg-black transition-transform duration-300 group-hover:scale-105"
+                className="h-10 sm:h-12 md:h-14 w-auto object-contain rounded border border-luxury-gold/40 p-0.5 bg-black transition-transform duration-300 group-hover:scale-105 shadow-md shadow-black"
               />
-              <div className="flex flex-col">
-                <span className="font-serif text-lg sm:text-xl md:text-2xl font-bold tracking-[0.2em] text-white group-hover:text-luxury-gold-hover transition-colors uppercase">
-                  Splender
-                </span>
-                <span className="text-[9px] uppercase tracking-[0.3em] text-luxury-gold hidden sm:block font-medium">
-                  The Jewel Gallery
-                </span>
-              </div>
+              <span className="font-serif text-lg sm:text-xl md:text-2xl font-bold tracking-[0.25em] text-white group-hover:text-luxury-gold-hover transition-colors uppercase mt-1 leading-none">
+                Splender
+              </span>
+              <span className="text-[8px] sm:text-[9px] uppercase tracking-[0.35em] text-luxury-gold font-medium mt-0.5">
+                The Jewel Gallery
+              </span>
             </Link>
           </div>
 
-          {/* Desktop Navigation */}
-          <nav className="hidden lg:flex items-center space-x-8 text-sm tracking-widest uppercase font-medium">
-            {navLinks.slice(0, 6).map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className="text-neutral-300 hover:text-luxury-gold transition-colors text-xs"
-              >
-                {link.label}
-              </Link>
-            ))}
-          </nav>
-
-          {/* Utility Actions (Search, Wishlist, Account, Cart) */}
-          <div className="flex items-center space-x-3 sm:space-x-4">
+          {/* Right Column: Customer Utilities (Search on mobile, Wishlist, Account, Cart) */}
+          <div className="flex items-center justify-end space-x-2 sm:space-x-3">
             <Link
               href="/search"
-              className="p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
+              className="inline-flex sm:hidden p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
               aria-label="Search Catalog"
             >
               <Search className="h-5 w-5" />
@@ -91,7 +88,7 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
 
             <Link
               href="/account/wishlist"
-              className="hidden sm:inline-flex p-2 text-neutral-300 hover:text-luxury-ruby transition-colors"
+              className="p-2 text-neutral-300 hover:text-luxury-ruby transition-colors"
               aria-label="Wishlist"
             >
               <Heart className="h-5 w-5" />
@@ -99,7 +96,7 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
 
             <Link
               href="/account"
-              className="p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
+              className="hidden sm:inline-flex p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
               aria-label="Account"
             >
               <User className="h-5 w-5" />
@@ -115,6 +112,24 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
           </div>
         </div>
       </Container>
+
+      {/* Dedicated Centered Navigation Row */}
+      <nav className="hidden lg:block border-t border-neutral-800/80 bg-black/60">
+        <Container size="xl">
+          <div className="flex items-center justify-center space-x-8 py-2.5 text-xs tracking-[0.2em] uppercase font-medium">
+            {navLinks.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className="text-neutral-300 hover:text-luxury-gold transition-colors py-1 relative group"
+              >
+                <span>{link.label}</span>
+                <span className="absolute bottom-0 left-0 w-0 h-0.5 bg-luxury-gold transition-all duration-300 group-hover:w-full" />
+              </Link>
+            ))}
+          </div>
+        </Container>
+      </nav>
 
       {/* Mobile Navigation Drawer */}
       {mobileMenuOpen && (

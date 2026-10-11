@@ -3,7 +3,7 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import type { ProductPublic, ProductVariantPublic, ProductImage, Category } from '@/types/product';
 import type { StockStatus } from '@/lib/config/constants';
-import { DEFAULT_DEV_STORE_CONFIG } from '@/lib/config/store';
+import { DEFAULT_DEV_STORE_CONFIG, DEFAULT_STORE_CATEGORIES } from '@/lib/config/store';
 
 export interface PublicProductsFilter {
   categorySlug?: string;
@@ -412,30 +412,38 @@ export async function getPublicProductBySlug(slug: string): Promise<ProductPubli
  * Retrieves category details by slug.
  */
 export async function getPublicCategoryBySlug(slug: string): Promise<Category | null> {
+  const normalizedSlug = slug?.trim().toLowerCase();
+  if (!normalizedSlug) return null;
+
   try {
     const supabase = await createServerSupabaseClient();
-    if (!supabase || !slug?.trim()) return null;
+    if (supabase) {
+      const { data, error } = await (supabase.from('categories') as any)
+        .select('id, name, slug, description, image_url, display_order, is_active, created_at')
+        .eq('slug', normalizedSlug)
+        .eq('is_active', true)
+        .maybeSingle();
 
-    const { data, error } = await (supabase.from('categories') as any)
-      .select('id, name, slug, description, image_url, display_order, is_active, created_at')
-      .eq('slug', slug.trim())
-      .eq('is_active', true)
-      .maybeSingle();
+      if (!error && data) {
+        return {
+          id: data.id,
+          name: data.name,
+          slug: data.slug,
+          description: data.description,
+          imageUrl: data.image_url,
+          displayOrder: data.display_order,
+          isActive: data.is_active,
+          createdAt: data.created_at,
+        };
+      }
+    }
 
-    if (error || !data) return null;
-
-    return {
-      id: data.id,
-      name: data.name,
-      slug: data.slug,
-      description: data.description,
-      imageUrl: data.image_url,
-      displayOrder: data.display_order,
-      isActive: data.is_active,
-      createdAt: data.created_at,
-    };
+    // Fallback to curated store categories when database is unseeded
+    const fallback = DEFAULT_STORE_CATEGORIES.find((c) => c.slug === normalizedSlug);
+    return fallback || null;
   } catch {
-    return null;
+    const fallback = DEFAULT_STORE_CATEGORIES.find((c) => c.slug === normalizedSlug);
+    return fallback || null;
   }
 }
 
