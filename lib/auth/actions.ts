@@ -1,6 +1,7 @@
 'use server';
 
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { revalidatePath } from 'next/cache';
 import { getPasswordResetRedirectUrl, getCanonicalSiteUrl } from '@/lib/auth/redirect';
 
@@ -105,6 +106,112 @@ export async function signOutCustomer(): Promise<AuthActionResult> {
     return { success: false, error: error.message };
   }
 
+  revalidatePath('/', 'layout');
+  return { success: true };
+}
+
+export interface AdminSignInResult extends AuthActionResult {
+  role?: string;
+  adminId?: string;
+}
+
+/**
+ * Administrator Sign In.
+ * Authenticates via Supabase Auth and strictly verifies active role in public.admin_users.
+ * If user is not present in admin_users or is deactivated (is_active = false),
+ * session is immediately terminated (signOut) and access is denied.
+ */
+export async function signInAdmin(formData: {
+  email: string;
+  password: string;
+}): Promise<AdminSignInResult> {
+  const supabase = await createServerSupabaseClient();
+  if (!supabase) {
+    return { success: false, error: 'Database service is currently unavailable.' };
+  }
+
+  const { email, password } = formData;
+
+  if (!email || !password) {
+    return { success: false, error: 'Email and password are required.' };
+  }
+
+  const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+    email: email.trim(),
+    password,
+  });
+
+  if (authError || !authData.user) {
+    return { success: false, error: authError?.message || 'Invalid administrative credentials.' };
+  }
+
+  const userId = authData.user.id;
+
+  // Verify administrative privileges strictly server-side
+  let adminRecord: { id: string; email: string; role: string; is_active: boolean } | null = null;
+  try {
+    const adminClient = createAdminClient();
+    const { data, error } = await (adminClient.from('admin_users') as any)
+      .select('id, email, full_name, role, is_active')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (!error && data) {
+      adminRecord = data;
+    }
+  } catch {
+    // If admin client cannot be created, fallback to checking with authenticated client
+    const { data } = await (supabase.from('admin_users') as any)
+      .select('id, email, full_name, role, is_active')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (data) {
+      adminRecord = data;
+    }
+  }
+
+  if (!adminRecord) {
+    // Non-admin customer attempted admin login: invalidate session immediately
+    await supabase.auth.signOut();
+    return {
+      success: false,
+      error: 'Access Denied: This account is not registered as an authorized administrator.',
+    };
+  }
+
+  if (!adminRecord.is_active) {
+    // Inactive admin: invalidate session immediately
+    await supabase.auth.signOut();
+    return {
+      success: false,
+      error: 'Access Denied: Your administrator account has been deactivated. Please contact the store owner.',
+    };
+  }
+
+  revalidatePath('/admin', 'layout');
+  return {
+    success: true,
+    role: adminRecord.role,
+    adminId: adminRecord.id,
+  };
+}
+
+/**
+ * Administrator Sign Out.
+ */
+export async function signOutAdmin(): Promise<AuthActionResult> {
+  const supabase = await createServerSupabaseClient();
+  if (!supabase) {
+    return { success: false, error: 'Database service is currently unavailable.' };
+  }
+
+  const { error } = await supabase.auth.signOut();
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  revalidatePath('/admin', 'layout');
   revalidatePath('/', 'layout');
   return { success: true };
 }

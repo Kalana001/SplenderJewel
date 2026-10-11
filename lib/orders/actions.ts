@@ -26,6 +26,7 @@ export interface CreateOrderInput {
   deliveryNotes?: string | null;
   paymentMethod: PaymentMethod;
   couponCode?: string | null;
+  clientRequestId?: string | null;
   items: CreateOrderItemInput[];
 }
 
@@ -54,6 +55,7 @@ interface VariantWithProductRow {
   is_active: boolean;
   products: {
     name: string;
+    is_active: boolean;
   } | null;
 }
 
@@ -121,8 +123,24 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
 
     const deliveryFee = Number(districtData.delivery_fee) || 0;
 
-    // 4. Fetch variants and compute trusted prices & stock
-    const variantIds = input.items.map((i) => i.variantId);
+    // 4. Aggregate quantities for duplicate variants and validate item quantities
+    const aggregatedMap = new Map<string, number>();
+    for (const item of input.items) {
+      if (!item.variantId) continue;
+      const current = aggregatedMap.get(item.variantId) || 0;
+      aggregatedMap.set(item.variantId, current + (Number(item.quantity) > 0 ? Number(item.quantity) : 1));
+    }
+
+    if (aggregatedMap.size === 0) {
+      return { success: false, error: 'Your order must contain at least one valid jewelry item.' };
+    }
+
+    const consolidatedItems: CreateOrderItemInput[] = Array.from(aggregatedMap.entries()).map(
+      ([variantId, quantity]) => ({ variantId, quantity })
+    );
+
+    // 5. Fetch variants and compute trusted prices & stock
+    const variantIds = consolidatedItems.map((i) => i.variantId);
     const { data: variantsRaw, error: variantsError } = await (adminClient.from('product_variants') as any)
       .select(`
         id,
@@ -135,7 +153,8 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
         stock_quantity,
         is_active,
         products (
-          name
+          name,
+          is_active
         )
       `)
       .in('id', variantIds);
@@ -149,26 +168,14 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
     const variantMap = new Map<string, VariantWithProductRow>(variantsData.map((v) => [v.id, v]));
 
     let subtotal = 0;
-    const validatedItems: Array<{
-      productId: string;
-      variantId: string;
-      productName: string;
-      variantTitle: string;
-      sku: string;
-      unitPrice: number;
-      quantity: number;
-      totalPrice: number;
-      purchaseCost: number;
-    }> = [];
-
-    for (const itemInput of input.items) {
+    for (const itemInput of consolidatedItems) {
       if (!itemInput.quantity || itemInput.quantity < 1) {
         return { success: false, error: 'Quantity must be at least 1.' };
       }
 
       const variant = variantMap.get(itemInput.variantId);
-      if (!variant || !variant.is_active) {
-        return { success: false, error: 'One or more items in your cart are no longer available.' };
+      if (!variant || !variant.is_active || !variant.products?.is_active) {
+        return { success: false, error: 'One or more items in your cart are no longer available or inactive.' };
       }
 
       if (variant.stock_quantity < itemInput.quantity) {
@@ -179,87 +186,22 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       }
 
       const unitPrice = variant.discount_price != null ? Number(variant.discount_price) : Number(variant.price);
-      const itemTotal = unitPrice * itemInput.quantity;
-      subtotal += itemTotal;
-
-      const productName = variant.products?.name || 'Jewelry Item';
-
-      validatedItems.push({
-        productId: variant.product_id,
-        variantId: variant.id,
-        productName,
-        variantTitle: variant.title,
-        sku: variant.sku,
-        unitPrice,
-        quantity: itemInput.quantity,
-        totalPrice: itemTotal,
-        purchaseCost: Number(variant.purchase_cost) || 0,
-      });
+      subtotal += unitPrice * itemInput.quantity;
     }
 
-    // 5. Validate coupon if provided
-    let discountAmount = 0;
+    // 6. Validate coupon if provided
     let appliedCouponCode: string | null = null;
-    let couponId: string | null = null;
-
     if (input.couponCode?.trim()) {
       const couponRes = await validateCouponAction(input.couponCode, subtotal);
       if (!couponRes.valid) {
         return { success: false, error: couponRes.error || 'Invalid coupon code.' };
       }
-      discountAmount = couponRes.calculatedDiscount || 0;
       appliedCouponCode = couponRes.code || input.couponCode.trim().toUpperCase();
-      couponId = couponRes.couponId || null;
     }
 
-    // 6. Attempt atomic RPC checkout procedure first (PostgreSQL transactional execution)
-    try {
-      const { data: rpcData, error: rpcError } = await (adminClient as any).rpc('process_order_checkout', {
-        p_order_data: {
-          user_id: userId,
-          customer_name: input.customerName.trim(),
-          email: input.email?.trim() || null,
-          phone1: input.phone1.trim(),
-          phone2: input.phone2?.trim() || null,
-          address_line: input.addressLine.trim(),
-          city: input.city?.trim() || null,
-          district: input.district,
-          province: input.province?.trim() || null,
-          postal_code: input.postalCode?.trim() || null,
-          delivery_notes: input.deliveryNotes?.trim() || null,
-          delivery_fee: deliveryFee,
-          payment_method: input.paymentMethod,
-        },
-        p_items_data: input.items.map((i) => ({
-          variant_id: i.variantId,
-          quantity: i.quantity,
-        })),
-        p_coupon_code: appliedCouponCode,
-      });
-
-      if (!rpcError && rpcData && rpcData.success) {
-        return {
-          success: true,
-          orderNumber: rpcData.order_number,
-          orderId: rpcData.order_id,
-          orderToken: rpcData.order_token,
-        };
-      }
-
-      // If it's a domain/validation error raised by the database procedure (e.g. out of stock)
-      if (rpcError && rpcError.code !== 'PGRST202' && rpcError.code !== '42883' && !rpcError.message?.toLowerCase().includes('does not exist')) {
-        return { success: false, error: rpcError.message || 'Unable to place order.' };
-      }
-    } catch {
-      // Stored procedure unavailable or not yet migrated on remote environment; proceed with compensation sequence
-    }
-
-    // 7. Resilient application-level checkout sequence with compensation rollback
-    const totalAmount = Math.max(0, subtotal - discountAmount) + deliveryFee;
-
-    // Insert order row into database
-    const { data: newOrderRaw, error: orderInsertError } = await (adminClient.from('orders') as any)
-      .insert({
+    // 7. Atomic RPC checkout procedure (Strict single-transaction PostgreSQL execution)
+    const { data: rpcData, error: rpcError } = await (adminClient as any).rpc('process_order_checkout', {
+      p_order_data: {
         user_id: userId,
         customer_name: input.customerName.trim(),
         email: input.email?.trim() || null,
@@ -271,147 +213,48 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
         province: input.province?.trim() || null,
         postal_code: input.postalCode?.trim() || null,
         delivery_notes: input.deliveryNotes?.trim() || null,
-        subtotal,
         delivery_fee: deliveryFee,
-        discount_amount: discountAmount,
-        coupon_code: appliedCouponCode,
-        total_amount: totalAmount,
         payment_method: input.paymentMethod,
-        payment_status: PAYMENT_STATUSES.PENDING,
-        order_status: ORDER_STATUSES.PENDING,
-      })
-      .select('id, order_number, order_token')
-      .single();
-
-    const newOrder = newOrderRaw as { id: string; order_number: string; order_token: string } | null;
-
-    if (orderInsertError || !newOrder) {
-      console.error('[OrderCreation] Database failed to insert order:', orderInsertError?.message || 'Unknown database error');
-      return { success: false, error: 'Unable to process your order at this time. Please check your details and try again.' };
-    }
-
-    // Insert order items
-    const orderItemsPayload = validatedItems.map((item) => ({
-      order_id: newOrder.id,
-      product_id: item.productId,
-      variant_id: item.variantId,
-      product_name: item.productName,
-      variant_title: item.variantTitle,
-      sku: item.sku,
-      unit_price: item.unitPrice,
-      quantity: item.quantity,
-      total_price: item.totalPrice,
-      purchase_cost: item.purchaseCost,
-    }));
-
-    const { error: itemsInsertError } = await (adminClient.from('order_items') as any)
-      .insert(orderItemsPayload);
-
-    if (itemsInsertError) {
-      console.error('[OrderCreation] Database failed to insert order items, rolling back stranded order ID:', newOrder.id, itemsInsertError.message);
-      // Compensation: remove the stranded header order
-      await (adminClient.from('orders') as any).delete().eq('id', newOrder.id);
-      return { success: false, error: 'Unable to finalize order line items. Please try again.' };
-    }
-
-    // Deduct variant inventory and log movements with compensation rollback
-    const updatedVariants: Array<{ id: string; previousQty: number; previousStatus: string }> = [];
-    let inventoryError: string | null = null;
-
-    for (const item of validatedItems) {
-      const currentVariant = variantMap.get(item.variantId);
-      if (!currentVariant) continue;
-
-      const previousQty = currentVariant.stock_quantity;
-      const newQty = previousQty - item.quantity;
-      let newStatus: string;
-      if (newQty <= 0) {
-        newStatus = 'out_of_stock';
-      } else if (newQty <= 5) {
-        newStatus = 'low_stock';
-      } else {
-        newStatus = 'in_stock';
-      }
-
-      const { error: variantUpdateError } = await (adminClient.from('product_variants') as any)
-        .update({
-          stock_quantity: Math.max(0, newQty),
-          stock_status: newStatus,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', item.variantId);
-
-      if (variantUpdateError) {
-        inventoryError = variantUpdateError.message;
-        break;
-      }
-
-      updatedVariants.push({
-        id: item.variantId,
-        previousQty,
-        previousStatus: currentVariant.stock_quantity <= 0 ? 'out_of_stock' : (currentVariant.stock_quantity <= 5 ? 'low_stock' : 'in_stock'),
-      });
-
-      // Record inventory movement
-      await (adminClient.from('inventory_movements') as any).insert({
-        variant_id: item.variantId,
-        quantity_change: -item.quantity,
-        previous_quantity: previousQty,
-        new_quantity: Math.max(0, newQty),
-        reason: 'order_sold',
-        reference_id: newOrder.order_number,
-        created_by: null,
-      });
-    }
-
-    if (inventoryError) {
-      console.error('[OrderCreation] Inventory update failed, rolling back order and stock:', inventoryError);
-      // Compensation: restore updated variants
-      for (const v of updatedVariants) {
-        await (adminClient.from('product_variants') as any)
-          .update({ stock_quantity: v.previousQty, stock_status: v.previousStatus, updated_at: new Date().toISOString() })
-          .eq('id', v.id);
-      }
-      // Compensation: remove line items and order header
-      await (adminClient.from('order_items') as any).delete().eq('order_id', newOrder.id);
-      await (adminClient.from('orders') as any).delete().eq('id', newOrder.id);
-      return { success: false, error: 'Failed to reserve inventory for your order. Please try again.' };
-    }
-
-    // Insert initial status history
-    await (adminClient.from('order_status_history') as any).insert({
-      order_id: newOrder.id,
-      previous_status: null,
-      new_status: ORDER_STATUSES.PENDING,
-      notes: 'Order placed by customer (Pending verification)',
+        idempotency_key: input.clientRequestId?.trim() || null,
+      },
+      p_items_data: consolidatedItems.map((i) => ({
+        variant_id: i.variantId,
+        quantity: i.quantity,
+      })),
+      p_coupon_code: appliedCouponCode,
     });
 
-    // Record coupon usage if coupon applied
-    if (couponId && appliedCouponCode) {
-      await (adminClient.from('coupon_usage') as any).insert({
-        coupon_id: couponId,
-        order_id: newOrder.id,
-        user_id: userId,
-        discount_amount: discountAmount,
-      });
+    if (rpcError) {
+      console.error('[OrderCreation] Database atomic RPC process_order_checkout error:', rpcError);
+      const errMsg = rpcError.message || 'Unable to place order.';
+      if (
+        errMsg.includes('does not exist') ||
+        rpcError.code === 'PGRST202' ||
+        rpcError.code === '42883'
+      ) {
+        return {
+          success: false,
+          error: 'Transactional checkout database procedure is currently undergoing scheduled maintenance. Please contact customer service.',
+        };
+      }
+      return {
+        success: false,
+        error: errMsg,
+      };
     }
 
-    // If Bank Transfer, insert payment tracking record
-    if (input.paymentMethod === PAYMENT_METHODS.BANK_TRANSFER) {
-      await (adminClient.from('payments') as any).insert({
-        order_id: newOrder.id,
-        payment_method: PAYMENT_METHODS.BANK_TRANSFER,
-        amount: totalAmount,
-        status: PAYMENT_STATUSES.PENDING,
-        notes: 'Awaiting customer WhatsApp payment confirmation and manual admin verification',
-      });
+    if (!rpcData || !rpcData.success) {
+      return {
+        success: false,
+        error: rpcData?.error || 'Unable to process your order at this time.',
+      };
     }
 
     return {
       success: true,
-      orderNumber: newOrder.order_number,
-      orderId: newOrder.id,
-      orderToken: newOrder.order_token,
+      orderNumber: rpcData.order_number,
+      orderId: rpcData.order_id,
+      orderToken: rpcData.order_token,
     };
   } catch (err: unknown) {
     console.error('[OrderCreation] Unexpected server error processing order:', err instanceof Error ? err.message : err);
