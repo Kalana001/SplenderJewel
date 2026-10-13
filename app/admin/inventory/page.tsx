@@ -17,6 +17,7 @@ export default async function AdminInventoryPage() {
       <InventoryManager
         initialProducts={initialSearch.success ? initialSearch.products : []}
         initialTotalCount={initialSearch.success ? initialSearch.totalCount : 0}
+        initialError={!initialSearch.success ? (initialSearch.error || 'Failed to load inventory products.') : null}
       />
     </div>
   );

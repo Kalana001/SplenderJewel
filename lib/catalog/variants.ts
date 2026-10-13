@@ -587,7 +587,7 @@ export async function searchAdminInventoryProductsAction(
 
       const { data: matchedProds } = await (adminClient.from('products') as any)
         .select('id')
-        .or(`name.ilike.%${query}%,sku.ilike.%${query}%`);
+        .or(`name.ilike.%${query}%,product_code.ilike.%${query}%`);
 
       const prodIds = (matchedProds || []).map((p: any) => p.id);
 
@@ -611,7 +611,7 @@ export async function searchAdminInventoryProductsAction(
         id,
         name,
         slug,
-        sku,
+        product_code,
         is_active,
         created_at,
         categories ( name ),
@@ -680,12 +680,16 @@ export async function searchAdminInventoryProductsAction(
         (v) => v.stockStatus === 'out_of_stock' || v.stockQuantity <= 0
       );
 
+      const categoryName =
+        (Array.isArray(p.categories) ? p.categories[0]?.name : p.categories?.name) ||
+        'Uncategorized';
+
       return {
         id: p.id,
         name: p.name,
         slug: p.slug,
-        sku: p.sku || null,
-        categoryName: p.categories?.name || 'Uncategorized',
+        sku: p.product_code || null,
+        categoryName,
         isActive: Boolean(p.is_active),
         variantCount: variants.length,
         totalStock,

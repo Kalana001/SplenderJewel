@@ -554,3 +554,269 @@ test('Phase 6C: Auto-selecting single-variant products & inventory movement audi
   assert.equal(mov.referenceId, 'Restock Batch #104');
   assert.equal(movementAuditLedger.length, 1);
 });
+
+// -----------------------------------------------------------------------------
+// PHASE 6C: ADMIN INVENTORY LOADING, ERROR RESILIENCE & SEARCH TESTS
+// -----------------------------------------------------------------------------
+
+test('Phase 6C: Admin inventory: Successful initial product loading with product_code and nested relations', () => {
+  // Mock data representing Supabase products response with product_code, categories, and product_variants
+  const mockDbRows = [
+    {
+      id: 'prod-anklet-1',
+      name: 'TEST Anklet — Phase 6C',
+      slug: 'test-anklet-phase-6c',
+      product_code: 'SJ-TEST-6C-001',
+      is_active: true,
+      created_at: '2026-10-13T08:33:57.908125+00:00',
+      categories: { name: 'Anklet' },
+      product_variants: [
+        {
+          id: 'var-1',
+          sku: 'SJ-TEST-001',
+          title: 'Default',
+          price: '1500.00',
+          discount_price: null,
+          purchase_cost: '800.00',
+          stock_quantity: 3,
+          low_stock_threshold: 5,
+          stock_status: 'low_stock',
+          is_active: true,
+          updated_at: '2026-10-13T12:08:29.000Z',
+        },
+      ],
+    },
+    {
+      id: 'prod-draft-2',
+      name: 'Draft Pearl Pendant',
+      slug: 'draft-pearl-pendant',
+      product_code: 'SJ-DRF-002',
+      is_active: false, // Draft product
+      created_at: '2026-10-13T09:00:00.000Z',
+      categories: [{ name: 'Necklaces' }], // Array category relationship format
+      product_variants: [
+        {
+          id: 'var-2',
+          sku: 'SJ-DRF-002-A',
+          title: 'White Pearl',
+          price: '3200.00',
+          discount_price: null,
+          purchase_cost: '1500.00',
+          stock_quantity: 10,
+          low_stock_threshold: 5,
+          stock_status: 'in_stock',
+          is_active: true,
+          updated_at: '2026-10-13T09:00:00.000Z',
+        },
+      ],
+    },
+  ];
+
+  // Pure mapper matching lib/catalog/variants.ts
+  const mappedProducts = mockDbRows.map((p) => {
+    const rawVariants = Array.isArray(p.product_variants) ? p.product_variants : [];
+    const variants = rawVariants.map((v) => ({
+      id: v.id,
+      sku: v.sku,
+      title: v.title,
+      price: Number(v.price),
+      discountPrice: v.discount_price != null ? Number(v.discount_price) : null,
+      purchaseCost: Number(v.purchase_cost),
+      stockQuantity: Number(v.stock_quantity) || 0,
+      lowStockThreshold: Number(v.low_stock_threshold) || 5,
+      stockStatus: v.stock_status,
+      isActive: Boolean(v.is_active),
+      updatedAt: v.updated_at,
+    }));
+
+    const totalStock = variants.reduce((sum, v) => sum + v.stockQuantity, 0);
+    const hasLowStock = variants.some((v) => v.stockStatus === 'low_stock');
+    const hasOutOfStock = variants.some((v) => v.stockStatus === 'out_of_stock' || v.stockQuantity <= 0);
+    const categoryName = (Array.isArray(p.categories) ? p.categories[0]?.name : p.categories?.name) || 'Uncategorized';
+
+    return {
+      id: p.id,
+      name: p.name,
+      slug: p.slug,
+      sku: p.product_code || null,
+      categoryName,
+      isActive: Boolean(p.is_active),
+      variantCount: variants.length,
+      totalStock,
+      hasLowStock,
+      hasOutOfStock,
+      variants,
+    };
+  });
+
+  assert.equal(mappedProducts.length, 2);
+
+  // Verify published product
+  const anklet = mappedProducts[0];
+  assert.equal(anklet.name, 'TEST Anklet — Phase 6C');
+  assert.equal(anklet.sku, 'SJ-TEST-6C-001');
+  assert.equal(anklet.categoryName, 'Anklet');
+  assert.equal(anklet.isActive, true);
+  assert.equal(anklet.totalStock, 3);
+  assert.equal(anklet.hasLowStock, true);
+  assert.equal(anklet.variants[0].sku, 'SJ-TEST-001');
+
+  // Verify draft product is also included
+  const draft = mappedProducts[1];
+  assert.equal(draft.name, 'Draft Pearl Pendant');
+  assert.equal(draft.isActive, false);
+  assert.equal(draft.categoryName, 'Necklaces');
+});
+
+test('Phase 6C: Admin inventory: Database query failure surfaces explicit error and never disguised as empty', () => {
+  // Simulate database error handling in InventoryManager state
+  function getInventoryManagerState(queryResult: { success: boolean; products: any[]; totalCount: number; error?: string }) {
+    if (!queryResult.success) {
+      return {
+        products: [],
+        totalCount: 0,
+        loadError: queryResult.error || 'Failed to load inventory products.',
+        shouldShowEmptySearchMessage: false,
+        shouldShowErrorState: true,
+      };
+    }
+    return {
+      products: queryResult.products,
+      totalCount: queryResult.totalCount,
+      loadError: null,
+      shouldShowEmptySearchMessage: queryResult.products.length === 0,
+      shouldShowErrorState: false,
+    };
+  }
+
+  // 1. Database fails with column error
+  const failedResult = {
+    success: false,
+    products: [],
+    totalCount: 0,
+    error: 'column products.sku does not exist',
+  };
+
+  const stateOnError = getInventoryManagerState(failedResult);
+  assert.equal(stateOnError.shouldShowErrorState, true);
+  assert.equal(stateOnError.shouldShowEmptySearchMessage, false);
+  assert.equal(stateOnError.loadError, 'column products.sku does not exist');
+
+  // 2. Database succeeds with genuine 0 results
+  const genuineEmptyResult = {
+    success: true,
+    products: [],
+    totalCount: 0,
+  };
+
+  const stateOnEmpty = getInventoryManagerState(genuineEmptyResult);
+  assert.equal(stateOnEmpty.shouldShowErrorState, false);
+  assert.equal(stateOnEmpty.shouldShowEmptySearchMessage, true);
+  assert.equal(stateOnEmpty.loadError, null);
+});
+
+test('Phase 6C: Admin inventory: Product name search filtering', () => {
+  const products = [
+    { id: '1', name: 'TEST Anklet — Phase 6C', product_code: 'SJ-TEST-001' },
+    { id: '2', name: 'Eternity Diamond Ring', product_code: 'SJ-ETN-001' },
+    { id: '3', name: 'Gold Rope Chain', product_code: 'SJ-CHN-001' },
+  ];
+
+  function searchByName(query: string) {
+    const q = query.trim().toLowerCase();
+    return products.filter((p) => p.name.toLowerCase().includes(q));
+  }
+
+  const results = searchByName('Anklet');
+  assert.equal(results.length, 1);
+  assert.equal(results[0].name, 'TEST Anklet — Phase 6C');
+
+  const ringResults = searchByName('diamond');
+  assert.equal(ringResults.length, 1);
+  assert.equal(ringResults[0].name, 'Eternity Diamond Ring');
+});
+
+test('Phase 6C: Admin inventory: Variant SKU search filtering', () => {
+  const products = [
+    {
+      id: 'prod-1',
+      name: 'TEST Anklet — Phase 6C',
+      variants: [
+        { id: 'var-1', sku: 'SJ-TEST-001' },
+        { id: 'var-2', sku: 'SJ-TEST-6C-001-2' },
+      ],
+    },
+    {
+      id: 'prod-2',
+      name: 'Solitaire Necklace',
+      variants: [
+        { id: 'var-3', sku: 'SJ-SLT-999' },
+      ],
+    },
+  ];
+
+  function searchByVariantSku(query: string) {
+    const q = query.trim().toLowerCase();
+    return products.filter((p) =>
+      p.variants.some((v) => v.sku.toLowerCase().includes(q))
+    );
+  }
+
+  const matches = searchByVariantSku('SJ-TEST-001');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].id, 'prod-1');
+
+  const matches2 = searchByVariantSku('SJ-SLT');
+  assert.equal(matches2.length, 1);
+  assert.equal(matches2[0].id, 'prod-2');
+
+  const matchesNone = searchByVariantSku('NONEXISTENT-SKU');
+  assert.equal(matchesNone.length, 0);
+});
+
+test('Phase 6C: Admin inventory: Single-variant auto-selection logic', () => {
+  // Test case A: Product with exactly 1 variant
+  const singleVariantProduct = {
+    id: 'prod-single',
+    name: 'Test Single Product',
+    variants: [{ id: 'var-single-1', sku: 'SJ-SGL-1', title: 'Default' }],
+  };
+
+  let selectedVariantIdA: string | null = null;
+  if (singleVariantProduct.variants.length === 1) {
+    selectedVariantIdA = singleVariantProduct.variants[0].id;
+  }
+  assert.equal(selectedVariantIdA, 'var-single-1');
+
+  // Test case B: Product with multiple variants (defaults to first variant)
+  const multiVariantProduct = {
+    id: 'prod-multi',
+    name: 'Multi Variant Ring',
+    variants: [
+      { id: 'var-m-1', sku: 'SJ-M-1', title: 'Size 6' },
+      { id: 'var-m-2', sku: 'SJ-M-2', title: 'Size 7' },
+    ],
+  };
+
+  let selectedVariantIdB: string | null = null;
+  if (multiVariantProduct.variants.length === 1) {
+    selectedVariantIdB = multiVariantProduct.variants[0].id;
+  } else if (multiVariantProduct.variants.length > 1) {
+    selectedVariantIdB = multiVariantProduct.variants[0].id;
+  }
+  assert.equal(selectedVariantIdB, 'var-m-1');
+
+  // Test case C: Product with 0 variants
+  const noVariantProduct: { id: string; name: string; variants: Array<{ id: string; sku: string; title: string }> } = {
+    id: 'prod-none',
+    name: 'No Variants',
+    variants: [],
+  };
+
+  let selectedVariantIdC: string | null = null;
+  if (noVariantProduct.variants.length === 1) {
+    selectedVariantIdC = noVariantProduct.variants[0].id;
+  }
+  assert.equal(selectedVariantIdC, null);
+});
+

@@ -34,11 +34,13 @@ import {
 interface InventoryManagerProps {
   initialProducts: AdminInventoryProductSummary[];
   initialTotalCount: number;
+  initialError?: string | null;
 }
 
 export function InventoryManager({
   initialProducts,
   initialTotalCount,
+  initialError,
 }: InventoryManagerProps) {
   // Search & Pagination State
   const [searchTerm, setSearchTerm] = useState('');
@@ -46,12 +48,18 @@ export function InventoryManager({
   const [products, setProducts] = useState<AdminInventoryProductSummary[]>(initialProducts);
   const [totalCount, setTotalCount] = useState(initialTotalCount);
   const [isSearching, setIsSearching] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(initialError || null);
 
   // Selected Product & Variant State
+  const initialSelectedProduct = initialProducts[0] || null;
   const [selectedProductId, setSelectedProductId] = useState<string | null>(
-    initialProducts[0]?.id || null
+    initialSelectedProduct?.id || null
   );
-  const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
+  const [selectedVariantId, setSelectedVariantId] = useState<string | null>(
+    initialSelectedProduct?.variants.length === 1
+      ? initialSelectedProduct.variants[0].id
+      : (initialSelectedProduct?.variants[0]?.id || null)
+  );
 
   // Movement History State
   const [movementHistory, setMovementHistory] = useState<InventoryMovementRecord[]>([]);
@@ -120,6 +128,7 @@ export function InventoryManager({
   // Server-side debounced search function
   const executeSearch = useCallback(async (query: string, page: number) => {
     setIsSearching(true);
+    setLoadError(null);
     try {
       const res = await searchAdminInventoryProductsAction({
         query: query.trim(),
@@ -130,21 +139,46 @@ export function InventoryManager({
       if (res.success) {
         setProducts(res.products);
         setTotalCount(res.totalCount);
+        setLoadError(null);
         // If current product not in new list, pick first
         if (res.products.length > 0) {
           const productStillVisible = res.products.some((p) => p.id === selectedProductId);
           if (!productStillVisible) {
             setSelectedProductId(res.products[0].id);
+            if (res.products[0].variants.length === 1) {
+              setSelectedVariantId(res.products[0].variants[0].id);
+            }
           }
         } else {
           setSelectedProductId(null);
           setSelectedVariantId(null);
         }
+      } else {
+        const err = res.error || 'Failed to search inventory products.';
+        setLoadError(err);
+        setErrorMessage(err);
+        setProducts([]);
+        setTotalCount(0);
+        setSelectedProductId(null);
+        setSelectedVariantId(null);
       }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'An unexpected error occurred.';
+      setLoadError(msg);
+      setErrorMessage(msg);
+      setProducts([]);
+      setTotalCount(0);
+      setSelectedProductId(null);
+      setSelectedVariantId(null);
     } finally {
       setIsSearching(false);
     }
   }, [selectedProductId]);
+
+  const handleRetry = useCallback(() => {
+    setErrorMessage(null);
+    executeSearch(searchTerm, currentPage);
+  }, [executeSearch, searchTerm, currentPage]);
 
   function handleSearchChange(e: React.ChangeEvent<HTMLInputElement>) {
     const val = e.target.value;
@@ -395,7 +429,27 @@ export function InventoryManager({
 
           {/* Compact Product Results List */}
           <div className="bg-luxury-card border border-luxury-border rounded-md divide-y divide-luxury-border overflow-hidden">
-            {products.length === 0 ? (
+            {loadError ? (
+              <div className="p-8 text-center space-y-3 bg-rose-950/20">
+                <div className="flex items-center justify-center gap-2 text-rose-400 text-sm font-medium">
+                  <AlertCircle className="h-5 w-5 shrink-0" />
+                  <span>Failed to load inventory</span>
+                </div>
+                <p className="text-xs text-neutral-400 max-w-xs mx-auto leading-relaxed">
+                  {loadError}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRetry}
+                  className="text-xs gap-1.5 border-rose-800/80 hover:bg-rose-950/40 text-neutral-200 mt-1"
+                >
+                  <RotateCcw className="h-3.5 w-3.5 text-luxury-gold" />
+                  Retry
+                </Button>
+              </div>
+            ) : products.length === 0 ? (
               <div className="p-8 text-center text-neutral-400 text-sm">
                 No jewelry products found matching your search.
               </div>
@@ -498,7 +552,29 @@ export function InventoryManager({
         <div className="lg:col-span-7 space-y-5">
           {!selectedProduct ? (
             <div className="bg-luxury-card border border-luxury-border rounded-md p-12 text-center text-neutral-400">
-              Select a jewelry product on the left to manage stock and view movement logs.
+              {loadError ? (
+                <div className="space-y-3 max-w-sm mx-auto">
+                  <div className="flex items-center justify-center gap-2 text-rose-400 text-sm font-medium">
+                    <AlertCircle className="h-5 w-5 shrink-0" />
+                    <span>Unable to load product details</span>
+                  </div>
+                  <p className="text-xs text-neutral-400 leading-relaxed">
+                    A database error occurred while querying the catalog. Please click Retry below to attempt loading again.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRetry}
+                    className="text-xs gap-1.5 mt-2"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5 text-luxury-gold" />
+                    Retry
+                  </Button>
+                </div>
+              ) : (
+                'Select a jewelry product on the left to manage stock and view movement logs.'
+              )}
             </div>
           ) : (
             <>
