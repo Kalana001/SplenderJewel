@@ -153,13 +153,13 @@ export default function CheckoutPage() {
       items: canonicalItems,
     });
 
-    // Retain existing key for genuine retries of the identical order payload;
-    // generate a fresh key whenever any order parameter, item, quantity, district, or coupon changes
+    // Retain existing key for retries of the identical checkout attempt;
+    // generate a fresh key for a genuinely new order or whenever any order parameter changes
     if (!clientRequestIdRef.current || clientRequestPayloadRef.current !== payloadFingerprint) {
       clientRequestIdRef.current =
         typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
           ? `chk-${crypto.randomUUID()}`
-          : `chk-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+          : `chk-${Date.now()}-${Math.random().toString(36).slice(2, 12)}-${Math.random().toString(36).slice(2, 12)}`;
       clientRequestPayloadRef.current = payloadFingerprint;
     }
 
@@ -184,9 +184,10 @@ export default function CheckoutPage() {
       });
 
       if (!res.success || !res.orderNumber) {
-        // Generate a fresh key on explicit server validation rejection so user can edit fields & resubmit
-        clientRequestIdRef.current = null;
-        clientRequestPayloadRef.current = null;
+        if (res.error?.startsWith('Idempotency key conflict')) {
+          clientRequestIdRef.current = null;
+          clientRequestPayloadRef.current = null;
+        }
         setErrorMessage(res.error || 'Failed to place order. Please review your details and try again.');
         setIsSubmitting(false);
         return;

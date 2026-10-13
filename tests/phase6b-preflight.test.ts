@@ -19,7 +19,9 @@ test('Phase 6B Preflight: Migration 00004 enforces full-payload idempotency, lea
   assert.equal(existsSync(m4Path), true, 'Migration 00004 must exist');
   const sql = readFileSync(m4Path, 'utf8');
 
-  // 1. Advisory transaction lock for concurrent duplicate idempotency_key serialization
+  // 1. Mandatory 16-128 char idempotency key + advisory transaction lock for concurrent duplicate serialization
+  assert.match(sql, /IF v_idempotency_key IS NULL OR char_length\(v_idempotency_key\) < 16 OR char_length\(v_idempotency_key\) > 128 THEN/);
+  assert.match(sql, /RAISE EXCEPTION 'Idempotency key is required and must be between 16 and 128 characters\.'/);
   assert.match(sql, /pg_advisory_xact_lock\(hashtext\('splender_checkout_idem:' \|\| v_idempotency_key\)\)/);
 
   // 2. Full-payload verification on idempotent hit (identity, address, district, coupon, payment, and canonical items)
@@ -58,6 +60,10 @@ test('Phase 6B Preflight: Migration 00004 enforces full-payload idempotency, lea
 
   // 9. Payment record created inside the same transaction for all orders
   assert.match(sql, /INSERT INTO public\.payments/);
+
+  // 10. Cancellation inventory integrity: missing variants raise exception and roll back entire cancellation
+  assert.match(sql, /Cannot restock order %: product variant % not found/);
+  assert.match(sql, /Cannot restock order %: line item is missing a product variant reference/);
 });
 
 test('Phase 6B Preflight: Migration 00005 and checkout server actions preserve least-privilege isolation and verify customer identity server-side', () => {
@@ -87,12 +93,20 @@ test('Phase 6B Preflight: Migration 00005 and checkout server actions preserve l
   // 6. Reviews GRANT INSERT includes customer_name, variant_id, title, created_at, updated_at
   assert.match(sql, /GRANT INSERT \([\s\S]*?customer_name[\s\S]*?title[\s\S]*?\) ON public\.reviews TO authenticated/);
 
-  // 7. Checkout server action derives identity strictly from getCurrentUser() and rejects client-supplied user_id
+  // 7. Checkout server action derives identity strictly from getCurrentUser(), rejects client-supplied user_id, and requires 16-128 char idempotency key
   const actionsPath = join(process.cwd(), 'lib', 'orders', 'actions.ts');
   const actionsCode = readFileSync(actionsPath, 'utf8');
   assert.match(actionsCode, /Client-supplied user identity is not permitted/);
   assert.match(actionsCode, /const currentUser = await getCurrentUser\(\)/);
   assert.match(actionsCode, /const userId = currentUser \? currentUser\.id : null/);
+  assert.match(actionsCode, /if \(!trimmedRequestId \|\| trimmedRequestId\.length < 16 \|\| trimmedRequestId\.length > 128\)/);
+  assert.match(actionsCode, /Idempotency key is required and must be between 16 and 128 characters\./);
+
+  // 8. Frontend checkout page preserves stable key across retries of identical payload and generates fresh key on new order / payload change
+  const checkoutPagePath = join(process.cwd(), 'app', '(store)', 'checkout', 'page.tsx');
+  const checkoutPageCode = readFileSync(checkoutPagePath, 'utf8');
+  assert.match(checkoutPageCode, /if \(!clientRequestIdRef\.current \|\| clientRequestPayloadRef\.current !== payloadFingerprint\)/);
+  assert.match(checkoutPageCode, /if \(res\.error\?\.startsWith\('Idempotency key conflict'\)\)/);
 });
 
 test('Phase 6B Preflight: Real PostgreSQL 18 Migration, 00004 Standalone Privilege Isolation, Full-Payload Idempotency, Concurrency, Rollback, Customer & Admin Permissions Suite', async (t) => {
@@ -408,7 +422,7 @@ test('Phase 6B Preflight: Real PostgreSQL 18 Migration, 00004 Standalone Privile
       anonClient.release();
     }
 
-    // 6. Task A: Idempotency retry & complete-payload conflict tests
+    // 6. Task A: Idempotency validation, retry & complete-payload conflict tests
     const idemKey = 'chk-idem-complete-payload-0001';
     const baseOrderData = {
       user_id: customerUserId,
@@ -429,6 +443,18 @@ test('Phase 6B Preflight: Real PostgreSQL 18 Migration, 00004 Standalone Privile
       { variant_id: var2Id, quantity: 1 },
     ];
 
+    // 6.0. Missing, blank, too-short (<16) and too-long (>128) idempotency keys are strictly rejected
+    for (const badIdem of [null, '', '   ', 'chk-short-15chr', 'a'.repeat(129)]) {
+      await assert.rejects(
+        () =>
+          pool.query(`SELECT public.process_order_checkout($1::jsonb, $2::jsonb, 'ROYAL10')`, [
+            JSON.stringify({ ...baseOrderData, idempotency_key: badIdem }),
+            JSON.stringify(baseItemsData),
+          ]),
+        /Idempotency key is required and must be between 16 and 128 characters/
+      );
+    }
+
     // 6A. Initial order creation
     const firstOrderRes = await pool.query(
       `SELECT public.process_order_checkout($1::jsonb, $2::jsonb, 'ROYAL10') AS result`,
@@ -437,6 +463,26 @@ test('Phase 6B Preflight: Real PostgreSQL 18 Migration, 00004 Standalone Privile
     const firstOrder = firstOrderRes.rows[0].result;
     assert.equal(firstOrder.success, true);
     assert.equal(firstOrder.idempotent, false);
+
+    // 6A.1 Concurrent duplicate requests with the same key and payload serialize safely
+    const dupOutcomes = await Promise.all([
+      pool.query(`SELECT public.process_order_checkout($1::jsonb, $2::jsonb, 'ROYAL10') AS result`, [
+        JSON.stringify(baseOrderData),
+        JSON.stringify(baseItemsData),
+      ]),
+      pool.query(`SELECT public.process_order_checkout($1::jsonb, $2::jsonb, 'ROYAL10') AS result`, [
+        JSON.stringify(baseOrderData),
+        JSON.stringify(baseItemsData),
+      ]),
+    ]);
+    const dupRes1 = dupOutcomes[0].rows[0].result;
+    const dupRes2 = dupOutcomes[1].rows[0].result;
+    assert.equal(dupRes1.success, true);
+    assert.equal(dupRes2.success, true);
+    assert.equal(dupRes1.order_id, firstOrder.order_id);
+    assert.equal(dupRes2.order_id, firstOrder.order_id);
+    assert.equal(dupRes1.idempotent, true);
+    assert.equal(dupRes2.idempotent, true);
 
     // 6B. Retry with identical payload (even with reversed item order in JSON array) -> returns original order
     const retryIdenticalRes = await pool.query(
@@ -893,6 +939,95 @@ test('Phase 6B Preflight: Real PostgreSQL 18 Migration, 00004 Standalone Privile
     } finally {
       adminOpsClient.release();
     }
+
+    // 5. Cancellation Inventory Integrity: If an order item references a missing variant, raise exception & roll back entire cancellation
+    const missingVarId = '99999999-9999-4999-8999-999999999999';
+    const orderWithMissingVar = await pool.query(
+      `INSERT INTO public.orders (
+         customer_name, phone1, address_line, district, subtotal, total_amount, payment_method, order_status, idempotency_key
+       ) VALUES ('Missing Var Tester', '0770001122', '10 Test Lane', 'Colombo', 90000, 90350, 'cod', 'pending', 'chk-missing-var-order-001')
+       RETURNING id, order_number`
+    );
+    const corruptOrderId = orderWithMissingVar.rows[0].id;
+    const corruptOrderNum = orderWithMissingVar.rows[0].order_number;
+
+    // Temporarily bypass foreign key check to simulate an order item referencing a deleted/missing variant
+    await pool.query(`SET session_replication_role = 'replica'`);
+    await pool.query(
+      `INSERT INTO public.order_items (order_id, product_id, variant_id, product_name, variant_title, sku, unit_price, quantity, total_price)
+       VALUES
+         ($1, $2, $3, 'Royal Sapphire Ring', 'Size 6', 'SJ-SAP-1', 45000, 1, 45000),
+         ($1, $2, $4, 'Deleted Product Ring', 'Discontinued', 'SJ-DEL-1', 45000, 1, 45000)`,
+      [corruptOrderId, prodId, var1Id, missingVarId]
+    );
+    await pool.query(`SET session_replication_role = 'origin'`);
+
+    const stockBeforeCorruptCancel = await pool.query(`SELECT stock_quantity FROM public.product_variants WHERE id = $1`, [var1Id]);
+    assert.equal(stockBeforeCorruptCancel.rows[0].stock_quantity, 10);
+
+    const corruptCancelClient = await pool.connect();
+    try {
+      await corruptCancelClient.query('SET ROLE service_role');
+      await assert.rejects(
+        () => corruptCancelClient.query(`SELECT public.cancel_order_and_restock($1::uuid, $2::uuid, 'Cancel corrupt order')`, [corruptOrderId, adminUserId]),
+        /Cannot restock order.*product variant.*not found/
+      );
+    } finally {
+      corruptCancelClient.release();
+    }
+
+    // Verify entire cancellation rolled back: var1 stock unchanged, order still pending, no restock movements recorded
+    const stockAfterCorruptCancel = await pool.query(`SELECT stock_quantity FROM public.product_variants WHERE id = $1`, [var1Id]);
+    assert.equal(stockAfterCorruptCancel.rows[0].stock_quantity, 10, 'Stock of existing variant must not change if any variant is missing');
+
+    const corruptOrderStatus = await pool.query(`SELECT order_status FROM public.orders WHERE id = $1`, [corruptOrderId]);
+    assert.equal(corruptOrderStatus.rows[0].order_status, 'pending', 'Order status must remain pending after rolled-back cancellation');
+
+    const corruptMovements = await pool.query(
+      `SELECT 1 FROM public.inventory_movements WHERE reference_id = $1 AND reason = 'order_cancelled_restock'`,
+      [corruptOrderNum]
+    );
+    assert.equal(corruptMovements.rowCount, 0, 'No restock movements must be committed on rolled-back cancellation');
+
+    // 6. Concurrent Cancellation: 4 simultaneous requests cannot restore inventory more than once
+    const concurrentOrderRes = await pool.query(
+      `SELECT public.process_order_checkout($1::jsonb, $2::jsonb, NULL) AS result`,
+      [
+        JSON.stringify({
+          customer_name: 'Concurrent Cancel Tester',
+          phone1: '0779998877',
+          address_line: '88 Lake Cross',
+          district: 'Colombo',
+          payment_method: 'cod',
+          idempotency_key: 'chk-concurrent-cancel-order-01',
+        }),
+        JSON.stringify([{ variant_id: var1Id, quantity: 2 }]),
+      ]
+    );
+    const concurrentOrder = concurrentOrderRes.rows[0].result;
+    assert.equal(concurrentOrder.success, true);
+
+    const stockBeforeConcCancel = await pool.query(`SELECT stock_quantity FROM public.product_variants WHERE id = $1`, [var1Id]);
+    assert.equal(stockBeforeConcCancel.rows[0].stock_quantity, 8); // 10 - 2 = 8
+
+    const cancelCalls = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        pool.query(`SELECT public.cancel_order_and_restock($1::uuid, $2::uuid, 'Simultaneous cancel click') AS result`, [
+          concurrentOrder.order_id,
+          adminUserId,
+        ])
+      )
+    );
+
+    const cancelResults = cancelCalls.map((c) => c.rows[0].result);
+    const restockedCount = cancelResults.filter((r) => r.restocked === true).length;
+    const idempotentCount = cancelResults.filter((r) => r.idempotent === true).length;
+
+    assert.equal(restockedCount, 1, 'Exactly 1 concurrent cancellation request must execute restock');
+    assert.equal(idempotentCount, 3, 'Remaining 3 concurrent cancellation requests must return idempotent: true');
+
+    const stockAfterConcCancel = await pool.query(`SELECT stock_quantity FROM public.product_variants WHERE id = $1`, [var1Id]);
+    assert.equal(stockAfterConcCancel.rows[0].stock_quantity, 10, 'Inventory must be restored exactly once (8 + 2 = 10), never duplicated');
   } finally {
     await pool.end().catch(() => {});
     try {

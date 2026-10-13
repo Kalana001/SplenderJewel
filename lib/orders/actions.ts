@@ -96,9 +96,12 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       return { success: false, error: 'Invalid payment method selected.' };
     }
 
-    const trimmedRequestId = input.clientRequestId?.trim() || null;
-    if (trimmedRequestId && (trimmedRequestId.length < 16 || trimmedRequestId.length > 128)) {
-      return { success: false, error: 'Invalid checkout request identifier.' };
+    const trimmedRequestId = input.clientRequestId?.trim() || '';
+    if (!trimmedRequestId || trimmedRequestId.length < 16 || trimmedRequestId.length > 128) {
+      return {
+        success: false,
+        error: 'Idempotency key is required and must be between 16 and 128 characters.',
+      };
     }
 
     const adminClient = createAdminClient();

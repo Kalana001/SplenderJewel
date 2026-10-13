@@ -292,8 +292,8 @@ BEGIN
     RAISE EXCEPTION 'Invalid payment method: %', COALESCE(v_payment_method, 'NULL');
   END IF;
 
-  IF v_idempotency_key IS NOT NULL AND (char_length(v_idempotency_key) < 16 OR char_length(v_idempotency_key) > 128) THEN
-    RAISE EXCEPTION 'Idempotency key must be between 16 and 128 characters.';
+  IF v_idempotency_key IS NULL OR char_length(v_idempotency_key) < 16 OR char_length(v_idempotency_key) > 128 THEN
+    RAISE EXCEPTION 'Idempotency key is required and must be between 16 and 128 characters.';
   END IF;
 
   IF p_order_data->>'user_id' IS NOT NULL AND TRIM(p_order_data->>'user_id') <> '' THEN
@@ -342,88 +342,86 @@ BEGIN
   END LOOP;
 
   -- 1. Concurrency-Safe & Full-Payload-Bound Idempotency Check
-  IF v_idempotency_key IS NOT NULL THEN
-    -- Serialize concurrent requests sharing the same idempotency_key so the second
-    -- caller waits for the first transaction to commit before reading public.orders
-    PERFORM pg_advisory_xact_lock(hashtext('splender_checkout_idem:' || v_idempotency_key));
+  -- Serialize concurrent requests sharing the same idempotency_key so the second
+  -- caller waits for the first transaction to commit before reading public.orders
+  PERFORM pg_advisory_xact_lock(hashtext('splender_checkout_idem:' || v_idempotency_key));
 
-    SELECT
-      id, order_number, order_token, user_id,
-      customer_name, email, phone1, phone2,
-      address_line, city, district, postal_code, delivery_notes,
-      payment_method, coupon_code,
-      subtotal, discount_amount, delivery_fee, total_amount
-    INTO v_existing_order
-    FROM public.orders
-    WHERE idempotency_key = v_idempotency_key;
+  SELECT
+    id, order_number, order_token, user_id,
+    customer_name, email, phone1, phone2,
+    address_line, city, district, postal_code, delivery_notes,
+    payment_method, coupon_code,
+    subtotal, discount_amount, delivery_fee, total_amount
+  INTO v_existing_order
+  FROM public.orders
+  WHERE idempotency_key = v_idempotency_key;
 
-    IF FOUND THEN
-      -- Compute canonical sorted (variant_id, quantity) array for requested payload
-      SELECT COALESCE(
-        jsonb_agg(
-          jsonb_build_object('variant_id', req_agg.variant_id, 'quantity', req_agg.quantity)
-          ORDER BY req_agg.variant_id ASC
-        ),
-        '[]'::JSONB
-      )
-      INTO v_requested_items_canonical
-      FROM (
-        SELECT
-          (TRIM(elem->>'variant_id'))::UUID AS variant_id,
-          SUM((TRIM(elem->>'quantity'))::INT)::INT AS quantity
-        FROM jsonb_array_elements(p_items_data) elem
-        GROUP BY (TRIM(elem->>'variant_id'))::UUID
-      ) req_agg;
+  IF FOUND THEN
+    -- Compute canonical sorted (variant_id, quantity) array for requested payload
+    SELECT COALESCE(
+      jsonb_agg(
+        jsonb_build_object('variant_id', req_agg.variant_id, 'quantity', req_agg.quantity)
+        ORDER BY req_agg.variant_id ASC
+      ),
+      '[]'::JSONB
+    )
+    INTO v_requested_items_canonical
+    FROM (
+      SELECT
+        (TRIM(elem->>'variant_id'))::UUID AS variant_id,
+        SUM((TRIM(elem->>'quantity'))::INT)::INT AS quantity
+      FROM jsonb_array_elements(p_items_data) elem
+      GROUP BY (TRIM(elem->>'variant_id'))::UUID
+    ) req_agg;
 
-      -- Compute canonical sorted (variant_id, quantity) array for existing order
-      SELECT COALESCE(
-        jsonb_agg(
-          jsonb_build_object('variant_id', existing_agg.variant_id, 'quantity', existing_agg.quantity)
-          ORDER BY existing_agg.variant_id ASC
-        ),
-        '[]'::JSONB
-      )
-      INTO v_existing_items_canonical
-      FROM (
-        SELECT
-          oi.variant_id,
-          SUM(oi.quantity)::INT AS quantity
-        FROM public.order_items oi
-        WHERE oi.order_id = v_existing_order.id
-        GROUP BY oi.variant_id
-      ) existing_agg;
+    -- Compute canonical sorted (variant_id, quantity) array for existing order
+    SELECT COALESCE(
+      jsonb_agg(
+        jsonb_build_object('variant_id', existing_agg.variant_id, 'quantity', existing_agg.quantity)
+        ORDER BY existing_agg.variant_id ASC
+      ),
+      '[]'::JSONB
+    )
+    INTO v_existing_items_canonical
+    FROM (
+      SELECT
+        oi.variant_id,
+        SUM(oi.quantity)::INT AS quantity
+      FROM public.order_items oi
+      WHERE oi.order_id = v_existing_order.id
+      GROUP BY oi.variant_id
+    ) existing_agg;
 
-      -- Verify complete order payload matches existing order; prevent cross-customer disclosure and payload mutation reuse
-      IF v_existing_order.user_id IS DISTINCT FROM v_user_id
-         OR LOWER(v_existing_order.customer_name) <> LOWER(v_customer_name)
-         OR LOWER(COALESCE(v_existing_order.email, '')) <> LOWER(COALESCE(v_email, ''))
-         OR v_existing_order.phone1 <> v_phone1
-         OR COALESCE(v_existing_order.phone2, '') <> COALESCE(v_phone2, '')
-         OR LOWER(v_existing_order.address_line) <> LOWER(v_address_line)
-         OR LOWER(COALESCE(v_existing_order.city, '')) <> LOWER(COALESCE(v_city, ''))
-         OR v_existing_order.district <> v_district
-         OR LOWER(COALESCE(v_existing_order.postal_code, '')) <> LOWER(COALESCE(v_postal_code, ''))
-         OR COALESCE(v_existing_order.delivery_notes, '') <> COALESCE(v_delivery_notes, '')
-         OR v_existing_order.payment_method <> v_payment_method
-         OR UPPER(COALESCE(v_existing_order.coupon_code, '')) <> COALESCE(v_requested_coupon, '')
-         OR v_existing_items_canonical <> v_requested_items_canonical
-      THEN
-        RAISE EXCEPTION 'Idempotency key conflict: request parameters do not match existing order.';
-      END IF;
-
-      RETURN jsonb_build_object(
-        'success', true,
-        'order_id', v_existing_order.id,
-        'order_number', v_existing_order.order_number,
-        'order_token', v_existing_order.order_token,
-        'subtotal', v_existing_order.subtotal,
-        'discount_amount', v_existing_order.discount_amount,
-        'delivery_fee', v_existing_order.delivery_fee,
-        'total_amount', v_existing_order.total_amount,
-        'is_duplicate', true,
-        'idempotent', true
-      );
+    -- Verify complete order payload matches existing order; prevent cross-customer disclosure and payload mutation reuse
+    IF v_existing_order.user_id IS DISTINCT FROM v_user_id
+       OR LOWER(v_existing_order.customer_name) <> LOWER(v_customer_name)
+       OR LOWER(COALESCE(v_existing_order.email, '')) <> LOWER(COALESCE(v_email, ''))
+       OR v_existing_order.phone1 <> v_phone1
+       OR COALESCE(v_existing_order.phone2, '') <> COALESCE(v_phone2, '')
+       OR LOWER(v_existing_order.address_line) <> LOWER(v_address_line)
+       OR LOWER(COALESCE(v_existing_order.city, '')) <> LOWER(COALESCE(v_city, ''))
+       OR v_existing_order.district <> v_district
+       OR LOWER(COALESCE(v_existing_order.postal_code, '')) <> LOWER(COALESCE(v_postal_code, ''))
+       OR COALESCE(v_existing_order.delivery_notes, '') <> COALESCE(v_delivery_notes, '')
+       OR v_existing_order.payment_method <> v_payment_method
+       OR UPPER(COALESCE(v_existing_order.coupon_code, '')) <> COALESCE(v_requested_coupon, '')
+       OR v_existing_items_canonical <> v_requested_items_canonical
+    THEN
+      RAISE EXCEPTION 'Idempotency key conflict: request parameters do not match existing order.';
     END IF;
+
+    RETURN jsonb_build_object(
+      'success', true,
+      'order_id', v_existing_order.id,
+      'order_number', v_existing_order.order_number,
+      'order_token', v_existing_order.order_token,
+      'subtotal', v_existing_order.subtotal,
+      'discount_amount', v_existing_order.discount_amount,
+      'delivery_fee', v_existing_order.delivery_fee,
+      'total_amount', v_existing_order.total_amount,
+      'is_duplicate', true,
+      'idempotent', true
+    );
   END IF;
 
   -- 2. Authoritative Delivery Fee & Province lookup from delivery_districts
@@ -822,59 +820,71 @@ BEGIN
   INTO v_already_restocked;
 
   -- 3. Lock variants in canonical UUID order and restore inventory stock
+  -- Every line item must reference an existing product_variants row; missing variants abort & roll back the entire cancellation
   IF NOT v_already_restocked THEN
+    IF NOT EXISTS (SELECT 1 FROM public.order_items WHERE order_id = v_order.id) THEN
+      RAISE EXCEPTION 'Cannot restock order %: order contains no line items.', v_order.order_number;
+    END IF;
+
     FOR v_item IN
       SELECT
         oi.variant_id,
         SUM(oi.quantity)::INT AS quantity
       FROM public.order_items oi
       WHERE oi.order_id = v_order.id
-        AND oi.variant_id IS NOT NULL
       GROUP BY oi.variant_id
-      ORDER BY oi.variant_id ASC
+      ORDER BY oi.variant_id ASC NULLS LAST
     LOOP
+      IF v_item.variant_id IS NULL THEN
+        RAISE EXCEPTION 'Cannot restock order %: line item is missing a product variant reference.',
+          v_order.order_number;
+      END IF;
+
       SELECT id, stock_quantity, low_stock_threshold
       INTO v_variant
       FROM public.product_variants
       WHERE id = v_item.variant_id
       FOR UPDATE;
 
-      IF FOUND THEN
-        v_new_qty := v_variant.stock_quantity + v_item.quantity;
-
-        IF v_new_qty = 0 THEN
-          v_stock_status := 'out_of_stock';
-        ELSIF v_new_qty <= v_variant.low_stock_threshold THEN
-          v_stock_status := 'low_stock';
-        ELSE
-          v_stock_status := 'in_stock';
-        END IF;
-
-        UPDATE public.product_variants
-        SET
-          stock_quantity = v_new_qty,
-          stock_status = v_stock_status,
-          updated_at = NOW()
-        WHERE id = v_item.variant_id;
-
-        INSERT INTO public.inventory_movements (
-          variant_id,
-          quantity_change,
-          previous_quantity,
-          new_quantity,
-          reason,
-          reference_id,
-          created_by
-        ) VALUES (
-          v_item.variant_id,
-          v_item.quantity,
-          v_variant.stock_quantity,
-          v_new_qty,
-          'order_cancelled_restock',
-          v_order.order_number,
-          p_admin_id
-        );
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'Cannot restock order %: product variant % not found.',
+          v_order.order_number, v_item.variant_id;
       END IF;
+
+      v_new_qty := v_variant.stock_quantity + v_item.quantity;
+
+      IF v_new_qty = 0 THEN
+        v_stock_status := 'out_of_stock';
+      ELSIF v_new_qty <= v_variant.low_stock_threshold THEN
+        v_stock_status := 'low_stock';
+      ELSE
+        v_stock_status := 'in_stock';
+      END IF;
+
+      UPDATE public.product_variants
+      SET
+        stock_quantity = v_new_qty,
+        stock_status = v_stock_status,
+        updated_at = NOW()
+      WHERE id = v_item.variant_id;
+
+      INSERT INTO public.inventory_movements (
+        variant_id,
+        quantity_change,
+        previous_quantity,
+        new_quantity,
+        reason,
+        reference_id,
+        created_by
+      ) VALUES (
+        v_item.variant_id,
+        v_item.quantity,
+        v_variant.stock_quantity,
+        v_new_qty,
+        'order_cancelled_restock',
+        v_order.order_number,
+        p_admin_id
+      );
     END LOOP;
   END IF;
 
