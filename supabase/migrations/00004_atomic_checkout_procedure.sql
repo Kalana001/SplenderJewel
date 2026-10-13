@@ -51,7 +51,7 @@ BEGIN
 END $$;
 
 -- ------------------------------------------------------------------------------
--- 2. IDEMPOTENCY COLUMN & LENGTH CONSTRAINT ON PUBLIC.ORDERS
+-- 2. IDEMPOTENCY COLUMN, CONSTRAINT & LEAST-PRIVILEGE TABLE/COLUMN ISOLATION
 -- ------------------------------------------------------------------------------
 ALTER TABLE public.orders
   ADD COLUMN IF NOT EXISTS idempotency_key TEXT UNIQUE;
@@ -67,6 +67,133 @@ ALTER TABLE public.orders
   );
 
 COMMENT ON COLUMN public.orders.idempotency_key IS 'Client retry idempotency token (16-128 chars). Confidential internal column omitted from customer SELECT grants.';
+
+-- Ensure Row Level Security is enabled on orders and order_items
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
+
+-- Scope orders and order_items RLS policies strictly TO authenticated
+DROP POLICY IF EXISTS "Users view own orders" ON public.orders;
+CREATE POLICY "Users view own orders" ON public.orders
+  FOR SELECT TO authenticated USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Admins manage orders" ON public.orders;
+CREATE POLICY "Admins manage orders" ON public.orders
+  FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS "Users view own order items" ON public.order_items;
+CREATE POLICY "Users view own order items" ON public.order_items
+  FOR SELECT TO authenticated USING (
+    EXISTS (SELECT 1 FROM public.orders WHERE id = order_items.order_id AND user_id = auth.uid())
+  );
+
+DROP POLICY IF EXISTS "Admins manage order items" ON public.order_items;
+CREATE POLICY "Admins manage order items" ON public.order_items
+  FOR ALL TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
+
+-- Immediately revoke ALL column-level and table-level privileges on public.orders
+-- from PUBLIC, anon, and authenticated (do NOT rely on column-level REVOKE while
+-- table-level SELECT/INSERT/UPDATE/DELETE remains granted).
+REVOKE ALL (
+  id,
+  order_number,
+  order_token,
+  user_id,
+  customer_name,
+  email,
+  phone1,
+  phone2,
+  address_line,
+  city,
+  district,
+  province,
+  postal_code,
+  delivery_notes,
+  delivery_fee,
+  subtotal,
+  discount_amount,
+  coupon_code,
+  total_amount,
+  payment_method,
+  payment_status,
+  order_status,
+  admin_notes,
+  tracking_number,
+  idempotency_key,
+  created_at,
+  updated_at
+) ON public.orders FROM PUBLIC, anon, authenticated;
+
+REVOKE ALL ON TABLE public.orders FROM PUBLIC, anon, authenticated;
+
+-- Grant authenticated read-only access ONLY to the 24 customer-safe columns of public.orders.
+-- Confidential columns (idempotency_key, order_token, admin_notes) are strictly omitted.
+-- Role anon receives ZERO grants on public.orders (guest order confirmation is served
+-- strictly via server-side service_role action getGuestOrderConfirmation).
+GRANT SELECT (
+  id,
+  order_number,
+  user_id,
+  customer_name,
+  email,
+  phone1,
+  phone2,
+  address_line,
+  city,
+  district,
+  province,
+  postal_code,
+  delivery_notes,
+  delivery_fee,
+  subtotal,
+  discount_amount,
+  coupon_code,
+  total_amount,
+  payment_method,
+  payment_status,
+  order_status,
+  tracking_number,
+  created_at,
+  updated_at
+) ON public.orders TO authenticated;
+
+GRANT ALL ON TABLE public.orders TO service_role;
+
+-- Immediately revoke ALL column-level and table-level privileges on public.order_items
+-- from PUBLIC, anon, and authenticated, and grant authenticated SELECT only on the 11
+-- customer-safe columns (strictly omitting purchase_cost).
+REVOKE ALL (
+  id,
+  order_id,
+  product_id,
+  variant_id,
+  product_name,
+  variant_title,
+  sku,
+  image_url,
+  unit_price,
+  quantity,
+  total_price,
+  purchase_cost
+) ON public.order_items FROM PUBLIC, anon, authenticated;
+
+REVOKE ALL ON TABLE public.order_items FROM PUBLIC, anon, authenticated;
+
+GRANT SELECT (
+  id,
+  order_id,
+  product_id,
+  variant_id,
+  product_name,
+  variant_title,
+  sku,
+  image_url,
+  unit_price,
+  quantity,
+  total_price
+) ON public.order_items TO authenticated;
+
+GRANT ALL ON TABLE public.order_items TO service_role;
 
 -- ------------------------------------------------------------------------------
 -- 3. ATOMIC ORDER CHECKOUT STORED PROCEDURE
@@ -123,6 +250,14 @@ DECLARE
   v_order_number TEXT;
   v_order_token UUID;
 BEGIN
+  -- 0A. Defense-in-depth runtime privilege check: restrict execution strictly to service_role / superuser
+  IF COALESCE(NULLIF(current_setting('role', true), 'none'), current_user) NOT IN ('service_role', 'postgres', 'supabase_admin')
+     OR COALESCE(current_setting('request.jwt.claim.role', true), '') IN ('anon', 'authenticated')
+  THEN
+    RAISE EXCEPTION 'permission denied for function process_order_checkout'
+      USING ERRCODE = '42501';
+  END IF;
+
   -- 0. Validate JSON payload containers
   IF p_order_data IS NULL OR jsonb_typeof(p_order_data) <> 'object' THEN
     RAISE EXCEPTION 'Order payload must be a valid JSON object.';
@@ -612,6 +747,174 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 -- ------------------------------------------------------------------------------
+-- 3B. ATOMIC ORDER CANCELLATION & INVENTORY RESTOCKING STORED PROCEDURE
+-- ------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.cancel_order_and_restock(
+  p_order_id UUID,
+  p_admin_id UUID,
+  p_notes TEXT DEFAULT NULL
+)
+RETURNS JSONB AS $$
+DECLARE
+  v_order RECORD;
+  v_admin_email TEXT;
+  v_item RECORD;
+  v_variant RECORD;
+  v_new_qty INT;
+  v_stock_status TEXT;
+  v_already_restocked BOOLEAN := FALSE;
+BEGIN
+  -- 0. Defense-in-depth runtime privilege check: restrict execution strictly to service_role / superuser
+  IF COALESCE(NULLIF(current_setting('role', true), 'none'), current_user) NOT IN ('service_role', 'postgres', 'supabase_admin')
+     OR COALESCE(current_setting('request.jwt.claim.role', true), '') IN ('anon', 'authenticated')
+  THEN
+    RAISE EXCEPTION 'permission denied for function cancel_order_and_restock'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF p_order_id IS NULL THEN
+    RAISE EXCEPTION 'Order ID is required.';
+  END IF;
+
+  IF p_admin_id IS NULL THEN
+    RAISE EXCEPTION 'Administrator ID is required to cancel an order.';
+  END IF;
+
+  SELECT email
+  INTO v_admin_email
+  FROM public.admin_users
+  WHERE id = p_admin_id AND is_active = TRUE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Unauthorized: active administrator account not found.';
+  END IF;
+
+  -- 1. Lock target order row
+  SELECT id, order_number, order_status
+  INTO v_order
+  FROM public.orders
+  WHERE id = p_order_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Target order not found.';
+  END IF;
+
+  IF v_order.order_status = 'cancelled' THEN
+    RETURN jsonb_build_object(
+      'success', true,
+      'order_id', v_order.id,
+      'order_number', v_order.order_number,
+      'previous_status', 'cancelled',
+      'new_status', 'cancelled',
+      'restocked', false,
+      'idempotent', true
+    );
+  END IF;
+
+  -- 2. Check idempotency guard against duplicate restock movements for this order_number
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.inventory_movements
+    WHERE reason = 'order_cancelled_restock'
+      AND reference_id = v_order.order_number
+  )
+  INTO v_already_restocked;
+
+  -- 3. Lock variants in canonical UUID order and restore inventory stock
+  IF NOT v_already_restocked THEN
+    FOR v_item IN
+      SELECT
+        oi.variant_id,
+        SUM(oi.quantity)::INT AS quantity
+      FROM public.order_items oi
+      WHERE oi.order_id = v_order.id
+        AND oi.variant_id IS NOT NULL
+      GROUP BY oi.variant_id
+      ORDER BY oi.variant_id ASC
+    LOOP
+      SELECT id, stock_quantity, low_stock_threshold
+      INTO v_variant
+      FROM public.product_variants
+      WHERE id = v_item.variant_id
+      FOR UPDATE;
+
+      IF FOUND THEN
+        v_new_qty := v_variant.stock_quantity + v_item.quantity;
+
+        IF v_new_qty = 0 THEN
+          v_stock_status := 'out_of_stock';
+        ELSIF v_new_qty <= v_variant.low_stock_threshold THEN
+          v_stock_status := 'low_stock';
+        ELSE
+          v_stock_status := 'in_stock';
+        END IF;
+
+        UPDATE public.product_variants
+        SET
+          stock_quantity = v_new_qty,
+          stock_status = v_stock_status,
+          updated_at = NOW()
+        WHERE id = v_item.variant_id;
+
+        INSERT INTO public.inventory_movements (
+          variant_id,
+          quantity_change,
+          previous_quantity,
+          new_quantity,
+          reason,
+          reference_id,
+          created_by
+        ) VALUES (
+          v_item.variant_id,
+          v_item.quantity,
+          v_variant.stock_quantity,
+          v_new_qty,
+          'order_cancelled_restock',
+          v_order.order_number,
+          p_admin_id
+        );
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- 4. Release coupon usage reservation for the cancelled order
+  DELETE FROM public.coupon_usage
+  WHERE order_id = v_order.id;
+
+  -- 5. Update order status to cancelled
+  UPDATE public.orders
+  SET
+    order_status = 'cancelled',
+    updated_at = NOW()
+  WHERE id = v_order.id;
+
+  -- 6. Record status transition history
+  INSERT INTO public.order_status_history (
+    order_id,
+    previous_status,
+    new_status,
+    notes
+  ) VALUES (
+    v_order.id,
+    v_order.order_status,
+    'cancelled',
+    COALESCE(NULLIF(TRIM(p_notes), ''), 'Order cancelled and inventory restocked by admin (' || v_admin_email || ')')
+  );
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'order_id', v_order.id,
+    'order_number', v_order.order_number,
+    'previous_status', v_order.order_status,
+    'new_status', 'cancelled',
+    'restocked', NOT v_already_restocked,
+    'idempotent', false
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
+
+-- ------------------------------------------------------------------------------
 -- 4. PRIVILEGE ISOLATION
 -- ------------------------------------------------------------------------------
 ALTER FUNCTION public.process_order_checkout(JSONB, JSONB, TEXT) OWNER TO postgres;
@@ -620,3 +923,10 @@ REVOKE ALL ON FUNCTION public.process_order_checkout(JSONB, JSONB, TEXT) FROM PU
 GRANT EXECUTE ON FUNCTION public.process_order_checkout(JSONB, JSONB, TEXT) TO service_role;
 
 COMMENT ON FUNCTION public.process_order_checkout(JSONB, JSONB, TEXT) IS 'Atomic single-transaction order checkout procedure with advisory lock idempotency, canonical variant locking, and server-side price/fee/coupon verification.';
+
+ALTER FUNCTION public.cancel_order_and_restock(UUID, UUID, TEXT) OWNER TO postgres;
+
+REVOKE ALL ON FUNCTION public.cancel_order_and_restock(UUID, UUID, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.cancel_order_and_restock(UUID, UUID, TEXT) TO service_role;
+
+COMMENT ON FUNCTION public.cancel_order_and_restock(UUID, UUID, TEXT) IS 'Atomic single-transaction administrative order cancellation and inventory restocking procedure restricted strictly to service_role.';

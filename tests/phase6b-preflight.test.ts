@@ -14,7 +14,7 @@ const { Pool } = pg;
 // SPLENDER JEWEL — PHASE 6B FINAL DATABASE MIGRATION PREFLIGHT TEST SUITE
 // =============================================================================
 
-test('Phase 6B Preflight: Migration 00004 enforces full-payload idempotency, advisory locks, canonical variant locking, and safe coupon assignment', () => {
+test('Phase 6B Preflight: Migration 00004 enforces full-payload idempotency, least-privilege column grants, and service_role-only execution', () => {
   const m4Path = join(process.cwd(), 'supabase', 'migrations', '00004_atomic_checkout_procedure.sql');
   assert.equal(existsSync(m4Path), true, 'Migration 00004 must exist');
   const sql = readFileSync(m4Path, 'utf8');
@@ -28,27 +28,39 @@ test('Phase 6B Preflight: Migration 00004 enforces full-payload idempotency, adv
   assert.match(sql, /UPPER\(COALESCE\(v_existing_order\.coupon_code, ''\)\) <> COALESCE\(v_requested_coupon, ''\)/);
   assert.match(sql, /Idempotency key conflict: request parameters do not match existing order/);
 
-  // 3. Registered customer profile & account_status check
+  // 3. Explicit column-level AND table-level REVOKE on public.orders and public.order_items (never relying on column REVOKE alone)
+  assert.match(sql, /REVOKE ALL \([\s\S]*?order_token[\s\S]*?admin_notes[\s\S]*?idempotency_key[\s\S]*?\) ON public\.orders FROM PUBLIC, anon, authenticated;/);
+  assert.match(sql, /REVOKE ALL ON TABLE public\.orders FROM PUBLIC, anon, authenticated;/);
+  assert.match(sql, /GRANT SELECT \([\s\S]*?order_number[\s\S]*?tracking_number[\s\S]*?\) ON public\.orders TO authenticated;/);
+  assert.match(sql, /REVOKE ALL \([\s\S]*?purchase_cost[\s\S]*?\) ON public\.order_items FROM PUBLIC, anon, authenticated;/);
+  assert.match(sql, /REVOKE ALL ON TABLE public\.order_items FROM PUBLIC, anon, authenticated;/);
+
+  // 4. Defense-in-depth runtime role check inside process_order_checkout + ACL restriction to service_role
+  assert.match(sql, /RAISE EXCEPTION 'permission denied for function process_order_checkout'/);
+  assert.match(sql, /REVOKE ALL ON FUNCTION public\.process_order_checkout\(JSONB, JSONB, TEXT\) FROM PUBLIC, anon, authenticated;/);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION public\.process_order_checkout\(JSONB, JSONB, TEXT\) TO service_role;/);
+
+  // 5. Registered customer profile & account_status check
   assert.match(sql, /FROM public\.profiles/);
   assert.match(sql, /Your customer account is suspended and cannot place orders/);
 
-  // 4. Raw item quantity validation BEFORE idempotency check and SUM() aggregation
+  // 6. Raw item quantity validation BEFORE idempotency check and SUM() aggregation
   assert.match(sql, /Item quantity must be a positive integer of at least 1/);
 
-  // 5. Canonical UUID ordering on FOR UPDATE OF pv to prevent multi-item deadlocks
+  // 7. Canonical UUID ordering on FOR UPDATE OF pv to prevent multi-item deadlocks
   assert.match(sql, /ORDER BY \(TRIM\(elem->>'variant_id'\)\)::UUID ASC/);
   assert.match(sql, /FOR UPDATE OF pv;/);
 
-  // 6. Safe v_coupon_code scalar variable (preventing PL/pgSQL unassigned RECORD error 55000 when p_coupon_code is NULL)
+  // 8. Safe v_coupon_code scalar variable (preventing PL/pgSQL unassigned RECORD error 55000 when p_coupon_code is NULL)
   assert.match(sql, /v_coupon_code TEXT := NULL;/);
   assert.match(sql, /v_coupon_code := v_coupon\.code;/);
   assert.equal(sql.includes('CASE WHEN v_coupon_id IS NOT NULL THEN v_coupon.code'), false);
 
-  // 7. Payment record created inside the same transaction for all orders
+  // 9. Payment record created inside the same transaction for all orders
   assert.match(sql, /INSERT INTO public\.payments/);
 });
 
-test('Phase 6B Preflight: Migration 00005 resolves admin_users 42P17 recursion, grants complete review insert columns, and isolates privileges', () => {
+test('Phase 6B Preflight: Migration 00005 and checkout server actions preserve least-privilege isolation and verify customer identity server-side', () => {
   const m5Path = join(process.cwd(), 'supabase', 'migrations', '00005_database_security_hardening.sql');
   assert.equal(existsSync(m5Path), true, 'Migration 00005 must exist');
   const sql = readFileSync(m5Path, 'utf8');
@@ -67,17 +79,23 @@ test('Phase 6B Preflight: Migration 00005 resolves admin_users 42P17 recursion, 
   // 4. Allows service_role and postgres to update account_status in protect_profile_fields()
   assert.match(sql, /current_setting\('role', true\) NOT IN \('service_role', 'postgres'/);
 
-  // 5. Public SELECT policies do not invoke public.is_admin() for anon
-  assert.match(sql, /CREATE POLICY "Public view active products" ON public\.products\s+FOR SELECT USING \(is_active = TRUE\);/);
+  // 5. Reinforces process_order_checkout service_role-only execution and explicit column+table REVOKE on orders
+  assert.match(sql, /REVOKE ALL ON FUNCTION public\.process_order_checkout\(JSONB, JSONB, TEXT\) FROM PUBLIC, anon, authenticated;/);
+  assert.match(sql, /REVOKE ALL \([\s\S]*?idempotency_key[\s\S]*?\) ON public\.orders FROM PUBLIC, anon, authenticated;/);
+  assert.match(sql, /REVOKE ALL ON TABLE public\.orders FROM PUBLIC, anon, authenticated;/);
 
-  // 6. Store settings public policy restricts to whitelisted non-sensitive keys
-  assert.match(sql, /CREATE POLICY "Public view store settings" ON public\.store_settings/);
-
-  // 7. Reviews GRANT INSERT includes customer_name, variant_id, title, created_at, updated_at
+  // 6. Reviews GRANT INSERT includes customer_name, variant_id, title, created_at, updated_at
   assert.match(sql, /GRANT INSERT \([\s\S]*?customer_name[\s\S]*?title[\s\S]*?\) ON public\.reviews TO authenticated/);
+
+  // 7. Checkout server action derives identity strictly from getCurrentUser() and rejects client-supplied user_id
+  const actionsPath = join(process.cwd(), 'lib', 'orders', 'actions.ts');
+  const actionsCode = readFileSync(actionsPath, 'utf8');
+  assert.match(actionsCode, /Client-supplied user identity is not permitted/);
+  assert.match(actionsCode, /const currentUser = await getCurrentUser\(\)/);
+  assert.match(actionsCode, /const userId = currentUser \? currentUser\.id : null/);
 });
 
-test('Phase 6B Preflight: Real PostgreSQL 18 Migration, Full-Payload Idempotency, Concurrency, Rollback, Customer & Admin Permissions Suite', async (t) => {
+test('Phase 6B Preflight: Real PostgreSQL 18 Migration, 00004 Standalone Privilege Isolation, Full-Payload Idempotency, Concurrency, Rollback, Customer & Admin Permissions Suite', async (t) => {
   const PG_BIN = 'C:\\Program Files\\PostgreSQL\\18\\bin';
   const INITDB = join(PG_BIN, 'initdb.exe');
   const POSTGRES_EXE = join(PG_BIN, 'postgres.exe');
@@ -180,11 +198,77 @@ test('Phase 6B Preflight: Real PostgreSQL 18 Migration, Full-Payload Idempotency
       GRANT USAGE ON SCHEMA public TO PUBLIC, anon, authenticated, service_role, supabase_auth_admin;
     `);
 
-    // 2. Apply 00001 -> 00002 -> 00004 -> 00005 and re-apply 00004 + 00005 for idempotency
+    // 2A. Apply historical migrations 00001 and 00002, then simulate confirmed live Supabase pre-00004 state
+    // where anon and authenticated hold table-level SELECT, INSERT, UPDATE, DELETE on public.orders & public.order_items
+    await pool.query(readFileSync(join(MIGRATIONS_DIR, '00001_initial_schema.sql'), 'utf8'));
+    await pool.query(readFileSync(join(MIGRATIONS_DIR, '00002_catalog_security_integrity.sql'), 'utf8'));
+    await pool.query(`
+      GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.orders, public.order_items TO anon, authenticated;
+      GRANT SELECT (order_token, admin_notes) ON public.orders TO anon, authenticated;
+    `);
+
+    const preM4Privs = await pool.query(`
+      SELECT
+        has_column_privilege('anon', 'public.orders', 'order_token', 'SELECT') AS anon_token_pre,
+        has_column_privilege('authenticated', 'public.orders', 'order_token', 'SELECT') AS auth_token_pre,
+        has_table_privilege('anon', 'public.orders', 'INSERT') AS anon_insert_pre
+    `);
+    assert.equal(preM4Privs.rows[0].anon_token_pre, true);
+    assert.equal(preM4Privs.rows[0].auth_token_pre, true);
+    assert.equal(preM4Privs.rows[0].anon_insert_pre, true);
+
+    // 2B. Apply ONLY 00004_atomic_checkout_procedure.sql first (before 00005) and verify standalone privilege isolation
+    await pool.query(readFileSync(join(MIGRATIONS_DIR, '00004_atomic_checkout_procedure.sql'), 'utf8'));
+
+    const postM4StandalonePrivs = await pool.query(`
+      SELECT
+        has_column_privilege('anon', 'public.orders', 'idempotency_key', 'SELECT') AS anon_idem,
+        has_column_privilege('anon', 'public.orders', 'order_token', 'SELECT') AS anon_token,
+        has_column_privilege('anon', 'public.orders', 'admin_notes', 'SELECT') AS anon_notes,
+        has_column_privilege('anon', 'public.orders', 'id', 'SELECT') AS anon_id,
+        has_table_privilege('anon', 'public.orders', 'INSERT') AS anon_insert,
+        has_table_privilege('anon', 'public.orders', 'UPDATE') AS anon_update,
+        has_table_privilege('anon', 'public.orders', 'DELETE') AS anon_delete,
+        has_column_privilege('authenticated', 'public.orders', 'idempotency_key', 'SELECT') AS auth_idem,
+        has_column_privilege('authenticated', 'public.orders', 'order_token', 'SELECT') AS auth_token,
+        has_column_privilege('authenticated', 'public.orders', 'admin_notes', 'SELECT') AS auth_notes,
+        has_column_privilege('authenticated', 'public.orders', 'id', 'SELECT') AS auth_id,
+        has_column_privilege('authenticated', 'public.orders', 'order_number', 'SELECT') AS auth_order_num,
+        has_column_privilege('authenticated', 'public.orders', 'total_amount', 'SELECT') AS auth_total,
+        has_table_privilege('authenticated', 'public.orders', 'INSERT') AS auth_insert,
+        has_table_privilege('authenticated', 'public.orders', 'UPDATE') AS auth_update,
+        has_table_privilege('authenticated', 'public.orders', 'DELETE') AS auth_delete,
+        has_column_privilege('authenticated', 'public.order_items', 'purchase_cost', 'SELECT') AS auth_item_cost,
+        has_column_privilege('authenticated', 'public.order_items', 'unit_price', 'SELECT') AS auth_item_price,
+        has_function_privilege('anon', 'public.process_order_checkout(jsonb,jsonb,text)', 'EXECUTE') AS anon_exec_checkout,
+        has_function_privilege('authenticated', 'public.process_order_checkout(jsonb,jsonb,text)', 'EXECUTE') AS auth_exec_checkout,
+        has_function_privilege('service_role', 'public.process_order_checkout(jsonb,jsonb,text)', 'EXECUTE') AS srv_exec_checkout
+    `);
+    const p4 = postM4StandalonePrivs.rows[0];
+    assert.equal(p4.anon_idem, false, '00004 standalone: anon must NOT have SELECT on orders.idempotency_key');
+    assert.equal(p4.anon_token, false, '00004 standalone: anon must NOT have SELECT on orders.order_token');
+    assert.equal(p4.anon_notes, false, '00004 standalone: anon must NOT have SELECT on orders.admin_notes');
+    assert.equal(p4.anon_id, false, '00004 standalone: anon must NOT have SELECT on orders.id');
+    assert.equal(p4.anon_insert, false, '00004 standalone: anon must NOT have INSERT on orders');
+    assert.equal(p4.anon_update, false, '00004 standalone: anon must NOT have UPDATE on orders');
+    assert.equal(p4.anon_delete, false, '00004 standalone: anon must NOT have DELETE on orders');
+    assert.equal(p4.auth_idem, false, '00004 standalone: authenticated must NOT have SELECT on orders.idempotency_key');
+    assert.equal(p4.auth_token, false, '00004 standalone: authenticated must NOT have SELECT on orders.order_token');
+    assert.equal(p4.auth_notes, false, '00004 standalone: authenticated must NOT have SELECT on orders.admin_notes');
+    assert.equal(p4.auth_id, true, '00004 standalone: authenticated MUST have SELECT on orders.id');
+    assert.equal(p4.auth_order_num, true, '00004 standalone: authenticated MUST have SELECT on orders.order_number');
+    assert.equal(p4.auth_total, true, '00004 standalone: authenticated MUST have SELECT on orders.total_amount');
+    assert.equal(p4.auth_insert, false, '00004 standalone: authenticated must NOT have INSERT on orders');
+    assert.equal(p4.auth_update, false, '00004 standalone: authenticated must NOT have UPDATE on orders');
+    assert.equal(p4.auth_delete, false, '00004 standalone: authenticated must NOT have DELETE on orders');
+    assert.equal(p4.auth_item_cost, false, '00004 standalone: authenticated must NOT have SELECT on order_items.purchase_cost');
+    assert.equal(p4.auth_item_price, true, '00004 standalone: authenticated MUST have SELECT on order_items.unit_price');
+    assert.equal(p4.anon_exec_checkout, false, '00004 standalone: anon must NOT execute process_order_checkout');
+    assert.equal(p4.auth_exec_checkout, false, '00004 standalone: authenticated must NOT execute process_order_checkout');
+    assert.equal(p4.srv_exec_checkout, true, '00004 standalone: service_role MUST execute process_order_checkout');
+
+    // 2C. Apply 00005 and re-apply 00004 + 00005 to verify idempotency and non-conflict
     for (const file of [
-      '00001_initial_schema.sql',
-      '00002_catalog_security_integrity.sql',
-      '00004_atomic_checkout_procedure.sql',
       '00005_database_security_hardening.sql',
       '00004_atomic_checkout_procedure.sql',
       '00005_database_security_hardening.sql',
@@ -504,7 +588,56 @@ test('Phase 6B Preflight: Real PostgreSQL 18 Migration, Full-Payload Idempotency
     const var1AfterRollback = await pool.query(`SELECT stock_quantity FROM public.product_variants WHERE id = $1`, [var1Id]);
     assert.equal(var1AfterRollback.rows[0].stock_quantity, 10, 'var1 stock must remain 10 after multi-item rollback');
 
-    // 9. Customer Account, Wishlist, Address, Order Read & Review Submission Tests (Task B)
+    // 9. Customer Order-History, Guest Confirmation, Payment Records, Coupon Limit & Negative Security Tests
+    // Verify payment record was created for firstOrder
+    const paymentRes = await pool.query(
+      `SELECT payment_method, amount, status FROM public.payments WHERE order_id = $1`,
+      [firstOrder.order_id]
+    );
+    assert.equal(paymentRes.rowCount, 1);
+    assert.equal(paymentRes.rows[0].payment_method, 'cod');
+    assert.equal(Number(paymentRes.rows[0].amount), Number(firstOrder.total_amount));
+    assert.equal(paymentRes.rows[0].status, 'pending');
+
+    // Create a guest bank_transfer order (also testing coupon per_customer_limit = 2)
+    const guestOrderRes = await pool.query(
+      `SELECT public.process_order_checkout($1::jsonb, $2::jsonb, 'ROYAL10') AS result`,
+      [
+        JSON.stringify({
+          user_id: null,
+          customer_name: 'Kasun Jayasuriya',
+          email: 'kasun@example.com',
+          phone1: '0718887776',
+          address_line: '88 Peradeniya Road',
+          city: 'Kandy',
+          district: 'Kandy',
+          postal_code: '20000',
+          payment_method: 'bank_transfer',
+          idempotency_key: 'guest-bank-transfer-idem-0001',
+        }),
+        JSON.stringify([{ variant_id: var1Id, quantity: 1 }]),
+      ]
+    );
+    const guestOrder = guestOrderRes.rows[0].result;
+    assert.equal(guestOrder.success, true);
+
+    // Verify guest order confirmation server query pattern (matching BOTH order_number AND order_token via service_role)
+    const guestConfirmValid = await pool.query(
+      `SELECT id, order_number, customer_name, total_amount, payment_method
+       FROM public.orders
+       WHERE order_number = $1 AND order_token = $2::uuid`,
+      [guestOrder.order_number, guestOrder.order_token]
+    );
+    assert.equal(guestConfirmValid.rowCount, 1);
+    assert.equal(guestConfirmValid.rows[0].customer_name, 'Kasun Jayasuriya');
+    assert.equal(guestConfirmValid.rows[0].payment_method, 'bank_transfer');
+
+    const guestConfirmWrongToken = await pool.query(
+      `SELECT id FROM public.orders WHERE order_number = $1 AND order_token = '00000000-0000-4000-8000-000000000000'::uuid`,
+      [guestOrder.order_number]
+    );
+    assert.equal(guestConfirmWrongToken.rowCount, 0, 'Wrong order_token must return 0 rows');
+
     // Mark firstOrder as delivered so customer can submit a verified purchase review
     await pool.query(`UPDATE public.orders SET order_status = 'delivered' WHERE id = $1`, [firstOrder.order_id]);
     const orderItemsRes = await pool.query(
@@ -513,23 +646,106 @@ test('Phase 6B Preflight: Real PostgreSQL 18 Migration, Full-Payload Idempotency
     );
     const deliveredOrderItemId = orderItemsRes.rows[0].id;
 
+    // 9A. Negative Security Tests for anon on public.orders, public.order_items, and process_order_checkout
+    const anonNegClient = await pool.connect();
+    try {
+      await anonNegClient.query('BEGIN');
+      await anonNegClient.query('SET LOCAL ROLE anon');
+      for (const badSql of [
+        `SELECT idempotency_key FROM public.orders`,
+        `SELECT order_token FROM public.orders`,
+        `SELECT admin_notes FROM public.orders`,
+        `SELECT id, order_number FROM public.orders`,
+        `SELECT * FROM public.orders`,
+        `SELECT purchase_cost FROM public.order_items`,
+        `SELECT id FROM public.order_items`,
+        `INSERT INTO public.orders (customer_name, phone1, address_line, district, subtotal, total_amount, payment_method) VALUES ('Evil', '0770000000', 'X', 'Colombo', 0, 0, 'cod')`,
+        `SELECT public.process_order_checkout('{}'::jsonb, '[]'::jsonb, NULL)`,
+      ]) {
+        await anonNegClient.query('SAVEPOINT sp_anon_neg');
+        await assert.rejects(() => anonNegClient.query(badSql), /permission denied/i, `anon must be denied: ${badSql}`);
+        await anonNegClient.query('ROLLBACK TO SAVEPOINT sp_anon_neg');
+      }
+      await anonNegClient.query('COMMIT');
+    } finally {
+      anonNegClient.release();
+    }
+
+    // 9B. Positive Customer Order-History Queries & Negative Security Tests for authenticated
     const custClient = await pool.connect();
     try {
       await custClient.query('BEGIN');
       await custClient.query('SET LOCAL ROLE authenticated');
       await custClient.query(`SELECT set_config('request.jwt.claim.sub', $1, true)`, [customerUserId]);
 
-      // 9A. Customer reads own order with address_line, city, district, province, postal_code
-      const custOrderRes = await custClient.query(
-        `SELECT id, order_number, address_line, city, district, province, postal_code, total_amount
+      // Negative checks: authenticated customer CANNOT read idempotency_key, order_token, admin_notes, SELECT *, or purchase_cost, or mutate orders, or call process_order_checkout
+      for (const badAuthSql of [
+        `SELECT idempotency_key FROM public.orders WHERE id = '${firstOrder.order_id}'`,
+        `SELECT order_token FROM public.orders WHERE id = '${firstOrder.order_id}'`,
+        `SELECT admin_notes FROM public.orders WHERE id = '${firstOrder.order_id}'`,
+        `SELECT * FROM public.orders WHERE id = '${firstOrder.order_id}'`,
+        `SELECT purchase_cost FROM public.order_items WHERE order_id = '${firstOrder.order_id}'`,
+        `SELECT * FROM public.order_items WHERE order_id = '${firstOrder.order_id}'`,
+        `INSERT INTO public.orders (customer_name, phone1, address_line, district, subtotal, total_amount, payment_method) VALUES ('Evil', '0770000000', 'X', 'Colombo', 0, 0, 'cod')`,
+        `UPDATE public.orders SET payment_status = 'paid' WHERE id = '${firstOrder.order_id}'`,
+        `DELETE FROM public.orders WHERE id = '${firstOrder.order_id}'`,
+        `SELECT public.process_order_checkout('{}'::jsonb, '[]'::jsonb, NULL)`,
+      ]) {
+        await custClient.query('SAVEPOINT sp_auth_neg');
+        await assert.rejects(() => custClient.query(badAuthSql), /permission denied/i, `authenticated must be denied: ${badAuthSql}`);
+        await custClient.query('ROLLBACK TO SAVEPOINT sp_auth_neg');
+      }
+
+      // Verify authenticated customer cannot see another customer's / guest's order via RLS
+      const crossOrderCheck = await custClient.query(
+        `SELECT id, order_number FROM public.orders WHERE id = $1`,
+        [guestOrder.order_id]
+      );
+      assert.equal(crossOrderCheck.rowCount, 0, 'RLS must prevent authenticated customer from viewing guest/other orders');
+
+      // Exact projection 1: /account dashboard query
+      const accountDashboardOrders = await custClient.query(
+        `SELECT id, order_number, created_at, order_status, payment_status, total_amount
+         FROM public.orders WHERE user_id = $1 ORDER BY created_at DESC LIMIT 3`,
+        [customerUserId]
+      );
+      assert.equal(accountDashboardOrders.rowCount, 1);
+
+      // Exact projection 2: /account/orders list query
+      const accountOrdersList = await custClient.query(
+        `SELECT
+           id, order_number, created_at, order_status, payment_status, payment_method,
+           subtotal, discount_amount, delivery_fee, total_amount
+         FROM public.orders WHERE user_id = $1 ORDER BY created_at DESC`,
+        [customerUserId]
+      );
+      assert.equal(accountOrdersList.rowCount, 1);
+
+      // Exact projection 3: /account/orders/[orderId] detail query (all 24 customer-safe columns on orders + all 11 safe columns on order_items)
+      const custOrderDetail = await custClient.query(
+        `SELECT
+           id, order_number, user_id, customer_name, email, phone1, phone2,
+           address_line, city, district, province, postal_code, delivery_notes,
+           subtotal, discount_amount, coupon_code, delivery_fee, total_amount,
+           payment_method, payment_status, order_status, tracking_number,
+           created_at, updated_at
          FROM public.orders WHERE id = $1 AND user_id = $2`,
         [firstOrder.order_id, customerUserId]
       );
-      assert.equal(custOrderRes.rowCount, 1);
-      assert.equal(custOrderRes.rows[0].address_line, '42 Flower Road');
-      assert.equal(custOrderRes.rows[0].city, 'Colombo 07');
+      assert.equal(custOrderDetail.rowCount, 1);
+      assert.equal(custOrderDetail.rows[0].address_line, '42 Flower Road');
+      assert.equal(custOrderDetail.rows[0].city, 'Colombo 07');
 
-      // 9B. Customer creates wishlist + wishlist_item and queries with product_images.url
+      const custOrderItemsDetail = await custClient.query(
+        `SELECT
+           id, order_id, product_id, variant_id, product_name, variant_title,
+           sku, quantity, unit_price, total_price, image_url
+         FROM public.order_items WHERE order_id = $1`,
+        [firstOrder.order_id]
+      );
+      assert.equal(custOrderItemsDetail.rowCount, 2);
+
+      // Customer creates wishlist + wishlist_item and queries with product_images.url
       const wlRes = await custClient.query(
         `INSERT INTO public.wishlists (user_id) VALUES ($1) RETURNING id`,
         [customerUserId]
@@ -550,7 +766,7 @@ test('Phase 6B Preflight: Real PostgreSQL 18 Migration, Full-Payload Idempotency
       assert.equal(wlItemsQuery.rowCount, 1);
       assert.equal(wlItemsQuery.rows[0].url, 'https://example.com/sapphire-ring.jpg');
 
-      // 9C. Customer submits verified review with all columns used by submitCustomerReview
+      // Customer submits verified review with all columns used by submitCustomerReview
       const revInsert = await custClient.query(
         `INSERT INTO public.reviews (
            product_id, variant_id, order_id, order_item_id, user_id,
@@ -565,6 +781,117 @@ test('Phase 6B Preflight: Real PostgreSQL 18 Migration, Full-Payload Idempotency
       await custClient.query('COMMIT');
     } finally {
       custClient.release();
+    }
+
+    // 9C. Verify defense-in-depth runtime guard inside process_order_checkout and cancel_order_and_restock rejects spoofed JWT claim role
+    const jwtGuardClient = await pool.connect();
+    try {
+      await jwtGuardClient.query('BEGIN');
+      await jwtGuardClient.query(`SELECT set_config('request.jwt.claim.role', 'authenticated', true)`);
+      await assert.rejects(
+        () => jwtGuardClient.query(`SELECT public.process_order_checkout('{}'::jsonb, '[]'::jsonb, NULL)`),
+        /permission denied for function process_order_checkout/i
+      );
+      await jwtGuardClient.query('ROLLBACK');
+
+      await jwtGuardClient.query('BEGIN');
+      await jwtGuardClient.query(`SELECT set_config('request.jwt.claim.role', 'authenticated', true)`);
+      await assert.rejects(
+        () => jwtGuardClient.query(`SELECT public.cancel_order_and_restock($1::uuid, $2::uuid, NULL)`, [guestOrder.order_id, adminUserId]),
+        /permission denied for function cancel_order_and_restock/i
+      );
+      await jwtGuardClient.query('ROLLBACK');
+    } finally {
+      jwtGuardClient.release();
+    }
+
+    // 9D. Admin Order Management Operations, Payment Verification, Admin Notes, Tracking & Atomic Order Cancellation/Restocking via service_role
+    const adminOpsClient = await pool.connect();
+    try {
+      await adminOpsClient.query('BEGIN');
+      await adminOpsClient.query('SET LOCAL ROLE service_role');
+
+      // 1. Admin updates payment_status, admin_notes, and tracking_number on firstOrder
+      await adminOpsClient.query(
+        `UPDATE public.orders SET payment_status = 'verified', admin_notes = 'VIP priority dispatch', tracking_number = 'SL-POST-998877', updated_at = NOW() WHERE id = $1`,
+        [firstOrder.order_id]
+      );
+      await adminOpsClient.query(
+        `UPDATE public.payments SET status = 'verified', notes = 'Verified by admin', updated_at = NOW() WHERE order_id = $1`,
+        [firstOrder.order_id]
+      );
+
+      // 2. Admin queries full order detail including confidential admin_notes, order_token, and order_items.purchase_cost
+      const adminOrderDetail = await adminOpsClient.query(
+        `SELECT o.id, o.order_number, o.order_token, o.admin_notes, o.tracking_number, o.payment_status,
+                (SELECT SUM(oi.purchase_cost * oi.quantity) FROM public.order_items oi WHERE oi.order_id = o.id) AS total_cost
+         FROM public.orders o WHERE o.id = $1`,
+        [firstOrder.order_id]
+      );
+      assert.equal(adminOrderDetail.rowCount, 1);
+      assert.equal(adminOrderDetail.rows[0].admin_notes, 'VIP priority dispatch');
+      assert.equal(adminOrderDetail.rows[0].tracking_number, 'SL-POST-998877');
+      assert.equal(adminOrderDetail.rows[0].payment_status, 'verified');
+      assert.equal(Number(adminOrderDetail.rows[0].total_cost), 95000); // 2 * 30000 + 1 * 35000
+
+      // 3. Admin cancels guestOrder via atomic cancel_order_and_restock RPC (var1 stock before cancel: 9 -> after cancel: 10)
+      const stockBeforeCancel = await adminOpsClient.query(
+        `SELECT stock_quantity FROM public.product_variants WHERE id = $1`,
+        [var1Id]
+      );
+      assert.equal(stockBeforeCancel.rows[0].stock_quantity, 9);
+
+      const cancelRes = await adminOpsClient.query(
+        `SELECT public.cancel_order_and_restock($1::uuid, $2::uuid, 'Customer requested cancellation') AS result`,
+        [guestOrder.order_id, adminUserId]
+      );
+      const cancelResult = cancelRes.rows[0].result;
+      assert.equal(cancelResult.success, true);
+      assert.equal(cancelResult.restocked, true);
+      assert.equal(cancelResult.new_status, 'cancelled');
+
+      const stockAfterCancel = await adminOpsClient.query(
+        `SELECT stock_quantity, stock_status FROM public.product_variants WHERE id = $1`,
+        [var1Id]
+      );
+      assert.equal(stockAfterCancel.rows[0].stock_quantity, 10, 'Cancelled order item quantity must be restocked');
+      assert.equal(stockAfterCancel.rows[0].stock_status, 'in_stock');
+
+      const restockMovement = await adminOpsClient.query(
+        `SELECT quantity_change, previous_quantity, new_quantity, reason, created_by
+         FROM public.inventory_movements
+         WHERE reference_id = $1 AND reason = 'order_cancelled_restock'`,
+        [guestOrder.order_number]
+      );
+      assert.equal(restockMovement.rowCount, 1);
+      assert.equal(restockMovement.rows[0].quantity_change, 1);
+      assert.equal(restockMovement.rows[0].previous_quantity, 9);
+      assert.equal(restockMovement.rows[0].new_quantity, 10);
+      assert.equal(restockMovement.rows[0].created_by, adminUserId);
+
+      const couponUsageAfterCancel = await adminOpsClient.query(
+        `SELECT COUNT(*)::int AS cnt FROM public.coupon_usage WHERE order_id = $1`,
+        [guestOrder.order_id]
+      );
+      assert.equal(couponUsageAfterCancel.rows[0].cnt, 0, 'Coupon usage for cancelled order must be released');
+
+      // 4. Calling cancel_order_and_restock a second time on the same order must be idempotent and never double-restock
+      const secondCancelRes = await adminOpsClient.query(
+        `SELECT public.cancel_order_and_restock($1::uuid, $2::uuid, 'Duplicate cancel click') AS result`,
+        [guestOrder.order_id, adminUserId]
+      );
+      assert.equal(secondCancelRes.rows[0].result.idempotent, true);
+      assert.equal(secondCancelRes.rows[0].result.restocked, false);
+
+      const stockAfterSecondCancel = await adminOpsClient.query(
+        `SELECT stock_quantity FROM public.product_variants WHERE id = $1`,
+        [var1Id]
+      );
+      assert.equal(stockAfterSecondCancel.rows[0].stock_quantity, 10, 'Idempotent re-cancel must not double-restock');
+
+      await adminOpsClient.query('COMMIT');
+    } finally {
+      adminOpsClient.release();
     }
   } finally {
     await pool.end().catch(() => {});

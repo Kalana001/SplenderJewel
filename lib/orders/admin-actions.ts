@@ -220,8 +220,8 @@ export async function getAdminOrderById(orderId: string) {
 }
 
 /**
- * UPDATE ORDER STATUS (PENDING -> CONFIRMED -> PROCESSING -> SHIPPED -> DELIVERED)
- * Logs status transition in order_status_history.
+ * UPDATE ORDER STATUS (PENDING -> CONFIRMED -> PROCESSING -> SHIPPED -> DELIVERED / CANCELLED)
+ * Logs status transition in order_status_history and atomically restocks inventory when cancelled.
  */
 export async function updateOrderStatusAction(input: {
   orderId: string;
@@ -249,7 +249,44 @@ export async function updateOrderStatusAction(input: {
 
     const previousStatus = currentOrder.order_status;
 
-    // 2. Update order status
+    if (previousStatus === input.newStatus) {
+      return { success: true };
+    }
+
+    if (previousStatus === ORDER_STATUSES.CANCELLED) {
+      return {
+        success: false,
+        error: 'Cancelled orders cannot be reopened or transitioned to another status.',
+      };
+    }
+
+    // 2. If cancelling the order, execute atomic cancellation + inventory restock procedure
+    if (input.newStatus === ORDER_STATUSES.CANCELLED) {
+      const { data: cancelData, error: cancelErr } = await (adminClient as any).rpc(
+        'cancel_order_and_restock',
+        {
+          p_order_id: input.orderId,
+          p_admin_id: admin.id,
+          p_notes: input.notes?.trim() || null,
+        }
+      );
+
+      if (cancelErr || !cancelData?.success) {
+        console.error('[UpdateOrderStatus] cancel_order_and_restock error:', cancelErr);
+        return {
+          success: false,
+          error: cancelErr?.message || 'Database failed to cancel order and restock inventory.',
+        };
+      }
+
+      revalidatePath('/admin/orders');
+      revalidatePath(`/admin/orders/${input.orderId}`);
+      revalidatePath('/admin/inventory');
+      revalidatePath('/shop');
+      return { success: true };
+    }
+
+    // 3. Standard non-cancellation status update
     const { error: updateErr } = await (adminClient.from('orders') as any)
       .update({
         order_status: input.newStatus,
@@ -261,7 +298,7 @@ export async function updateOrderStatusAction(input: {
       return { success: false, error: 'Database failed to update order status.' };
     }
 
-    // 3. Log transition history
+    // 4. Log transition history
     await (adminClient.from('order_status_history') as any).insert({
       order_id: input.orderId,
       previous_status: previousStatus,

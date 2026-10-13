@@ -270,6 +270,21 @@ ALTER FUNCTION public.adjust_variant_stock(UUID, INT, TEXT, TEXT, UUID) OWNER TO
 REVOKE ALL ON FUNCTION public.adjust_variant_stock(UUID, INT, TEXT, TEXT, UUID) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.adjust_variant_stock(UUID, INT, TEXT, TEXT, UUID) TO service_role;
 
+DO $$
+BEGIN
+  IF to_regprocedure('public.process_order_checkout(jsonb,jsonb,text)') IS NOT NULL THEN
+    ALTER FUNCTION public.process_order_checkout(JSONB, JSONB, TEXT) OWNER TO postgres;
+    REVOKE ALL ON FUNCTION public.process_order_checkout(JSONB, JSONB, TEXT) FROM PUBLIC, anon, authenticated;
+    GRANT EXECUTE ON FUNCTION public.process_order_checkout(JSONB, JSONB, TEXT) TO service_role;
+  END IF;
+
+  IF to_regprocedure('public.cancel_order_and_restock(uuid,uuid,text)') IS NOT NULL THEN
+    ALTER FUNCTION public.cancel_order_and_restock(UUID, UUID, TEXT) OWNER TO postgres;
+    REVOKE ALL ON FUNCTION public.cancel_order_and_restock(UUID, UUID, TEXT) FROM PUBLIC, anon, authenticated;
+    GRANT EXECUTE ON FUNCTION public.cancel_order_and_restock(UUID, UUID, TEXT) TO service_role;
+  END IF;
+END $$;
+
 -- ------------------------------------------------------------------------------
 -- 5. RLS POLICY HARDENING & ADMIN_USERS RECURSION REMEDIATION
 --    Scopes all is_admin() / is_super_admin() policies strictly TO authenticated
@@ -578,7 +593,36 @@ GRANT SELECT ON public.admin_users TO authenticated;
 GRANT ALL ON public.admin_users TO service_role;
 
 -- 6.2 Orders: authenticated read-only on customer-safe columns (omits admin_notes, order_token, idempotency_key)
-REVOKE ALL ON public.orders FROM PUBLIC, anon, authenticated;
+REVOKE ALL (
+  id,
+  order_number,
+  order_token,
+  user_id,
+  customer_name,
+  email,
+  phone1,
+  phone2,
+  address_line,
+  city,
+  district,
+  province,
+  postal_code,
+  delivery_notes,
+  delivery_fee,
+  subtotal,
+  discount_amount,
+  coupon_code,
+  total_amount,
+  payment_method,
+  payment_status,
+  order_status,
+  admin_notes,
+  tracking_number,
+  idempotency_key,
+  created_at,
+  updated_at
+) ON public.orders FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.orders FROM PUBLIC, anon, authenticated;
 GRANT SELECT (
   id,
   order_number,
@@ -605,10 +649,24 @@ GRANT SELECT (
   created_at,
   updated_at
 ) ON public.orders TO authenticated;
-GRANT ALL ON public.orders TO service_role;
+GRANT ALL ON TABLE public.orders TO service_role;
 
 -- 6.3 Order Items: authenticated read-only on customer-safe columns (omits purchase_cost)
-REVOKE ALL ON public.order_items FROM PUBLIC, anon, authenticated;
+REVOKE ALL (
+  id,
+  order_id,
+  product_id,
+  variant_id,
+  product_name,
+  variant_title,
+  sku,
+  image_url,
+  unit_price,
+  quantity,
+  total_price,
+  purchase_cost
+) ON public.order_items FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.order_items FROM PUBLIC, anon, authenticated;
 GRANT SELECT (
   id,
   order_id,
@@ -622,7 +680,7 @@ GRANT SELECT (
   quantity,
   total_price
 ) ON public.order_items TO authenticated;
-GRANT ALL ON public.order_items TO service_role;
+GRANT ALL ON TABLE public.order_items TO service_role;
 
 -- 6.4 Order Status History: authenticated read-only
 REVOKE ALL ON public.order_status_history FROM PUBLIC, anon, authenticated;

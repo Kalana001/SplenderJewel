@@ -57,9 +57,9 @@ export default async function AccountDashboardPage() {
     redirect('/login?redirectTo=/account');
   }
 
-  // Fetch profile record
+  // Fetch profile record with explicit column projection
   const { data: profile } = await (supabase.from('profiles') as any)
-    .select('*')
+    .select('id, email, full_name, phone1, phone2, avatar_url, account_status, created_at, updated_at')
     .eq('id', user.id)
     .maybeSingle();
 
@@ -78,7 +78,7 @@ export default async function AccountDashboardPage() {
 
   // Fetch address count
   const { count: addressCount } = await (supabase.from('addresses') as any)
-    .select('*', { count: 'exact', head: true })
+    .select('id', { count: 'exact', head: true })
     .eq('user_id', user.id);
 
   // Fetch wishlist items count for the signed-in customer
@@ -90,7 +90,7 @@ export default async function AccountDashboardPage() {
 
   if (userWishlist?.id) {
     const { count: itemsCount } = await (supabase.from('wishlist_items') as any)
-      .select('*', { count: 'exact', head: true })
+      .select('id', { count: 'exact', head: true })
       .eq('wishlist_id', userWishlist.id);
     wishlistCount = itemsCount ?? 0;
   }

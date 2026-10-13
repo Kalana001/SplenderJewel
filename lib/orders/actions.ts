@@ -67,6 +67,16 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
     }
 
     // 1. Validate customer & address inputs
+    if (!input || typeof input !== 'object') {
+      return { success: false, error: 'Invalid checkout request payload.' };
+    }
+    const rawPayload = input as unknown as Record<string, unknown>;
+    if ('user_id' in rawPayload || 'userId' in rawPayload) {
+      return {
+        success: false,
+        error: 'Client-supplied user identity is not permitted.',
+      };
+    }
     if (!input.customerName?.trim()) {
       return { success: false, error: 'Full name is required.' };
     }
@@ -93,17 +103,24 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
 
     const adminClient = createAdminClient();
 
-    // 2. Identify customer context (Guest vs Registered) and verify account standing
+    // 2. Identify customer context strictly via server-side Supabase Auth session (never from client JSON)
     const currentUser = await getCurrentUser();
     const userId = currentUser ? currentUser.id : null;
 
     if (userId) {
-      const { data: profileData } = await (adminClient.from('profiles') as any)
-        .select('account_status')
+      const { data: profileData, error: profileError } = await (adminClient.from('profiles') as any)
+        .select('id, account_status')
         .eq('id', userId)
         .maybeSingle();
 
-      if (profileData?.account_status === 'suspended') {
+      if (profileError || !profileData) {
+        return {
+          success: false,
+          error: 'Authenticated customer profile could not be verified.',
+        };
+      }
+
+      if (profileData.account_status !== 'active') {
         return {
           success: false,
           error: 'Your customer account has been suspended and cannot place orders.',
@@ -270,18 +287,24 @@ export async function getGuestOrderConfirmation(
   orderToken: string
 ): Promise<GuestOrderConfirmationResult> {
   try {
-    if (!orderNumber?.trim() || !orderToken?.trim()) {
+    const trimmedNumber = orderNumber?.trim() || '';
+    const trimmedToken = orderToken?.trim() || '';
+
+    if (!trimmedNumber || !trimmedToken) {
       return { success: false, error: 'Order number and security token are required.' };
+    }
+
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmedToken)) {
+      return { success: false, error: 'Order not found or invalid security token.' };
     }
 
     const adminClient = createAdminClient();
 
-    // Query order row matching BOTH order_number AND order_token
+    // Query order row matching BOTH order_number AND order_token (omitting order_token, idempotency_key, and admin_notes from returned projection)
     const { data: orderRaw, error: orderError } = await (adminClient.from('orders') as any)
       .select(`
         id,
         order_number,
-        order_token,
         user_id,
         customer_name,
         email,
@@ -305,8 +328,8 @@ export async function getGuestOrderConfirmation(
         created_at,
         updated_at
       `)
-      .eq('order_number', orderNumber.trim())
-      .eq('order_token', orderToken.trim())
+      .eq('order_number', trimmedNumber)
+      .eq('order_token', trimmedToken)
       .single();
 
     if (orderError || !orderRaw) {
@@ -325,6 +348,7 @@ export async function getGuestOrderConfirmation(
         product_name,
         variant_title,
         sku,
+        image_url,
         unit_price,
         quantity,
         total_price
@@ -344,6 +368,7 @@ export async function getGuestOrderConfirmation(
       productName: item.product_name,
       variantTitle: item.variant_title,
       sku: item.sku,
+      imageUrl: item.image_url ?? null,
       unitPrice: Number(item.unit_price),
       quantity: Number(item.quantity),
       totalPrice: Number(item.total_price),
