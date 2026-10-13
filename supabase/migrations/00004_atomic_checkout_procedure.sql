@@ -3,27 +3,74 @@
 -- Migration: 00004_atomic_checkout_procedure.sql
 --
 -- PURPOSE:
--- 1. [IDEMPOTENCY COLUMN] Adds optional idempotency_key to public.orders table
---    to prevent duplicate submissions or race conditions.
--- 2. [ATOMIC CHECKOUT RPC] Replaces and enhances public.process_order_checkout
---    to ensure 100% single-transaction execution:
---    - Row locks variants (FOR UPDATE OF pv) and coupon (FOR UPDATE)
---    - Aggregates duplicate variant items in p_items_data before stock checks
+-- 1. [DEFENSIVE PRECONDITIONS] Verify all required order, catalog, inventory,
+--    delivery, coupon, and payment tables exist before applying DDL.
+-- 2. [IDEMPOTENCY COLUMN & CONSTRAINT] Adds optional idempotency_key (16..128 chars)
+--    to public.orders with a UNIQUE constraint and revokes client read access on it.
+-- 3. [ATOMIC CHECKOUT RPC] Creates/replaces public.process_order_checkout to
+--    guarantee 100% single-transaction execution:
+--    - Serializes concurrent identical idempotency keys via pg_advisory_xact_lock
+--    - Verifies customer identity match on idempotent hits (preventing cross-customer
+--      order_token disclosure)
+--    - Verifies registered customer profile exists and account_status = 'active'
+--    - Validates every raw line item (non-null variant_id, positive integer quantity >= 1)
+--      before aggregating duplicate variants
+--    - Acquires row locks (FOR UPDATE OF pv) in canonical variant_id ASC order to
+--      prevent multi-item deadlocks
 --    - Validates BOTH variant is_active AND parent product is_active
---    - Enforces authoritative delivery fee lookup directly from delivery_districts
---    - Enforces per_customer_limit coupon restriction when user_id is provided
---    - Atomically captures wholesale purchase_cost snapshot onto order_items
---    - Atomically logs inventory movements and updates stock_status
---    - Strictly restricted to service_role with immutable search_path
+--    - Enforces authoritative delivery fee and province lookup from delivery_districts
+--    - Enforces coupon status, dates, min_order_amount, total_usage_limit, and
+--      per_customer_limit (across both user_id and guest phone/email) with FOR UPDATE lock
+--    - Atomically snapshots unit_price, primary product image_url, and confidential
+--      purchase_cost onto order_items
+--    - Atomically records inventory_movements, order_status_history, coupon_usage,
+--      and bank_transfer payment tracking records
+--    - Strictly restricted to service_role with immutable search_path = public, pg_temp
 --
--- EXECUTION STATUS: PREPARED FOR APPLICANT (ZERO UNAPPROVED EXECUTION)
+-- EXECUTION STATUS: PREPARED FOR REVIEW (NOT YET APPLIED TO LIVE SUPABASE)
 -- ==============================================================================
 
--- 1. Add idempotency_key column to orders if not exists
+-- ------------------------------------------------------------------------------
+-- 1. DEFENSIVE PRECONDITIONS
+-- ------------------------------------------------------------------------------
+DO $$
+BEGIN
+  IF to_regclass('public.orders') IS NULL
+     OR to_regclass('public.order_items') IS NULL
+     OR to_regclass('public.product_variants') IS NULL
+     OR to_regclass('public.products') IS NULL
+     OR to_regclass('public.delivery_districts') IS NULL
+     OR to_regclass('public.coupons') IS NULL
+     OR to_regclass('public.coupon_usage') IS NULL
+     OR to_regclass('public.payments') IS NULL
+     OR to_regclass('public.inventory_movements') IS NULL
+     OR to_regclass('public.order_status_history') IS NULL
+  THEN
+    RAISE EXCEPTION 'Cannot apply migration 00004: one or more required core tables are missing from schema public.';
+  END IF;
+END $$;
+
+-- ------------------------------------------------------------------------------
+-- 2. IDEMPOTENCY COLUMN & LENGTH CONSTRAINT ON PUBLIC.ORDERS
+-- ------------------------------------------------------------------------------
 ALTER TABLE public.orders
   ADD COLUMN IF NOT EXISTS idempotency_key TEXT UNIQUE;
 
--- 2. Create or replace atomic process_order_checkout function
+ALTER TABLE public.orders
+  DROP CONSTRAINT IF EXISTS chk_orders_idempotency_key_len;
+
+ALTER TABLE public.orders
+  ADD CONSTRAINT chk_orders_idempotency_key_len
+  CHECK (
+    idempotency_key IS NULL
+    OR (char_length(idempotency_key) >= 16 AND char_length(idempotency_key) <= 128)
+  );
+
+COMMENT ON COLUMN public.orders.idempotency_key IS 'Client retry idempotency token (16-128 chars). Confidential internal column omitted from customer SELECT grants.';
+
+-- ------------------------------------------------------------------------------
+-- 3. ATOMIC ORDER CHECKOUT STORED PROCEDURE
+-- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.process_order_checkout(
   p_order_data JSONB,
   p_items_data JSONB,
@@ -32,6 +79,7 @@ CREATE OR REPLACE FUNCTION public.process_order_checkout(
 RETURNS JSONB AS $$
 DECLARE
   v_user_id UUID := NULL;
+  v_account_status TEXT;
   v_customer_name TEXT;
   v_email TEXT;
   v_phone1 TEXT;
@@ -40,6 +88,7 @@ DECLARE
   v_city TEXT;
   v_district TEXT;
   v_province TEXT;
+  v_district_province TEXT;
   v_postal_code TEXT;
   v_delivery_notes TEXT;
   v_payment_method TEXT;
@@ -51,15 +100,19 @@ DECLARE
   v_discount_amount NUMERIC(12, 2) := 0;
   v_total_amount NUMERIC(12, 2) := 0;
 
+  v_raw_item RECORD;
   v_item RECORD;
   v_variant RECORD;
+  v_existing_order RECORD;
   v_coupon RECORD;
   v_coupon_id UUID := NULL;
+  v_coupon_code TEXT := NULL;
   v_usage_count INT := 0;
   v_user_usage_count INT := 0;
 
   v_item_price NUMERIC(12, 2);
   v_item_total NUMERIC(12, 2);
+  v_item_image_url TEXT;
   v_new_qty INT;
   v_stock_status TEXT;
 
@@ -67,32 +120,59 @@ DECLARE
   v_order_number TEXT;
   v_order_token UUID;
 BEGIN
-  -- Validate required order payload fields
-  v_customer_name := TRIM(p_order_data->>'customer_name');
-  v_phone1 := TRIM(p_order_data->>'phone1');
-  v_address_line := TRIM(p_order_data->>'address_line');
-  v_district := TRIM(p_order_data->>'district');
-  v_payment_method := TRIM(p_order_data->>'payment_method');
+  -- 0. Validate JSON payload containers
+  IF p_order_data IS NULL OR jsonb_typeof(p_order_data) <> 'object' THEN
+    RAISE EXCEPTION 'Order payload must be a valid JSON object.';
+  END IF;
+
+  IF p_items_data IS NULL OR jsonb_typeof(p_items_data) <> 'array' OR jsonb_array_length(p_items_data) = 0 THEN
+    RAISE EXCEPTION 'Order must contain at least one jewelry item.';
+  END IF;
+
+  -- Extract and normalize required order fields
+  v_customer_name := NULLIF(TRIM(p_order_data->>'customer_name'), '');
+  v_phone1 := NULLIF(TRIM(p_order_data->>'phone1'), '');
+  v_address_line := NULLIF(TRIM(p_order_data->>'address_line'), '');
+  v_district := NULLIF(TRIM(p_order_data->>'district'), '');
+  v_payment_method := NULLIF(TRIM(p_order_data->>'payment_method'), '');
   v_idempotency_key := NULLIF(TRIM(p_order_data->>'idempotency_key'), '');
 
-  IF v_customer_name IS NULL OR v_customer_name = '' THEN
+  IF v_customer_name IS NULL THEN
     RAISE EXCEPTION 'Customer full name is required.';
   END IF;
-  IF v_phone1 IS NULL OR v_phone1 = '' THEN
+  IF v_phone1 IS NULL THEN
     RAISE EXCEPTION 'Primary contact phone number is required.';
   END IF;
-  IF v_address_line IS NULL OR v_address_line = '' THEN
+  IF v_address_line IS NULL THEN
     RAISE EXCEPTION 'Delivery address is required.';
   END IF;
-  IF v_district IS NULL OR v_district = '' THEN
+  IF v_district IS NULL THEN
     RAISE EXCEPTION 'Delivery district is required.';
   END IF;
-  IF v_payment_method NOT IN ('cod', 'bank_transfer') THEN
-    RAISE EXCEPTION 'Invalid payment method: %', v_payment_method;
+  IF v_payment_method IS NULL OR v_payment_method NOT IN ('cod', 'bank_transfer') THEN
+    RAISE EXCEPTION 'Invalid payment method: %', COALESCE(v_payment_method, 'NULL');
+  END IF;
+
+  IF v_idempotency_key IS NOT NULL AND (char_length(v_idempotency_key) < 16 OR char_length(v_idempotency_key) > 128) THEN
+    RAISE EXCEPTION 'Idempotency key must be between 16 and 128 characters.';
   END IF;
 
   IF p_order_data->>'user_id' IS NOT NULL AND TRIM(p_order_data->>'user_id') <> '' THEN
-    v_user_id := (p_order_data->>'user_id')::UUID;
+    v_user_id := (TRIM(p_order_data->>'user_id'))::UUID;
+
+    -- Verify registered customer profile exists and is active
+    SELECT account_status
+    INTO v_account_status
+    FROM public.profiles
+    WHERE id = v_user_id;
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Authenticated customer profile not found.';
+    END IF;
+
+    IF v_account_status <> 'active' THEN
+      RAISE EXCEPTION 'Your customer account is suspended and cannot place orders.';
+    END IF;
   END IF;
 
   v_email := NULLIF(TRIM(p_order_data->>'email'), '');
@@ -102,27 +182,45 @@ BEGIN
   v_postal_code := NULLIF(TRIM(p_order_data->>'postal_code'), '');
   v_delivery_notes := NULLIF(TRIM(p_order_data->>'delivery_notes'), '');
 
-  -- 1. Idempotency Check: Return existing order if client token already processed
+  -- 1. Concurrency-Safe & Customer-Scoped Idempotency Check
   IF v_idempotency_key IS NOT NULL THEN
-    SELECT id, order_number, order_token
-    INTO v_order_id, v_order_number, v_order_token
+    -- Serialize concurrent requests sharing the same idempotency_key so the second
+    -- caller waits for the first transaction to commit before reading public.orders
+    PERFORM pg_advisory_xact_lock(hashtext('splender_checkout_idem:' || v_idempotency_key));
+
+    SELECT id, order_number, order_token, user_id, phone1, customer_name, payment_method, subtotal, discount_amount, delivery_fee, total_amount
+    INTO v_existing_order
     FROM public.orders
     WHERE idempotency_key = v_idempotency_key;
 
     IF FOUND THEN
+      -- Prevent cross-customer order disclosure if an idempotency key collides
+      IF v_existing_order.user_id IS DISTINCT FROM v_user_id
+         OR v_existing_order.phone1 <> v_phone1
+         OR LOWER(v_existing_order.customer_name) <> LOWER(v_customer_name)
+         OR v_existing_order.payment_method <> v_payment_method
+      THEN
+        RAISE EXCEPTION 'Idempotency key conflict: request parameters do not match existing order.';
+      END IF;
+
       RETURN jsonb_build_object(
         'success', true,
-        'order_id', v_order_id,
-        'order_number', v_order_number,
-        'order_token', v_order_token,
-        'is_duplicate', true
+        'order_id', v_existing_order.id,
+        'order_number', v_existing_order.order_number,
+        'order_token', v_existing_order.order_token,
+        'subtotal', v_existing_order.subtotal,
+        'discount_amount', v_existing_order.discount_amount,
+        'delivery_fee', v_existing_order.delivery_fee,
+        'total_amount', v_existing_order.total_amount,
+        'is_duplicate', true,
+        'idempotent', true
       );
     END IF;
   END IF;
 
-  -- 2. Authoritative Delivery Fee lookup from database
-  SELECT delivery_fee, is_active
-  INTO v_delivery_fee, v_district_active
+  -- 2. Authoritative Delivery Fee & Province lookup from delivery_districts
+  SELECT delivery_fee, is_active, province
+  INTO v_delivery_fee, v_district_active, v_district_province
   FROM public.delivery_districts
   WHERE name = v_district;
 
@@ -130,22 +228,39 @@ BEGIN
     RAISE EXCEPTION 'Delivery to district "%" is currently unavailable.', v_district;
   END IF;
 
-  IF jsonb_array_length(p_items_data) = 0 THEN
-    RAISE EXCEPTION 'Order must contain at least one jewelry item.';
-  END IF;
+  v_delivery_fee := COALESCE(v_delivery_fee, 0);
+  v_province := COALESCE(v_province, v_district_province);
 
-  -- 3. Lock variants and compute subtotal (aggregating duplicate variant lines)
-  FOR v_item IN
-    SELECT
-      (elem->>'variant_id')::UUID AS variant_id,
-      SUM((elem->>'quantity')::INT)::INT AS quantity
-    FROM jsonb_array_elements(p_items_data) elem
-    GROUP BY (elem->>'variant_id')::UUID
+  -- 3A. Validate every raw element in p_items_data BEFORE aggregation
+  -- Prevents negative, zero, null, or non-integer quantities from cancelling out in SUM()
+  FOR v_raw_item IN
+    SELECT value AS elem FROM jsonb_array_elements(p_items_data)
   LOOP
-    IF v_item.quantity IS NULL OR v_item.quantity < 1 THEN
-      RAISE EXCEPTION 'Item quantity must be at least 1.';
+    IF v_raw_item.elem IS NULL
+       OR jsonb_typeof(v_raw_item.elem) <> 'object'
+       OR NULLIF(TRIM(v_raw_item.elem->>'variant_id'), '') IS NULL
+       OR NULLIF(TRIM(v_raw_item.elem->>'quantity'), '') IS NULL
+    THEN
+      RAISE EXCEPTION 'Each order item must specify a valid variant_id and quantity.';
     END IF;
 
+    IF (TRIM(v_raw_item.elem->>'quantity')) !~ '^[1-9][0-9]{0,5}$'
+       OR (TRIM(v_raw_item.elem->>'quantity'))::INT < 1
+    THEN
+      RAISE EXCEPTION 'Item quantity must be a positive integer of at least 1.';
+    END IF;
+  END LOOP;
+
+  -- 3B. Lock variants in deterministic UUID order (preventing multi-item deadlocks)
+  -- and compute authoritative subtotal from aggregated quantities
+  FOR v_item IN
+    SELECT
+      (TRIM(elem->>'variant_id'))::UUID AS variant_id,
+      SUM((elem->>'quantity')::INT)::INT AS quantity
+    FROM jsonb_array_elements(p_items_data) elem
+    GROUP BY (TRIM(elem->>'variant_id'))::UUID
+    ORDER BY (TRIM(elem->>'variant_id'))::UUID ASC
+  LOOP
     SELECT
       pv.id, pv.product_id, pv.sku, pv.title, pv.price, pv.discount_price,
       pv.purchase_cost, pv.stock_quantity, pv.low_stock_threshold, pv.is_active,
@@ -157,7 +272,7 @@ BEGIN
     FOR UPDATE OF pv;
 
     IF NOT FOUND OR NOT v_variant.is_active OR NOT v_variant.product_is_active THEN
-      RAISE EXCEPTION 'Item variant % is unavailable or discontinued.', v_item.variant_id;
+      RAISE EXCEPTION 'One or more items in your cart are no longer available or inactive.';
     END IF;
 
     IF v_variant.stock_quantity < v_item.quantity THEN
@@ -165,10 +280,10 @@ BEGIN
     END IF;
 
     v_item_price := COALESCE(v_variant.discount_price, v_variant.price);
-    v_subtotal := v_subtotal + (v_item_price * v_item.quantity);
+    v_subtotal := v_subtotal + ROUND(v_item_price * v_item.quantity, 2);
   END LOOP;
 
-  -- 4. Process coupon atomically if provided
+  -- 4. Process promotional coupon atomically if provided
   IF p_coupon_code IS NOT NULL AND TRIM(p_coupon_code) <> '' THEN
     SELECT *
     INTO v_coupon
@@ -208,33 +323,41 @@ BEGIN
       END IF;
     END IF;
 
-    -- Per-customer usage limit check
-    IF v_user_id IS NOT NULL AND v_coupon.per_customer_limit IS NOT NULL AND v_coupon.per_customer_limit > 0 THEN
+    -- Per-customer usage limit check (enforced across authenticated user_id AND guest phone/email)
+    IF v_coupon.per_customer_limit IS NOT NULL AND v_coupon.per_customer_limit > 0 THEN
       SELECT COUNT(*)
       INTO v_user_usage_count
-      FROM public.coupon_usage
-      WHERE coupon_id = v_coupon.id AND user_id = v_user_id;
+      FROM public.coupon_usage cu
+      LEFT JOIN public.orders o ON o.id = cu.order_id
+      WHERE cu.coupon_id = v_coupon.id
+        AND (
+          (v_user_id IS NOT NULL AND cu.user_id = v_user_id)
+          OR o.phone1 = v_phone1
+          OR (v_email IS NOT NULL AND o.email IS NOT NULL AND LOWER(o.email) = LOWER(v_email))
+        );
 
       IF v_user_usage_count >= v_coupon.per_customer_limit THEN
         RAISE EXCEPTION 'You have reached the maximum allowed usage limit for this coupon.';
       END IF;
     END IF;
 
-    -- Calculate verified discount amount
+    -- Calculate verified discount amount capped at subtotal
     IF v_coupon.discount_type = 'percentage' THEN
       v_discount_amount := (v_subtotal * v_coupon.discount_value) / 100.0;
       IF v_coupon.max_discount_amount IS NOT NULL AND v_discount_amount > v_coupon.max_discount_amount THEN
         v_discount_amount := v_coupon.max_discount_amount;
       END IF;
+      v_discount_amount := LEAST(v_discount_amount, v_subtotal);
     ELSE
       v_discount_amount := LEAST(v_coupon.discount_value, v_subtotal);
     END IF;
 
-    v_discount_amount := ROUND(v_discount_amount, 2);
+    v_discount_amount := ROUND(GREATEST(0, v_discount_amount), 2);
     v_coupon_id := v_coupon.id;
+    v_coupon_code := v_coupon.code;
   END IF;
 
-  v_total_amount := GREATEST(0, v_subtotal - v_discount_amount) + v_delivery_fee;
+  v_total_amount := ROUND(GREATEST(0, v_subtotal - v_discount_amount) + v_delivery_fee, 2);
 
   -- 5. Insert order header atomically
   INSERT INTO public.orders (
@@ -273,7 +396,7 @@ BEGIN
     v_delivery_fee,
     v_subtotal,
     v_discount_amount,
-    CASE WHEN v_coupon_id IS NOT NULL THEN UPPER(TRIM(p_coupon_code)) ELSE NULL END,
+    v_coupon_code,
     v_total_amount,
     v_payment_method,
     'pending',
@@ -282,13 +405,14 @@ BEGIN
   )
   RETURNING id, order_number, order_token INTO v_order_id, v_order_number, v_order_token;
 
-  -- 6. Deduct inventory, record movements, and insert order items
+  -- 6. Deduct inventory, record movements, and insert order items in canonical variant order
   FOR v_item IN
     SELECT
-      (elem->>'variant_id')::UUID AS variant_id,
-      SUM((elem->>'quantity')::INT)::INT AS quantity
+      (TRIM(elem->>'variant_id'))::UUID AS variant_id,
+      SUM((TRIM(elem->>'quantity'))::INT)::INT AS quantity
     FROM jsonb_array_elements(p_items_data) elem
-    GROUP BY (elem->>'variant_id')::UUID
+    GROUP BY (TRIM(elem->>'variant_id'))::UUID
+    ORDER BY (TRIM(elem->>'variant_id'))::UUID ASC
   LOOP
     SELECT
       pv.id, pv.product_id, pv.sku, pv.title, pv.price, pv.discount_price,
@@ -299,8 +423,15 @@ BEGIN
     JOIN public.products p ON p.id = pv.product_id
     WHERE pv.id = v_item.variant_id;
 
+    SELECT pi.url
+    INTO v_item_image_url
+    FROM public.product_images pi
+    WHERE pi.product_id = v_variant.product_id
+    ORDER BY (pi.variant_id = v_variant.id) DESC NULLS LAST, pi.is_primary DESC, pi.display_order ASC
+    LIMIT 1;
+
     v_item_price := COALESCE(v_variant.discount_price, v_variant.price);
-    v_item_total := v_item_price * v_item.quantity;
+    v_item_total := ROUND(v_item_price * v_item.quantity, 2);
     v_new_qty := v_variant.stock_quantity - v_item.quantity;
 
     IF v_new_qty = 0 THEN
@@ -319,7 +450,7 @@ BEGIN
       updated_at = NOW()
     WHERE id = v_item.variant_id;
 
-    -- Insert order item with wholesale cost snapshot
+    -- Insert order item with primary image_url and wholesale purchase_cost snapshot
     INSERT INTO public.order_items (
       order_id,
       product_id,
@@ -327,6 +458,7 @@ BEGIN
       product_name,
       variant_title,
       sku,
+      image_url,
       unit_price,
       quantity,
       total_price,
@@ -338,6 +470,7 @@ BEGIN
       v_variant.product_name,
       v_variant.title,
       v_variant.sku,
+      v_item_image_url,
       v_item_price,
       v_item.quantity,
       v_item_total,
@@ -392,34 +525,45 @@ BEGIN
     );
   END IF;
 
-  -- 9. Record payment tracking record if Bank Transfer
-  IF v_payment_method = 'bank_transfer' THEN
-    INSERT INTO public.payments (
-      order_id,
-      payment_method,
-      amount,
-      status,
-      notes
-    ) VALUES (
-      v_order_id,
-      'bank_transfer',
-      v_total_amount,
-      'pending',
-      'Awaiting customer WhatsApp payment confirmation and manual admin verification'
-    );
-  END IF;
+  -- 9. Create payment tracking record inside the same transaction for all orders
+  INSERT INTO public.payments (
+    order_id,
+    payment_method,
+    amount,
+    status,
+    notes
+  ) VALUES (
+    v_order_id,
+    v_payment_method,
+    v_total_amount,
+    'pending',
+    CASE
+      WHEN v_payment_method = 'bank_transfer' THEN 'Awaiting customer WhatsApp payment confirmation and manual admin verification'
+      ELSE 'Cash on delivery — payment to be collected upon delivery'
+    END
+  );
 
   RETURN jsonb_build_object(
     'success', true,
     'order_id', v_order_id,
     'order_number', v_order_number,
-    'order_token', v_order_token
+    'order_token', v_order_token,
+    'subtotal', v_subtotal,
+    'discount_amount', v_discount_amount,
+    'delivery_fee', v_delivery_fee,
+    'total_amount', v_total_amount,
+    'is_duplicate', false,
+    'idempotent', false
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
--- 3. Privilege isolation
+-- ------------------------------------------------------------------------------
+-- 4. PRIVILEGE ISOLATION
+-- ------------------------------------------------------------------------------
 ALTER FUNCTION public.process_order_checkout(JSONB, JSONB, TEXT) OWNER TO postgres;
 
 REVOKE ALL ON FUNCTION public.process_order_checkout(JSONB, JSONB, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.process_order_checkout(JSONB, JSONB, TEXT) TO service_role;
+
+COMMENT ON FUNCTION public.process_order_checkout(JSONB, JSONB, TEXT) IS 'Atomic single-transaction order checkout procedure with advisory lock idempotency, canonical variant locking, and server-side price/fee/coupon verification.';

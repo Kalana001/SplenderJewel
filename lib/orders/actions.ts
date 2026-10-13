@@ -103,11 +103,30 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       return { success: false, error: 'Invalid payment method selected.' };
     }
 
+    const trimmedRequestId = input.clientRequestId?.trim() || null;
+    if (trimmedRequestId && (trimmedRequestId.length < 16 || trimmedRequestId.length > 128)) {
+      return { success: false, error: 'Invalid checkout request identifier.' };
+    }
+
     const adminClient = createAdminClient();
 
-    // 2. Identify customer context (Guest vs Registered)
+    // 2. Identify customer context (Guest vs Registered) and verify account standing
     const currentUser = await getCurrentUser();
     const userId = currentUser ? currentUser.id : null;
+
+    if (userId) {
+      const { data: profileData } = await (adminClient.from('profiles') as any)
+        .select('account_status')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (profileData?.account_status === 'suspended') {
+        return {
+          success: false,
+          error: 'Your customer account has been suspended and cannot place orders.',
+        };
+      }
+    }
 
     // 3. Fetch delivery fee for district from database
     const { data: districtRaw, error: districtError } = await (adminClient.from('delivery_districts') as any)
@@ -123,12 +142,19 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
 
     const deliveryFee = Number(districtData.delivery_fee) || 0;
 
-    // 4. Aggregate quantities for duplicate variants and validate item quantities
+    // 4. Strictly validate raw item quantities BEFORE aggregating duplicate variants
     const aggregatedMap = new Map<string, number>();
     for (const item of input.items) {
-      if (!item.variantId) continue;
-      const current = aggregatedMap.get(item.variantId) || 0;
-      aggregatedMap.set(item.variantId, current + (Number(item.quantity) > 0 ? Number(item.quantity) : 1));
+      const variantId = item.variantId?.trim();
+      if (!variantId) {
+        return { success: false, error: 'Each order item must specify a valid variant.' };
+      }
+      const rawQty = Number(item.quantity);
+      if (!Number.isInteger(rawQty) || rawQty < 1 || rawQty > 999999) {
+        return { success: false, error: 'Item quantity must be a positive integer of at least 1.' };
+      }
+      const current = aggregatedMap.get(variantId) || 0;
+      aggregatedMap.set(variantId, current + rawQty);
     }
 
     if (aggregatedMap.size === 0) {
@@ -192,7 +218,10 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
     // 6. Validate coupon if provided
     let appliedCouponCode: string | null = null;
     if (input.couponCode?.trim()) {
-      const couponRes = await validateCouponAction(input.couponCode, subtotal);
+      const couponRes = await validateCouponAction(input.couponCode, subtotal, {
+        phone1: input.phone1.trim(),
+        email: input.email?.trim() || null,
+      });
       if (!couponRes.valid) {
         return { success: false, error: couponRes.error || 'Invalid coupon code.' };
       }
@@ -215,7 +244,7 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
         delivery_notes: input.deliveryNotes?.trim() || null,
         delivery_fee: deliveryFee,
         payment_method: input.paymentMethod,
-        idempotency_key: input.clientRequestId?.trim() || null,
+        idempotency_key: trimmedRequestId,
       },
       p_items_data: consolidatedItems.map((i) => ({
         variant_id: i.variantId,
@@ -237,9 +266,32 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
           error: 'Transactional checkout database procedure is currently undergoing scheduled maintenance. Please contact customer service.',
         };
       }
+      // Only surface domain validation messages raised by process_order_checkout; sanitize raw SQL/system errors
+      const safeDomainPrefixes = [
+        'Insufficient stock',
+        'One or more items',
+        'Coupon code',
+        'This coupon',
+        'This promotional',
+        'Order subtotal',
+        'You have reached',
+        'Delivery to district',
+        'Delivery address',
+        'Recipient full name',
+        'Primary contact phone',
+        'A valid Sri Lankan district',
+        'Invalid payment method',
+        'Your order must contain',
+        'Each order item',
+        'Item quantity',
+        'Idempotency key',
+        'Customer account',
+        'Your customer account',
+      ];
+      const isSafeDomainError = safeDomainPrefixes.some((prefix) => errMsg.startsWith(prefix));
       return {
         success: false,
-        error: errMsg,
+        error: isSafeDomainError ? errMsg : 'Unable to process your order at this time. Please try again.',
       };
     }
 

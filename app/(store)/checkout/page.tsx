@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -48,9 +48,10 @@ export default function CheckoutPage() {
   const [isValidatingCoupon, setIsValidatingCoupon] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
 
-  // Submission State
+  // Submission State & Idempotency Key
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const clientRequestIdRef = useRef<string | null>(null);
 
   // Delivery fee dynamically calculated by selected district
   const deliveryFee = getEstimatedDeliveryFee(district);
@@ -65,7 +66,10 @@ export default function CheckoutPage() {
     setIsValidatingCoupon(true);
 
     try {
-      const res = await validateCouponAction(couponInput.trim(), subtotal);
+      const res = await validateCouponAction(couponInput.trim(), subtotal, {
+        phone1: phone1.trim() || null,
+        email: email.trim() || null,
+      });
       if (!res.valid || res.calculatedDiscount === undefined) {
         setCouponError(res.error || 'Invalid coupon code.');
         setAppliedCoupon(null);
@@ -93,6 +97,7 @@ export default function CheckoutPage() {
   // Handle Form Submit
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (isSubmitting) return;
     setErrorMessage(null);
 
     if (items.length === 0) {
@@ -122,6 +127,13 @@ export default function CheckoutPage() {
 
     setIsSubmitting(true);
 
+    if (!clientRequestIdRef.current) {
+      clientRequestIdRef.current =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? `chk-${crypto.randomUUID()}`
+          : `chk-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+    }
+
     try {
       const res = await createOrderAction({
         customerName: customerName.trim(),
@@ -135,6 +147,7 @@ export default function CheckoutPage() {
         deliveryNotes: deliveryNotes.trim() || null,
         paymentMethod,
         couponCode: appliedCoupon?.code || null,
+        clientRequestId: clientRequestIdRef.current,
         items: items.map((i) => ({
           variantId: i.variantId,
           quantity: i.quantity,
@@ -142,6 +155,8 @@ export default function CheckoutPage() {
       });
 
       if (!res.success || !res.orderNumber) {
+        // Generate a fresh key on explicit server validation rejection so user can edit fields & resubmit
+        clientRequestIdRef.current = null;
         setErrorMessage(res.error || 'Failed to place order. Please review your details and try again.');
         setIsSubmitting(false);
         return;
