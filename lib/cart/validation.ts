@@ -197,3 +197,74 @@ export function validateCartItemsAgainstInventory(
     errors,
   };
 }
+
+export interface SyncCartStockAdjustment {
+  variantId: string;
+  productName: string;
+  variantTitle?: string;
+  oldQty: number;
+  newQty: number;
+}
+
+export interface StockCalculationResult<
+  T extends {
+    variantId: string;
+    quantity: number;
+    maxStock?: number;
+    productName?: string;
+    variantTitle?: string;
+  }
+> {
+  updatedItems: T[];
+  adjustedItems: SyncCartStockAdjustment[];
+  hasChanges: boolean;
+}
+
+/**
+ * Pure calculation of stock adjustments and clamped cart items
+ */
+export function calculateStockAdjustments<
+  T extends {
+    variantId: string;
+    quantity: number;
+    maxStock?: number;
+    productName?: string;
+    variantTitle?: string;
+  }
+>(items: T[], stockMap: Record<string, number>): StockCalculationResult<T> {
+  const adjustedItems: SyncCartStockAdjustment[] = [];
+  let hasChanges = false;
+
+  const updatedItems = items.map((item) => {
+    if (item.variantId in stockMap) {
+      const available = Math.max(0, stockMap[item.variantId]);
+      const needClamp = item.quantity > available;
+      const stockChanged = item.maxStock !== available;
+
+      if (needClamp) {
+        adjustedItems.push({
+          variantId: item.variantId,
+          productName: item.productName || 'Item',
+          variantTitle: item.variantTitle,
+          oldQty: item.quantity,
+          newQty: available,
+        });
+        hasChanges = true;
+        return { ...item, quantity: available, maxStock: available };
+      }
+
+      if (stockChanged) {
+        hasChanges = true;
+        return { ...item, maxStock: available };
+      }
+    }
+    return item;
+  });
+
+  return {
+    updatedItems,
+    adjustedItems,
+    hasChanges,
+  };
+}
+

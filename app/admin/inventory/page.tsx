@@ -1,4 +1,4 @@
-import { getAdminInventoryVariants } from '@/lib/catalog/variants';
+import { searchAdminInventoryProductsAction } from '@/lib/catalog/variants';
 import { InventoryManager } from '@/components/admin/inventory-manager';
 import { requireAdminPageAuth } from '@/lib/auth/server';
 
@@ -10,12 +10,14 @@ export const metadata = {
 export default async function AdminInventoryPage() {
   await requireAdminPageAuth();
 
-  const result = await getAdminInventoryVariants();
-  const variants = result.success ? result.variants : [];
+  const initialSearch = await searchAdminInventoryProductsAction({ page: 1, limit: 10 });
 
   return (
     <div className="space-y-6">
-      <InventoryManager initialVariants={variants} />
+      <InventoryManager
+        initialProducts={initialSearch.success ? initialSearch.products : []}
+        initialTotalCount={initialSearch.success ? initialSearch.totalCount : 0}
+      />
     </div>
   );
 }

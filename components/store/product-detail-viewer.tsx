@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import {
   Package,
@@ -18,6 +18,7 @@ import {
   Plus,
   Minus,
   Check,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -41,22 +42,46 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
   const [addedToBag, setAddedToBag] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
   const [serverStock, setServerStock] = useState<number | null>(null);
+  const [isLoadingAvailability, setIsLoadingAvailability] = useState(true);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  const availabilitySeq = useRef(0);
+
   const { items: cartItems, addItem } = useCart();
 
   // Query server-controlled availability strictly for selected active variant
   useEffect(() => {
-    if (!selectedVariant?.id) return;
+    if (!selectedVariant?.id) {
+      setIsLoadingAvailability(false);
+      return;
+    }
+
     let isMounted = true;
+    const currentSeq = ++availabilitySeq.current;
+    setIsLoadingAvailability(true);
+    setAvailabilityError(null);
+    setServerStock(null);
+
     async function loadAvailability() {
       try {
         const res = await checkVariantAvailabilityAction(selectedVariant.id);
-        if (isMounted && res.isAvailable) {
+        if (!isMounted || currentSeq !== availabilitySeq.current) return;
+
+        if (res && res.isAvailable) {
           setServerStock(res.availableStock);
+          setIsLoadingAvailability(false);
+        } else {
+          setServerStock(0);
+          setAvailabilityError(res?.error || 'Product option is not available.');
+          setIsLoadingAvailability(false);
         }
       } catch {
-        // Retain client fallback
+        if (!isMounted || currentSeq !== availabilitySeq.current) return;
+        setServerStock(null);
+        setAvailabilityError('Unable to verify live stock. Please try again.');
+        setIsLoadingAvailability(false);
       }
     }
+
     loadAvailability();
     return () => {
       isMounted = false;
@@ -82,37 +107,34 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
     ? Math.round(((originalPrice - currentPrice) / originalPrice) * 100)
     : 0;
 
-  // General stock availability and quantity limits of selected variant
+  // General stock availability and quantity limits of selected variant (Strictly 0 if unverified)
   const availableStock =
     serverStock !== null
       ? serverStock
       : typeof selectedVariant?.stockQuantity === 'number'
       ? Math.max(0, selectedVariant.stockQuantity)
-      : selectedVariant?.stockStatus === 'out_of_stock'
-      ? 0
-      : 10;
+      : 0;
 
   const existingCartItem = cartItems.find((i) => i.variantId === selectedVariant?.id);
   const alreadyInCart = existingCartItem ? existingCartItem.quantity : 0;
   const remainingAvailable = Math.max(0, availableStock - alreadyInCart);
 
   const isOutOfStock =
-    (selectedVariant ? selectedVariant.stockStatus === 'out_of_stock' : false) ||
-    availableStock === 0;
+    !isLoadingAvailability &&
+    ((selectedVariant ? selectedVariant.stockStatus === 'out_of_stock' : false) ||
+      availableStock === 0);
   const isMaxInBag = !isOutOfStock && remainingAvailable === 0 && alreadyInCart > 0;
   const isLowStock =
-    !isOutOfStock && (selectedVariant?.stockStatus === 'low_stock' || availableStock <= 5);
+    !isOutOfStock && (selectedVariant?.stockStatus === 'low_stock' || (availableStock > 0 && availableStock <= 5));
 
   // Handler: Change variant and auto-switch image if variant has associated image
   function handleSelectVariant(variant: ProductVariantPublic) {
     setSelectedVariant(variant);
     setServerStock(null);
     setStockError(null);
-
-    const variantInCart = cartItems.find((i) => i.variantId === variant.id)?.quantity || 0;
-    const varStock = typeof variant.stockQuantity === 'number' ? Math.max(0, variant.stockQuantity) : 10;
-    const varRemaining = Math.max(0, varStock - variantInCart);
-    setQuantity(varRemaining > 0 ? 1 : 1);
+    setAvailabilityError(null);
+    setIsLoadingAvailability(true);
+    setQuantity(1);
 
     // If variant has mapped image, switch to it
     const variantImage = product.images.find((img) => img.variantId === variant.id);
@@ -123,7 +145,22 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
 
   function handleAddToBag() {
     setStockError(null);
-    if (!selectedVariant || isOutOfStock) return;
+    if (!selectedVariant) return;
+
+    if (isLoadingAvailability) {
+      setStockError('Please wait while inventory availability is verified.');
+      return;
+    }
+
+    if (availabilityError) {
+      setStockError(availabilityError);
+      return;
+    }
+
+    if (isOutOfStock) {
+      setStockError('This item is currently out of stock.');
+      return;
+    }
 
     if (!Number.isInteger(quantity) || quantity < 1) {
       setStockError('Please select a valid quantity of at least 1.');
@@ -133,7 +170,7 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
     if (remainingAvailable <= 0) {
       setStockError(
         alreadyInCart >= availableStock
-          ? `You already have all ${availableStock} available units in your shopping bag.`
+          ? `All ${availableStock} available units are already in your bag.`
           : 'This item is currently out of stock.'
       );
       return;
@@ -317,7 +354,17 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
 
             {/* Stock Availability Indicator */}
             <div>
-              {isOutOfStock ? (
+              {isLoadingAvailability ? (
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-400 bg-neutral-900 border border-neutral-800 px-2.5 py-1 rounded">
+                  <Loader2 className="h-3 w-3 animate-spin text-luxury-gold" />
+                  Checking Stock...
+                </span>
+              ) : availabilityError ? (
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-400 bg-amber-950/60 border border-amber-800/40 px-2.5 py-1 rounded">
+                  <AlertCircle className="h-3 w-3 text-amber-400" />
+                  Stock Unverified
+                </span>
+              ) : isOutOfStock ? (
                 <span className="inline-flex items-center gap-1.5 text-xs font-medium text-rose-400 bg-rose-950/60 border border-rose-800/40 px-2.5 py-1 rounded">
                   <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
                   Currently Out of Stock
@@ -325,7 +372,7 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
               ) : isLowStock ? (
                 <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-400 bg-amber-950/60 border border-amber-800/40 px-2.5 py-1 rounded">
                   <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
-                  Low Stock — Order Soon
+                  Low Stock ({availableStock} remaining)
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-2.5 py-1 rounded">
@@ -385,7 +432,7 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
                 <button
                   type="button"
                   onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                  disabled={quantity <= 1 || isOutOfStock || remainingAvailable <= 0}
+                  disabled={quantity <= 1 || isLoadingAvailability || Boolean(availabilityError) || isOutOfStock || remainingAvailable <= 0}
                   className="p-1.5 text-neutral-400 hover:text-white disabled:opacity-30 transition-colors"
                   aria-label="Decrease quantity"
                 >
@@ -397,10 +444,16 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
                 <button
                   type="button"
                   onClick={() => setQuantity((q) => Math.min(remainingAvailable, q + 1))}
-                  disabled={isOutOfStock || remainingAvailable <= 0 || quantity >= remainingAvailable}
+                  disabled={isLoadingAvailability || Boolean(availabilityError) || isOutOfStock || remainingAvailable <= 0 || quantity >= remainingAvailable}
                   className="p-1.5 text-neutral-400 hover:text-white disabled:opacity-30 transition-colors"
                   aria-label="Increase quantity"
-                  title={quantity >= remainingAvailable ? 'Maximum available stock reached' : 'Increase quantity'}
+                  title={
+                    isMaxInBag
+                      ? `All ${availableStock} available units are already in your bag.`
+                      : quantity >= remainingAvailable
+                      ? 'Maximum available stock reached'
+                      : 'Increase quantity'
+                  }
                 >
                   <Plus className="h-3.5 w-3.5" />
                 </button>
@@ -411,7 +464,7 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
                 type="button"
                 variant="gold"
                 size="lg"
-                disabled={isOutOfStock || isMaxInBag || remainingAvailable <= 0}
+                disabled={isLoadingAvailability || Boolean(availabilityError) || isOutOfStock || isMaxInBag || remainingAvailable <= 0}
                 onClick={handleAddToBag}
                 className="flex-1 h-12 text-sm sm:text-base font-semibold flex items-center justify-center gap-2 shadow-lg shadow-luxury-gold/10 hover:shadow-luxury-gold/20 disabled:opacity-50"
               >
@@ -420,6 +473,11 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
                     <Check className="h-5 w-5 text-luxury-black stroke-[2.5]" />
                     <span>Added to Bag!</span>
                   </>
+                ) : isLoadingAvailability ? (
+                  <>
+                    <Loader2 className="h-5 w-5 text-luxury-black animate-spin" />
+                    <span>Verifying Stock...</span>
+                  </>
                 ) : (
                   <>
                     <ShoppingBag className="h-5 w-5 text-luxury-black" />
@@ -427,7 +485,7 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
                       {isOutOfStock
                         ? 'Currently Out of Stock'
                         : isMaxInBag
-                        ? 'Max Stock in Bag'
+                        ? 'All in Bag'
                         : 'Add to Bag'}
                     </span>
                   </>
@@ -436,15 +494,23 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
             </div>
 
             {/* In-Bag Stock Counter & Remaining Limit */}
-            {alreadyInCart > 0 && !isOutOfStock && (
+            {alreadyInCart > 0 && !isOutOfStock && !isLoadingAvailability && (
               <p className="text-xs text-neutral-400">
                 <span className="text-luxury-gold font-medium">{alreadyInCart}</span> in your bag
                 {remainingAvailable > 0 ? (
                   <span> ({remainingAvailable} more available)</span>
                 ) : (
-                  <span className="text-amber-400"> — Maximum available quantity in bag</span>
+                  <span className="text-amber-400"> — All {availableStock} available units are already in your bag.</span>
                 )}
               </p>
+            )}
+
+            {/* Availability Error Alert */}
+            {availabilityError && (
+              <div className="flex items-start gap-2 text-xs bg-amber-950/80 border border-amber-800/60 text-amber-300 p-2.5 rounded shadow-sm">
+                <AlertCircle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+                <span>{availabilityError}</span>
+              </div>
             )}
 
             {/* Stock Validation Error Alert */}

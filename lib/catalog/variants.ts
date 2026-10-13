@@ -516,3 +516,263 @@ export async function getAdminInventoryVariants(filters?: {
     };
   }
 }
+
+export interface AdminProductVariantInventory {
+  id: string;
+  sku: string;
+  title: string;
+  price: number;
+  discountPrice: number | null;
+  purchaseCost: number;
+  stockQuantity: number;
+  lowStockThreshold: number;
+  stockStatus: string;
+  isActive: boolean;
+  updatedAt: string;
+}
+
+export interface AdminInventoryProductSummary {
+  id: string;
+  name: string;
+  slug: string;
+  sku: string | null;
+  categoryName: string;
+  isActive: boolean;
+  variantCount: number;
+  totalStock: number;
+  hasLowStock: boolean;
+  hasOutOfStock: boolean;
+  variants: AdminProductVariantInventory[];
+}
+
+export interface SearchAdminInventoryParams {
+  query?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface SearchAdminInventoryResult {
+  success: boolean;
+  products: AdminInventoryProductSummary[];
+  totalCount: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  error?: string;
+}
+
+/**
+ * Scalable Search-First Admin Inventory:
+ * Searches products by product name, product SKU, or variant SKU with pagination.
+ */
+export async function searchAdminInventoryProductsAction(
+  params?: SearchAdminInventoryParams
+): Promise<SearchAdminInventoryResult> {
+  try {
+    await requireAdminAuth();
+    const adminClient = createAdminClient();
+
+    const page = Math.max(1, params?.page || 1);
+    const limit = Math.max(1, Math.min(50, params?.limit || 10));
+    const query = params?.query?.trim().toLowerCase() || '';
+
+    // 1. If query is provided, find product IDs matching variant SKU, product name, or product SKU
+    let matchingProductIds: string[] | null = null;
+    if (query) {
+      const { data: matchedVariants } = await (adminClient.from('product_variants') as any)
+        .select('product_id')
+        .ilike('sku', `%${query}%`);
+
+      const variantProductIds = (matchedVariants || []).map((v: any) => v.product_id);
+
+      const { data: matchedProds } = await (adminClient.from('products') as any)
+        .select('id')
+        .or(`name.ilike.%${query}%,sku.ilike.%${query}%`);
+
+      const prodIds = (matchedProds || []).map((p: any) => p.id);
+
+      matchingProductIds = Array.from(new Set([...variantProductIds, ...prodIds]));
+      if (matchingProductIds.length === 0) {
+        return {
+          success: true,
+          products: [],
+          totalCount: 0,
+          page,
+          limit,
+          totalPages: 0,
+        };
+      }
+    }
+
+    // 2. Query products with joined categories and product_variants
+    let dbQuery = (adminClient.from('products') as any)
+      .select(
+        `
+        id,
+        name,
+        slug,
+        sku,
+        is_active,
+        created_at,
+        categories ( name ),
+        product_variants (
+          id,
+          sku,
+          title,
+          price,
+          discount_price,
+          purchase_cost,
+          stock_quantity,
+          low_stock_threshold,
+          stock_status,
+          is_active,
+          updated_at
+        )
+      `,
+        { count: 'exact' }
+      );
+
+    if (matchingProductIds) {
+      dbQuery = dbQuery.in('id', matchingProductIds);
+    }
+
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    dbQuery = dbQuery.order('created_at', { ascending: false }).range(from, to);
+
+    const { data, count, error } = await dbQuery;
+
+    if (error) {
+      return {
+        success: false,
+        products: [],
+        totalCount: 0,
+        page,
+        limit,
+        totalPages: 0,
+        error: error.message,
+      };
+    }
+
+    const totalCount = count || 0;
+    const totalPages = Math.ceil(totalCount / limit);
+
+    const products: AdminInventoryProductSummary[] = (data || []).map((p: any) => {
+      const rawVariants = Array.isArray(p.product_variants) ? p.product_variants : [];
+      const variants: AdminProductVariantInventory[] = rawVariants.map((v: any) => ({
+        id: v.id,
+        sku: v.sku,
+        title: v.title,
+        price: Number(v.price),
+        discountPrice: v.discount_price != null ? Number(v.discount_price) : null,
+        purchaseCost: Number(v.purchase_cost),
+        stockQuantity: Number(v.stock_quantity) || 0,
+        lowStockThreshold: Number(v.low_stock_threshold) || 5,
+        stockStatus: v.stock_status,
+        isActive: Boolean(v.is_active),
+        updatedAt: v.updated_at,
+      }));
+
+      const totalStock = variants.reduce((sum, v) => sum + v.stockQuantity, 0);
+      const hasLowStock = variants.some((v) => v.stockStatus === 'low_stock');
+      const hasOutOfStock = variants.some(
+        (v) => v.stockStatus === 'out_of_stock' || v.stockQuantity <= 0
+      );
+
+      return {
+        id: p.id,
+        name: p.name,
+        slug: p.slug,
+        sku: p.sku || null,
+        categoryName: p.categories?.name || 'Uncategorized',
+        isActive: Boolean(p.is_active),
+        variantCount: variants.length,
+        totalStock,
+        hasLowStock,
+        hasOutOfStock,
+        variants,
+      };
+    });
+
+    return {
+      success: true,
+      products,
+      totalCount,
+      page,
+      limit,
+      totalPages,
+    };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      products: [],
+      totalCount: 0,
+      page: 1,
+      limit: 10,
+      totalPages: 0,
+      error: err instanceof Error ? err.message : 'Failed to search inventory.',
+    };
+  }
+}
+
+export interface InventoryMovementRecord {
+  id: string;
+  variantId: string;
+  quantityChange: number;
+  previousQuantity: number;
+  newQuantity: number;
+  reason: string;
+  referenceId: string | null;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+/**
+ * Fetch audited stock movement history for a specific variant
+ */
+export async function getVariantMovementHistoryAction(
+  variantId: string,
+  limit: number = 10
+): Promise<{ success: boolean; movements: InventoryMovementRecord[]; error?: string }> {
+  try {
+    await requireAdminAuth();
+    const adminClient = createAdminClient();
+
+    if (!variantId?.trim()) {
+      return { success: false, movements: [], error: 'Variant ID is required.' };
+    }
+
+    const { data, error } = await (adminClient.from('inventory_movements') as any)
+      .select(
+        'id, variant_id, quantity_change, previous_quantity, new_quantity, reason, reference_id, created_by, created_at'
+      )
+      .eq('variant_id', variantId.trim())
+      .order('created_at', { ascending: false })
+      .limit(Math.max(1, Math.min(50, limit)));
+
+    if (error) {
+      return { success: false, movements: [], error: error.message };
+    }
+
+    const movements: InventoryMovementRecord[] = (data || []).map((m: any) => ({
+      id: m.id,
+      variantId: m.variant_id,
+      quantityChange: Number(m.quantity_change),
+      previousQuantity: Number(m.previous_quantity),
+      newQuantity: Number(m.new_quantity),
+      reason: m.reason,
+      referenceId: m.reference_id || null,
+      createdBy: m.created_by || null,
+      createdAt: m.created_at,
+    }));
+
+    return { success: true, movements };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      movements: [],
+      error: err instanceof Error ? err.message : 'Failed to load movement history.',
+    };
+  }
+}
