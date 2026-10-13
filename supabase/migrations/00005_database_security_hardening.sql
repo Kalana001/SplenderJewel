@@ -675,12 +675,17 @@ REVOKE ALL ON public.reviews FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.reviews TO anon, authenticated;
 GRANT INSERT (
   product_id,
+  variant_id,
   user_id,
   order_id,
   order_item_id,
+  customer_name,
   rating,
+  title,
   comment,
   is_verified_purchase,
-  is_approved
+  is_approved,
+  created_at,
+  updated_at
 ) ON public.reviews TO authenticated;
 GRANT ALL ON public.reviews TO service_role;

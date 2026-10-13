@@ -49,7 +49,7 @@ export async function getCustomerWishlist(): Promise<{
           id,
           name,
           slug,
-          product_images (image_url, is_primary)
+          product_images (url, is_primary)
         ),
         product_variants (
           id,
@@ -70,8 +70,8 @@ export async function getCustomerWishlist(): Promise<{
     const wishlistProducts: WishlistProduct[] = (items || []).map((row: any) => {
       const prod = row.products;
       const variant = row.product_variants;
-      const primaryImg = prod?.product_images?.find((img: any) => img.is_primary)?.image_url
-        || prod?.product_images?.[0]?.image_url
+      const primaryImg = prod?.product_images?.find((img: any) => img.is_primary)?.url
+        || prod?.product_images?.[0]?.url
         || null;
 
       return {

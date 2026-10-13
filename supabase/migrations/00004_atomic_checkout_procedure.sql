@@ -107,6 +107,9 @@ DECLARE
   v_coupon RECORD;
   v_coupon_id UUID := NULL;
   v_coupon_code TEXT := NULL;
+  v_requested_coupon TEXT := NULL;
+  v_requested_items_canonical JSONB;
+  v_existing_items_canonical JSONB;
   v_usage_count INT := 0;
   v_user_usage_count INT := 0;
 
@@ -136,6 +139,7 @@ BEGIN
   v_district := NULLIF(TRIM(p_order_data->>'district'), '');
   v_payment_method := NULLIF(TRIM(p_order_data->>'payment_method'), '');
   v_idempotency_key := NULLIF(TRIM(p_order_data->>'idempotency_key'), '');
+  v_requested_coupon := UPPER(NULLIF(TRIM(p_coupon_code), ''));
 
   IF v_customer_name IS NULL THEN
     RAISE EXCEPTION 'Customer full name is required.';
@@ -182,23 +186,92 @@ BEGIN
   v_postal_code := NULLIF(TRIM(p_order_data->>'postal_code'), '');
   v_delivery_notes := NULLIF(TRIM(p_order_data->>'delivery_notes'), '');
 
-  -- 1. Concurrency-Safe & Customer-Scoped Idempotency Check
+  -- 0B. Validate every raw element in p_items_data BEFORE idempotency check and aggregation
+  -- Prevents negative, zero, null, or non-integer quantities from cancelling out in SUM()
+  FOR v_raw_item IN
+    SELECT value AS elem FROM jsonb_array_elements(p_items_data)
+  LOOP
+    IF v_raw_item.elem IS NULL
+       OR jsonb_typeof(v_raw_item.elem) <> 'object'
+       OR NULLIF(TRIM(v_raw_item.elem->>'variant_id'), '') IS NULL
+       OR NULLIF(TRIM(v_raw_item.elem->>'quantity'), '') IS NULL
+    THEN
+      RAISE EXCEPTION 'Each order item must specify a valid variant_id and quantity.';
+    END IF;
+
+    IF (TRIM(v_raw_item.elem->>'quantity')) !~ '^[1-9][0-9]{0,5}$'
+       OR (TRIM(v_raw_item.elem->>'quantity'))::INT < 1
+    THEN
+      RAISE EXCEPTION 'Item quantity must be a positive integer of at least 1.';
+    END IF;
+  END LOOP;
+
+  -- 1. Concurrency-Safe & Full-Payload-Bound Idempotency Check
   IF v_idempotency_key IS NOT NULL THEN
     -- Serialize concurrent requests sharing the same idempotency_key so the second
     -- caller waits for the first transaction to commit before reading public.orders
     PERFORM pg_advisory_xact_lock(hashtext('splender_checkout_idem:' || v_idempotency_key));
 
-    SELECT id, order_number, order_token, user_id, phone1, customer_name, payment_method, subtotal, discount_amount, delivery_fee, total_amount
+    SELECT
+      id, order_number, order_token, user_id,
+      customer_name, email, phone1, phone2,
+      address_line, city, district, postal_code, delivery_notes,
+      payment_method, coupon_code,
+      subtotal, discount_amount, delivery_fee, total_amount
     INTO v_existing_order
     FROM public.orders
     WHERE idempotency_key = v_idempotency_key;
 
     IF FOUND THEN
-      -- Prevent cross-customer order disclosure if an idempotency key collides
+      -- Compute canonical sorted (variant_id, quantity) array for requested payload
+      SELECT COALESCE(
+        jsonb_agg(
+          jsonb_build_object('variant_id', req_agg.variant_id, 'quantity', req_agg.quantity)
+          ORDER BY req_agg.variant_id ASC
+        ),
+        '[]'::JSONB
+      )
+      INTO v_requested_items_canonical
+      FROM (
+        SELECT
+          (TRIM(elem->>'variant_id'))::UUID AS variant_id,
+          SUM((TRIM(elem->>'quantity'))::INT)::INT AS quantity
+        FROM jsonb_array_elements(p_items_data) elem
+        GROUP BY (TRIM(elem->>'variant_id'))::UUID
+      ) req_agg;
+
+      -- Compute canonical sorted (variant_id, quantity) array for existing order
+      SELECT COALESCE(
+        jsonb_agg(
+          jsonb_build_object('variant_id', existing_agg.variant_id, 'quantity', existing_agg.quantity)
+          ORDER BY existing_agg.variant_id ASC
+        ),
+        '[]'::JSONB
+      )
+      INTO v_existing_items_canonical
+      FROM (
+        SELECT
+          oi.variant_id,
+          SUM(oi.quantity)::INT AS quantity
+        FROM public.order_items oi
+        WHERE oi.order_id = v_existing_order.id
+        GROUP BY oi.variant_id
+      ) existing_agg;
+
+      -- Verify complete order payload matches existing order; prevent cross-customer disclosure and payload mutation reuse
       IF v_existing_order.user_id IS DISTINCT FROM v_user_id
-         OR v_existing_order.phone1 <> v_phone1
          OR LOWER(v_existing_order.customer_name) <> LOWER(v_customer_name)
+         OR LOWER(COALESCE(v_existing_order.email, '')) <> LOWER(COALESCE(v_email, ''))
+         OR v_existing_order.phone1 <> v_phone1
+         OR COALESCE(v_existing_order.phone2, '') <> COALESCE(v_phone2, '')
+         OR LOWER(v_existing_order.address_line) <> LOWER(v_address_line)
+         OR LOWER(COALESCE(v_existing_order.city, '')) <> LOWER(COALESCE(v_city, ''))
+         OR v_existing_order.district <> v_district
+         OR LOWER(COALESCE(v_existing_order.postal_code, '')) <> LOWER(COALESCE(v_postal_code, ''))
+         OR COALESCE(v_existing_order.delivery_notes, '') <> COALESCE(v_delivery_notes, '')
          OR v_existing_order.payment_method <> v_payment_method
+         OR UPPER(COALESCE(v_existing_order.coupon_code, '')) <> COALESCE(v_requested_coupon, '')
+         OR v_existing_items_canonical <> v_requested_items_canonical
       THEN
         RAISE EXCEPTION 'Idempotency key conflict: request parameters do not match existing order.';
       END IF;
@@ -231,27 +304,7 @@ BEGIN
   v_delivery_fee := COALESCE(v_delivery_fee, 0);
   v_province := COALESCE(v_province, v_district_province);
 
-  -- 3A. Validate every raw element in p_items_data BEFORE aggregation
-  -- Prevents negative, zero, null, or non-integer quantities from cancelling out in SUM()
-  FOR v_raw_item IN
-    SELECT value AS elem FROM jsonb_array_elements(p_items_data)
-  LOOP
-    IF v_raw_item.elem IS NULL
-       OR jsonb_typeof(v_raw_item.elem) <> 'object'
-       OR NULLIF(TRIM(v_raw_item.elem->>'variant_id'), '') IS NULL
-       OR NULLIF(TRIM(v_raw_item.elem->>'quantity'), '') IS NULL
-    THEN
-      RAISE EXCEPTION 'Each order item must specify a valid variant_id and quantity.';
-    END IF;
-
-    IF (TRIM(v_raw_item.elem->>'quantity')) !~ '^[1-9][0-9]{0,5}$'
-       OR (TRIM(v_raw_item.elem->>'quantity'))::INT < 1
-    THEN
-      RAISE EXCEPTION 'Item quantity must be a positive integer of at least 1.';
-    END IF;
-  END LOOP;
-
-  -- 3B. Lock variants in deterministic UUID order (preventing multi-item deadlocks)
+  -- 3. Lock variants in deterministic UUID order (preventing multi-item deadlocks)
   -- and compute authoritative subtotal from aggregated quantities
   FOR v_item IN
     SELECT

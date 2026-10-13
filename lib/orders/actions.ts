@@ -6,7 +6,6 @@ import { getCurrentUser } from '@/lib/auth/server';
 import { isValidDistrict } from '@/lib/config/districts';
 import { PAYMENT_METHODS, ORDER_STATUSES, PAYMENT_STATUSES, type PaymentMethod } from '@/lib/config/constants';
 import { mapDbOrderToDomain, type Order, type OrderDbRow, type OrderItem } from '@/types/order';
-import { validateCouponAction } from '@/lib/coupons/actions';
 
 export interface CreateOrderItemInput {
   variantId: string;
@@ -41,22 +40,6 @@ export interface CreateOrderResult {
 interface DistrictRow {
   delivery_fee: number;
   is_active: boolean;
-}
-
-interface VariantWithProductRow {
-  id: string;
-  product_id: string;
-  sku: string;
-  title: string;
-  price: number;
-  discount_price: number | null;
-  purchase_cost: number;
-  stock_quantity: number;
-  is_active: boolean;
-  products: {
-    name: string;
-    is_active: boolean;
-  } | null;
 }
 
 /**
@@ -165,70 +148,14 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       ([variantId, quantity]) => ({ variantId, quantity })
     );
 
-    // 5. Fetch variants and compute trusted prices & stock
-    const variantIds = consolidatedItems.map((i) => i.variantId);
-    const { data: variantsRaw, error: variantsError } = await (adminClient.from('product_variants') as any)
-      .select(`
-        id,
-        product_id,
-        sku,
-        title,
-        price,
-        discount_price,
-        purchase_cost,
-        stock_quantity,
-        is_active,
-        products (
-          name,
-          is_active
-        )
-      `)
-      .in('id', variantIds);
+    // 5. Normalize coupon code if provided (authoritative validation & locking occur inside process_order_checkout)
+    const appliedCouponCode: string | null = input.couponCode?.trim()
+      ? input.couponCode.trim().toUpperCase()
+      : null;
 
-    const variantsData = variantsRaw as VariantWithProductRow[] | null;
-
-    if (variantsError || !variantsData || variantsData.length === 0) {
-      return { success: false, error: 'Failed to verify ordered jewelry items.' };
-    }
-
-    const variantMap = new Map<string, VariantWithProductRow>(variantsData.map((v) => [v.id, v]));
-
-    let subtotal = 0;
-    for (const itemInput of consolidatedItems) {
-      if (!itemInput.quantity || itemInput.quantity < 1) {
-        return { success: false, error: 'Quantity must be at least 1.' };
-      }
-
-      const variant = variantMap.get(itemInput.variantId);
-      if (!variant || !variant.is_active || !variant.products?.is_active) {
-        return { success: false, error: 'One or more items in your cart are no longer available or inactive.' };
-      }
-
-      if (variant.stock_quantity < itemInput.quantity) {
-        return {
-          success: false,
-          error: `Insufficient stock for "${variant.title}". Only ${variant.stock_quantity} available.`,
-        };
-      }
-
-      const unitPrice = variant.discount_price != null ? Number(variant.discount_price) : Number(variant.price);
-      subtotal += unitPrice * itemInput.quantity;
-    }
-
-    // 6. Validate coupon if provided
-    let appliedCouponCode: string | null = null;
-    if (input.couponCode?.trim()) {
-      const couponRes = await validateCouponAction(input.couponCode, subtotal, {
-        phone1: input.phone1.trim(),
-        email: input.email?.trim() || null,
-      });
-      if (!couponRes.valid) {
-        return { success: false, error: couponRes.error || 'Invalid coupon code.' };
-      }
-      appliedCouponCode = couponRes.code || input.couponCode.trim().toUpperCase();
-    }
-
-    // 7. Atomic RPC checkout procedure (Strict single-transaction PostgreSQL execution)
+    // 6. Atomic RPC checkout procedure (Strict single-transaction PostgreSQL execution)
+    // Performs full-payload idempotency verification first, followed by row-locked (FOR UPDATE)
+    // variant stock deduction, coupon usage enforcement, and order/payment/history creation.
     const { data: rpcData, error: rpcError } = await (adminClient as any).rpc('process_order_checkout', {
       p_order_data: {
         user_id: userId,
@@ -270,6 +197,7 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       const safeDomainPrefixes = [
         'Insufficient stock',
         'One or more items',
+        'Invalid promotional coupon',
         'Coupon code',
         'This coupon',
         'This promotional',
@@ -277,14 +205,19 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
         'You have reached',
         'Delivery to district',
         'Delivery address',
+        'Delivery district',
+        'Customer full name',
         'Recipient full name',
         'Primary contact phone',
         'A valid Sri Lankan district',
         'Invalid payment method',
+        'Order payload',
+        'Order must contain',
         'Your order must contain',
         'Each order item',
         'Item quantity',
         'Idempotency key',
+        'Authenticated customer profile',
         'Customer account',
         'Your customer account',
       ];

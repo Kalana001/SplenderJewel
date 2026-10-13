@@ -33,7 +33,7 @@ export async function getCustomerReviews(): Promise<{
           id,
           name,
           slug,
-          product_images (image_url, is_primary)
+          product_images (url, is_primary)
         ),
         orders (
           id,
@@ -49,8 +49,8 @@ export async function getCustomerReviews(): Promise<{
 
     const reviews: CustomerReviewItem[] = (data || []).map((row: any) => {
       const prod = row.products;
-      const primaryImg = prod?.product_images?.find((img: any) => img.is_primary)?.image_url
-        || prod?.product_images?.[0]?.image_url
+      const primaryImg = prod?.product_images?.find((img: any) => img.is_primary)?.url
+        || prod?.product_images?.[0]?.url
         || null;
 
       return {

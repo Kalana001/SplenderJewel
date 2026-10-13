@@ -48,10 +48,11 @@ export default function CheckoutPage() {
   const [isValidatingCoupon, setIsValidatingCoupon] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
 
-  // Submission State & Idempotency Key
+  // Submission State & Payload-Bound Idempotency Key
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const clientRequestIdRef = useRef<string | null>(null);
+  const clientRequestPayloadRef = useRef<string | null>(null);
 
   // Delivery fee dynamically calculated by selected district
   const deliveryFee = getEstimatedDeliveryFee(district);
@@ -127,11 +128,39 @@ export default function CheckoutPage() {
 
     setIsSubmitting(true);
 
-    if (!clientRequestIdRef.current) {
+    // Build canonical payload fingerprint to bind idempotency key to intended order contents
+    const aggregatedItemsMap = new Map<string, number>();
+    for (const item of items) {
+      const vid = item.variantId.trim();
+      aggregatedItemsMap.set(vid, (aggregatedItemsMap.get(vid) || 0) + item.quantity);
+    }
+    const canonicalItems = Array.from(aggregatedItemsMap.entries())
+      .map(([variantId, quantity]) => ({ variantId, quantity }))
+      .sort((a, b) => a.variantId.localeCompare(b.variantId));
+
+    const payloadFingerprint = JSON.stringify({
+      customerName: customerName.trim().toLowerCase(),
+      phone1: phone1.trim(),
+      phone2: phone2.trim() || '',
+      email: (email.trim() || '').toLowerCase(),
+      addressLine: addressLine.trim().toLowerCase(),
+      city: (city.trim() || '').toLowerCase(),
+      district,
+      postalCode: (postalCode.trim() || '').toLowerCase(),
+      deliveryNotes: deliveryNotes.trim() || '',
+      paymentMethod,
+      couponCode: (appliedCoupon?.code || '').trim().toUpperCase(),
+      items: canonicalItems,
+    });
+
+    // Retain existing key for genuine retries of the identical order payload;
+    // generate a fresh key whenever any order parameter, item, quantity, district, or coupon changes
+    if (!clientRequestIdRef.current || clientRequestPayloadRef.current !== payloadFingerprint) {
       clientRequestIdRef.current =
         typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
           ? `chk-${crypto.randomUUID()}`
           : `chk-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+      clientRequestPayloadRef.current = payloadFingerprint;
     }
 
     try {
@@ -157,12 +186,15 @@ export default function CheckoutPage() {
       if (!res.success || !res.orderNumber) {
         // Generate a fresh key on explicit server validation rejection so user can edit fields & resubmit
         clientRequestIdRef.current = null;
+        clientRequestPayloadRef.current = null;
         setErrorMessage(res.error || 'Failed to place order. Please review your details and try again.');
         setIsSubmitting(false);
         return;
       }
 
-      // Order created successfully: clear client bag and navigate to confirmation
+      // Order created successfully: reset idempotency state, clear client bag, and navigate to confirmation
+      clientRequestIdRef.current = null;
+      clientRequestPayloadRef.current = null;
       clearCart();
       const confirmationUrl = res.orderToken
         ? `/order-confirmation/${res.orderNumber}?token=${encodeURIComponent(res.orderToken)}`

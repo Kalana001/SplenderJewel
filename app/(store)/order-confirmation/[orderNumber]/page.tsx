@@ -46,8 +46,8 @@ export default async function OrderConfirmationPage({
       email,
       phone1,
       phone2,
-      shipping_address_line1,
-      shipping_city,
+      address_line,
+      city,
       district,
       province,
       postal_code,
@@ -210,7 +210,7 @@ export default async function OrderConfirmationPage({
 
             <div className="text-sm text-neutral-300 space-y-1">
               <p className="font-semibold text-white">{order.customer_name}</p>
-              <p>{order.shipping_address_line1}{order.shipping_city ? `, ${order.shipping_city}` : ''}</p>
+              <p>{order.address_line}{order.city ? `, ${order.city}` : ''}</p>
               <p>{order.district}{order.postal_code ? ` - ${order.postal_code}` : ''}</p>
               <p className="text-xs text-neutral-400 pt-1">
                 Primary Phone: <strong className="text-neutral-200">{order.phone1}</strong>
