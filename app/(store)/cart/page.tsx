@@ -1,16 +1,72 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
-import { ShoppingBag, ArrowRight, Trash2, Plus, Minus, ShieldCheck, Truck, ArrowLeft } from 'lucide-react';
+import {
+  ShoppingBag,
+  ArrowRight,
+  Trash2,
+  Plus,
+  Minus,
+  ShieldCheck,
+  Truck,
+  ArrowLeft,
+  AlertCircle,
+  AlertTriangle,
+} from 'lucide-react';
 import { Container } from '@/components/ui/container';
 import { Button } from '@/components/ui/button';
 import { useCart } from '@/lib/cart/cart-context';
 import { formatCurrency } from '@/lib/config/store';
+import { validateCartStockAction } from '@/lib/cart/actions';
 
 export default function CartPage() {
-  const { items, isLoaded, totalCount, subtotal, updateQuantity, removeItem } = useCart();
+  const { items, isLoaded, totalCount, subtotal, updateQuantity, removeItem, syncCartStock } =
+    useCart();
+  const [inventoryNotice, setInventoryNotice] = useState<string | null>(null);
+  const [outOfStockNotice, setOutOfStockNotice] = useState<string | null>(null);
+
+  // Synchronize cart quantities with authoritative database inventory on mount
+  useEffect(() => {
+    if (!isLoaded || items.length === 0) return;
+
+    let isMounted = true;
+    async function verifyCartStock() {
+      try {
+        const res = await validateCartStockAction(
+          items.map((i) => ({ variantId: i.variantId, quantity: i.quantity }))
+        );
+
+        if (!isMounted) return;
+
+        if (res && res.stockMap) {
+          const { adjustedItems } = syncCartStock(res.stockMap);
+          if (adjustedItems.length > 0) {
+            setInventoryNotice(
+              'Some item quantities were adjusted to match current warehouse inventory availability.'
+            );
+          }
+        }
+
+        const outOfStockItems = (res?.items || []).filter((i) => i.availableStock === 0);
+        if (outOfStockItems.length > 0) {
+          setOutOfStockNotice(
+            'One or more items in your shopping bag are currently out of stock. Please remove them before checkout.'
+          );
+        } else {
+          setOutOfStockNotice(null);
+        }
+      } catch (e) {
+        console.warn('[Cart] Live inventory verification deferred:', e);
+      }
+    }
+
+    verifyCartStock();
+    return () => {
+      isMounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded]);
 
   if (!isLoaded) {
     return (
@@ -55,6 +111,10 @@ export default function CartPage() {
     );
   }
 
+  const hasOutOfStockItems = items.some(
+    (i) => i.maxStock !== undefined && (i.maxStock === 0 || i.quantity > i.maxStock)
+  );
+
   return (
     <Container size="xl" className="py-10 sm:py-16">
       <div className="space-y-8">
@@ -78,6 +138,22 @@ export default function CartPage() {
           </Link>
         </div>
 
+        {/* Inventory Adjustment Notification Banner */}
+        {inventoryNotice && (
+          <div className="flex items-center gap-3 bg-amber-950/70 border border-amber-800/70 text-amber-200 px-4 py-3 rounded-lg text-xs sm:text-sm shadow-md animate-fadeIn">
+            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-400" />
+            <span>{inventoryNotice}</span>
+          </div>
+        )}
+
+        {/* Out of Stock Alert Banner */}
+        {outOfStockNotice && (
+          <div className="flex items-center gap-3 bg-rose-950/80 border border-rose-800/70 text-rose-200 px-4 py-3 rounded-lg text-xs sm:text-sm shadow-md animate-fadeIn">
+            <AlertCircle className="h-5 w-5 shrink-0 text-rose-400" />
+            <span>{outOfStockNotice}</span>
+          </div>
+        )}
+
         {/* Cart Layout Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
           {/* Left Column: Cart Items List */}
@@ -89,6 +165,9 @@ export default function CartPage() {
                     ? item.discountPrice
                     : item.price;
                 const lineTotal = itemEffectivePrice * item.quantity;
+                const isAtMaxStock =
+                  item.maxStock !== undefined && item.quantity >= item.maxStock;
+                const isOutOfStock = item.maxStock === 0;
 
                 return (
                   <div
@@ -137,6 +216,17 @@ export default function CartPage() {
                           </span>
                         )}
                       </div>
+
+                      {/* Stock Warning Badge */}
+                      {isOutOfStock ? (
+                        <span className="inline-block text-[11px] font-semibold text-rose-400 bg-rose-950/70 border border-rose-800/40 px-2 py-0.5 rounded mt-1">
+                          Out of Stock — Please remove to checkout
+                        </span>
+                      ) : isAtMaxStock ? (
+                        <span className="inline-block text-[11px] font-medium text-amber-400 bg-amber-950/60 border border-amber-800/40 px-2 py-0.5 rounded mt-1">
+                          Max available stock in bag ({item.maxStock})
+                        </span>
+                      ) : null}
                     </div>
 
                     {/* Quantity Controls & Line Total */}
@@ -157,8 +247,10 @@ export default function CartPage() {
                         <button
                           type="button"
                           onClick={() => updateQuantity(item.variantId, item.quantity + 1)}
-                          className="p-1 text-neutral-400 hover:text-white transition-colors"
+                          disabled={isAtMaxStock || isOutOfStock}
+                          className="p-1 text-neutral-400 hover:text-white disabled:opacity-30 transition-colors"
                           aria-label="Increase quantity"
+                          title={isAtMaxStock ? `Maximum stock reached (${item.maxStock})` : 'Increase quantity'}
                         >
                           <Plus className="h-3 w-3" />
                         </button>
@@ -213,12 +305,29 @@ export default function CartPage() {
 
               {/* Checkout CTA */}
               <div className="space-y-3 pt-2">
-                <Link href="/checkout" className="block">
-                  <Button variant="gold" size="lg" className="w-full text-base font-semibold py-4 flex items-center justify-center gap-2 shadow-lg shadow-luxury-gold/15 hover:shadow-luxury-gold/25">
-                    <span>Proceed to Checkout</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
-                </Link>
+                {hasOutOfStockItems ? (
+                  <div>
+                    <Button
+                      variant="gold"
+                      size="lg"
+                      disabled={true}
+                      className="w-full text-base font-semibold py-4 flex items-center justify-center gap-2 opacity-50 cursor-not-allowed"
+                    >
+                      <span>Proceed to Checkout</span>
+                      <ArrowRight className="h-4 w-4" />
+                    </Button>
+                    <p className="text-[11px] text-rose-400 text-center mt-2 leading-relaxed">
+                      Please adjust or remove items exceeding warehouse stock to proceed.
+                    </p>
+                  </div>
+                ) : (
+                  <Link href="/checkout" className="block">
+                    <Button variant="gold" size="lg" className="w-full text-base font-semibold py-4 flex items-center justify-center gap-2 shadow-lg shadow-luxury-gold/15 hover:shadow-luxury-gold/25">
+                      <span>Proceed to Checkout</span>
+                      <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </Link>
+                )}
 
                 <p className="text-[11px] text-neutral-400 text-center leading-relaxed">
                   Cash on Delivery & Bank Transfer via WhatsApp accepted.

@@ -95,48 +95,14 @@ export async function getAdminCategories(): Promise<{
   }
 }
 
+import { getPublicCategories as getPublicCategoriesQuery } from './public';
+
 /**
  * Retrieves all active categories for public storefront navigation and filters.
+ * Proxies to canonical cached implementation in lib/catalog/public.ts.
  */
 export async function getPublicCategories(client?: any): Promise<Category[]> {
-  try {
-    const supabase = client !== undefined ? client : createPublicSupabaseClient();
-    if (!supabase) return DEFAULT_STORE_CATEGORIES;
-
-    const { data, error } = await supabase
-      .from('categories')
-      .select('id, name, slug, description, image_url, display_order, is_active, created_at')
-      .eq('is_active', true)
-      .order('display_order', { ascending: true })
-      .order('name', { ascending: true });
-
-    if (error) {
-      console.error('[getPublicCategories] Database error querying categories:', error.message);
-      // Fallback to default categories so catalog navigation and filters on other storefront pages do not break
-      return DEFAULT_STORE_CATEGORIES;
-    }
-
-    if (!data || (data as any[]).length === 0) {
-      return DEFAULT_STORE_CATEGORIES;
-    }
-
-    return (data as any[]).map((row) => ({
-      id: row.id,
-      name: row.name,
-      slug: row.slug,
-      description: row.description,
-      imageUrl: row.image_url,
-      displayOrder: row.display_order,
-      isActive: row.is_active,
-      createdAt: row.created_at,
-    }));
-  } catch (err: unknown) {
-    if ((err as any)?.digest === 'DYNAMIC_SERVER_USAGE') {
-      throw err;
-    }
-    console.error('[getPublicCategories] Unexpected exception querying categories:', err);
-    return DEFAULT_STORE_CATEGORIES;
-  }
+  return getPublicCategoriesQuery(client);
 }
 
 /**
@@ -189,8 +155,9 @@ export async function createCategoryAction(input: CategoryFormInput): Promise<Ca
     }
 
     revalidatePath('/admin/categories');
-    revalidatePath('/shop');
+    revalidatePath('/', 'layout');
     revalidatePath('/');
+    revalidatePath('/shop');
 
     return {
       success: true,
@@ -272,8 +239,9 @@ export async function updateCategoryAction(
 
     revalidatePath('/admin/categories');
     revalidatePath(`/category/${slug}`);
-    revalidatePath('/shop');
+    revalidatePath('/', 'layout');
     revalidatePath('/');
+    revalidatePath('/shop');
 
     return {
       success: true,
@@ -316,6 +284,8 @@ export async function toggleCategoryActiveAction(
     }
 
     revalidatePath('/admin/categories');
+    revalidatePath('/', 'layout');
+    revalidatePath('/');
     revalidatePath('/shop');
     return { success: true };
   } catch (err: unknown) {
@@ -360,6 +330,8 @@ export async function deleteCategoryAction(id: string): Promise<{ success: boole
     }
 
     revalidatePath('/admin/categories');
+    revalidatePath('/', 'layout');
+    revalidatePath('/');
     revalidatePath('/shop');
     return { success: true };
   } catch (err: unknown) {

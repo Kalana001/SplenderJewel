@@ -705,6 +705,10 @@ test('Phase 6B Preflight: Real PostgreSQL 18 Migration, 00004 Standalone Privile
         `SELECT * FROM public.orders`,
         `SELECT purchase_cost FROM public.order_items`,
         `SELECT id FROM public.order_items`,
+        `SELECT stock_quantity FROM public.product_variants`,
+        `SELECT purchase_cost FROM public.product_variants`,
+        `SELECT low_stock_threshold FROM public.product_variants`,
+        `SELECT * FROM public.product_variants`,
         `INSERT INTO public.orders (customer_name, phone1, address_line, district, subtotal, total_amount, payment_method) VALUES ('Evil', '0770000000', 'X', 'Colombo', 0, 0, 'cod')`,
         `SELECT public.process_order_checkout('{}'::jsonb, '[]'::jsonb, NULL)`,
       ]) {
@@ -712,6 +716,20 @@ test('Phase 6B Preflight: Real PostgreSQL 18 Migration, 00004 Standalone Privile
         await assert.rejects(() => anonNegClient.query(badSql), /permission denied/i, `anon must be denied: ${badSql}`);
         await anonNegClient.query('ROLLBACK TO SAVEPOINT sp_anon_neg');
       }
+
+      // Positive check: anon CAN read all 11 customer-safe columns on product_variants
+      const anonVariants = await anonNegClient.query(
+        `SELECT id, product_id, sku, title, attributes, price, discount_price, stock_status, is_active, created_at, updated_at
+         FROM public.product_variants WHERE is_active = TRUE`
+      );
+      assert.ok(anonVariants.rowCount > 0, 'anon must be permitted to select customer-safe variant columns');
+
+      // Positive check: anon CAN query customer-safe public_product_variants view
+      const anonView = await anonNegClient.query(
+        `SELECT id, sku, title, price, stock_status FROM public.public_product_variants`
+      );
+      assert.ok(anonView.rowCount > 0, 'anon must be permitted to query public_product_variants view');
+
       await anonNegClient.query('COMMIT');
     } finally {
       anonNegClient.release();
@@ -732,6 +750,10 @@ test('Phase 6B Preflight: Real PostgreSQL 18 Migration, 00004 Standalone Privile
         `SELECT * FROM public.orders WHERE id = '${firstOrder.order_id}'`,
         `SELECT purchase_cost FROM public.order_items WHERE order_id = '${firstOrder.order_id}'`,
         `SELECT * FROM public.order_items WHERE order_id = '${firstOrder.order_id}'`,
+        `SELECT stock_quantity FROM public.product_variants WHERE id = '${var1Id}'`,
+        `SELECT purchase_cost FROM public.product_variants WHERE id = '${var1Id}'`,
+        `SELECT low_stock_threshold FROM public.product_variants WHERE id = '${var1Id}'`,
+        `SELECT * FROM public.product_variants WHERE id = '${var1Id}'`,
         `INSERT INTO public.orders (customer_name, phone1, address_line, district, subtotal, total_amount, payment_method) VALUES ('Evil', '0770000000', 'X', 'Colombo', 0, 0, 'cod')`,
         `UPDATE public.orders SET payment_status = 'paid' WHERE id = '${firstOrder.order_id}'`,
         `DELETE FROM public.orders WHERE id = '${firstOrder.order_id}'`,

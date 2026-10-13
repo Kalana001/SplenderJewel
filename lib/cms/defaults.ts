@@ -32,9 +32,7 @@ export const DEFAULT_HOMEPAGE_SECTIONS: Array<Omit<HomepageSection, 'id' | 'upda
     subtitle: 'Explore by jewelry category',
     displayOrder: 3,
     isEnabled: true,
-    configData: {
-      displayCount: 6,
-    },
+    configData: {},
   },
   {
     sectionKey: 'featured_products',

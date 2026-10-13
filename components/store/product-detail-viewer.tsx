@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import {
   Package,
@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/lib/config/store';
 import { useCart } from '@/lib/cart/cart-context';
+import { checkVariantAvailabilityAction } from '@/lib/cart/actions';
 import type { ProductPublic, ProductVariantPublic, ProductImage } from '@/types/product';
 
 interface ProductDetailViewerProps {
@@ -38,7 +39,29 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
 
   const [quantity, setQuantity] = useState(1);
   const [addedToBag, setAddedToBag] = useState(false);
-  const { addItem } = useCart();
+  const [stockError, setStockError] = useState<string | null>(null);
+  const [serverStock, setServerStock] = useState<number | null>(null);
+  const { items: cartItems, addItem } = useCart();
+
+  // Query server-controlled availability strictly for selected active variant
+  useEffect(() => {
+    if (!selectedVariant?.id) return;
+    let isMounted = true;
+    async function loadAvailability() {
+      try {
+        const res = await checkVariantAvailabilityAction(selectedVariant.id);
+        if (isMounted && res.isAvailable) {
+          setServerStock(res.availableStock);
+        }
+      } catch {
+        // Retain client fallback
+      }
+    }
+    loadAvailability();
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedVariant?.id]);
 
   // Gallery image selection: default to primary image or first image
   const primaryImage = product.images.find((img) => img.isPrimary) || product.images[0] || null;
@@ -59,13 +82,37 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
     ? Math.round(((originalPrice - currentPrice) / originalPrice) * 100)
     : 0;
 
-  // General stock availability of selected variant (computed securely server-side)
-  const isOutOfStock = selectedVariant ? selectedVariant.stockStatus === 'out_of_stock' : false;
-  const isLowStock = selectedVariant ? selectedVariant.stockStatus === 'low_stock' : false;
+  // General stock availability and quantity limits of selected variant
+  const availableStock =
+    serverStock !== null
+      ? serverStock
+      : typeof selectedVariant?.stockQuantity === 'number'
+      ? Math.max(0, selectedVariant.stockQuantity)
+      : selectedVariant?.stockStatus === 'out_of_stock'
+      ? 0
+      : 10;
+
+  const existingCartItem = cartItems.find((i) => i.variantId === selectedVariant?.id);
+  const alreadyInCart = existingCartItem ? existingCartItem.quantity : 0;
+  const remainingAvailable = Math.max(0, availableStock - alreadyInCart);
+
+  const isOutOfStock =
+    (selectedVariant ? selectedVariant.stockStatus === 'out_of_stock' : false) ||
+    availableStock === 0;
+  const isMaxInBag = !isOutOfStock && remainingAvailable === 0 && alreadyInCart > 0;
+  const isLowStock =
+    !isOutOfStock && (selectedVariant?.stockStatus === 'low_stock' || availableStock <= 5);
 
   // Handler: Change variant and auto-switch image if variant has associated image
   function handleSelectVariant(variant: ProductVariantPublic) {
     setSelectedVariant(variant);
+    setServerStock(null);
+    setStockError(null);
+
+    const variantInCart = cartItems.find((i) => i.variantId === variant.id)?.quantity || 0;
+    const varStock = typeof variant.stockQuantity === 'number' ? Math.max(0, variant.stockQuantity) : 10;
+    const varRemaining = Math.max(0, varStock - variantInCart);
+    setQuantity(varRemaining > 0 ? 1 : 1);
 
     // If variant has mapped image, switch to it
     const variantImage = product.images.find((img) => img.variantId === variant.id);
@@ -75,8 +122,31 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
   }
 
   function handleAddToBag() {
+    setStockError(null);
     if (!selectedVariant || isOutOfStock) return;
-    addItem(
+
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      setStockError('Please select a valid quantity of at least 1.');
+      return;
+    }
+
+    if (remainingAvailable <= 0) {
+      setStockError(
+        alreadyInCart >= availableStock
+          ? `You already have all ${availableStock} available units in your shopping bag.`
+          : 'This item is currently out of stock.'
+      );
+      return;
+    }
+
+    if (quantity > remainingAvailable) {
+      setStockError(
+        `Only ${remainingAvailable} more ${remainingAvailable === 1 ? 'unit is' : 'units are'} available in stock (${alreadyInCart} already in your bag).`
+      );
+      return;
+    }
+
+    const res = addItem(
       {
         variantId: selectedVariant.id,
         productId: product.id,
@@ -87,9 +157,21 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
         discountPrice: selectedVariant.discountPrice,
         imageUrl: activeImage?.url || null,
         slug: product.slug,
+        maxStock: availableStock,
       },
       quantity
     );
+
+    if (!res.success) {
+      setStockError(res.error || 'Could not add item to bag.');
+      return;
+    }
+
+    const newRemaining = Math.max(0, remainingAvailable - quantity);
+    if (newRemaining > 0) {
+      setQuantity(1);
+    }
+
     setAddedToBag(true);
     setTimeout(() => setAddedToBag(false), 3500);
   }
@@ -303,7 +385,7 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
                 <button
                   type="button"
                   onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                  disabled={quantity <= 1 || isOutOfStock}
+                  disabled={quantity <= 1 || isOutOfStock || remainingAvailable <= 0}
                   className="p-1.5 text-neutral-400 hover:text-white disabled:opacity-30 transition-colors"
                   aria-label="Decrease quantity"
                 >
@@ -314,10 +396,11 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
                 </span>
                 <button
                   type="button"
-                  onClick={() => setQuantity((q) => q + 1)}
-                  disabled={isOutOfStock}
+                  onClick={() => setQuantity((q) => Math.min(remainingAvailable, q + 1))}
+                  disabled={isOutOfStock || remainingAvailable <= 0 || quantity >= remainingAvailable}
                   className="p-1.5 text-neutral-400 hover:text-white disabled:opacity-30 transition-colors"
                   aria-label="Increase quantity"
+                  title={quantity >= remainingAvailable ? 'Maximum available stock reached' : 'Increase quantity'}
                 >
                   <Plus className="h-3.5 w-3.5" />
                 </button>
@@ -328,9 +411,9 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
                 type="button"
                 variant="gold"
                 size="lg"
-                disabled={isOutOfStock}
+                disabled={isOutOfStock || isMaxInBag || remainingAvailable <= 0}
                 onClick={handleAddToBag}
-                className="flex-1 h-12 text-sm sm:text-base font-semibold flex items-center justify-center gap-2 shadow-lg shadow-luxury-gold/10 hover:shadow-luxury-gold/20"
+                className="flex-1 h-12 text-sm sm:text-base font-semibold flex items-center justify-center gap-2 shadow-lg shadow-luxury-gold/10 hover:shadow-luxury-gold/20 disabled:opacity-50"
               >
                 {addedToBag ? (
                   <>
@@ -340,11 +423,37 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
                 ) : (
                   <>
                     <ShoppingBag className="h-5 w-5 text-luxury-black" />
-                    <span>{isOutOfStock ? 'Currently Out of Stock' : 'Add to Bag'}</span>
+                    <span>
+                      {isOutOfStock
+                        ? 'Currently Out of Stock'
+                        : isMaxInBag
+                        ? 'Max Stock in Bag'
+                        : 'Add to Bag'}
+                    </span>
                   </>
                 )}
               </Button>
             </div>
+
+            {/* In-Bag Stock Counter & Remaining Limit */}
+            {alreadyInCart > 0 && !isOutOfStock && (
+              <p className="text-xs text-neutral-400">
+                <span className="text-luxury-gold font-medium">{alreadyInCart}</span> in your bag
+                {remainingAvailable > 0 ? (
+                  <span> ({remainingAvailable} more available)</span>
+                ) : (
+                  <span className="text-amber-400"> — Maximum available quantity in bag</span>
+                )}
+              </p>
+            )}
+
+            {/* Stock Validation Error Alert */}
+            {stockError && (
+              <div className="flex items-start gap-2 text-xs bg-rose-950/80 border border-rose-800/60 text-rose-300 p-2.5 rounded shadow-sm">
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-400 mt-0.5" />
+                <span>{stockError}</span>
+              </div>
+            )}
 
             {/* Instant Confirmation Toast / Banner */}
             {addedToBag && (

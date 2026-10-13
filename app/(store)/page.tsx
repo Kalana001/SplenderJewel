@@ -5,16 +5,41 @@ import { Button } from '@/components/ui/button';
 import { Sparkles, Shield, Truck, MessageCircle } from 'lucide-react';
 import { getWhatsAppLink, getInstagramLink } from '@/lib/config/store';
 import { InstagramIcon } from '@/components/icons/instagram';
+import { getPublicCategories } from '@/lib/catalog/public';
+import { getPublicHomepageSection } from '@/lib/cms/public';
+import { DEFAULT_STORE_CATEGORIES } from '@/lib/config/store';
+import type { Category } from '@/types/product';
 
-export default function HomePage() {
-  const categories = [
-    { name: 'Rings', href: '/category/rings', count: 'Curated Collection' },
-    { name: 'Necklaces & Pendants', href: '/category/necklaces', count: 'Curated Collection' },
-    { name: 'Bracelets & Bangles', href: '/category/bracelets', count: 'Curated Collection' },
-    { name: 'Earrings', href: '/category/earrings', count: 'Curated Collection' },
-    { name: 'Men’s Collection', href: '/category/men', count: 'Curated Collection' },
-    { name: 'Jewelry Sets', href: '/category/sets', count: 'Curated Collection' },
-  ];
+export const revalidate = 60;
+
+export default async function HomePage() {
+  const [categories, cmsCategorySection] = await Promise.all([
+    getPublicCategories().catch((err) => {
+      console.error('[HomePage] Database error loading categories, falling back to default categories:', err);
+      return DEFAULT_STORE_CATEGORIES;
+    }),
+    getPublicHomepageSection('categories').catch((err) => {
+      console.error('[HomePage] Database error loading categories CMS section:', err);
+      return null;
+    }),
+  ]);
+
+  const showCategoriesSection = cmsCategorySection ? cmsCategorySection.isEnabled : true;
+  
+  // Explicit CMS display limit:
+  // If an administrator explicitly configures a numeric display limit > 0, respect it.
+  // If no explicit limit is configured in CMS, show ALL active categories instead of defaulting to six.
+  const rawDisplayCount = cmsCategorySection?.configData?.displayCount;
+  const explicitLimit =
+    typeof rawDisplayCount === 'number' && rawDisplayCount > 0
+      ? rawDisplayCount
+      : typeof rawDisplayCount === 'string' && Number(rawDisplayCount) > 0
+      ? Number(rawDisplayCount)
+      : null;
+
+  const visibleCategories = explicitLimit ? categories.slice(0, explicitLimit) : categories;
+  const sectionTitle = cmsCategorySection?.title?.trim() || 'Jewelry by Category';
+  const sectionSubtitle = cmsCategorySection?.subtitle?.trim() || 'Browse Collections';
 
   return (
     <div className="space-y-12 sm:space-y-16 md:space-y-20 pb-16 sm:pb-20">
@@ -128,36 +153,52 @@ export default function HomePage() {
       </section>
 
       {/* Categories Grid */}
-      <section>
-        <Container size="xl">
-          <div className="text-center mb-8 sm:mb-10">
-            <span className="text-[10px] sm:text-xs uppercase tracking-[0.25em] text-luxury-gold font-semibold">
-              Browse Collections
-            </span>
-            <h2 className="font-serif text-2xl sm:text-3xl font-bold text-white mt-1 uppercase tracking-wide">
-              Jewelry by Category
-            </h2>
-          </div>
+      {showCategoriesSection && visibleCategories.length > 0 && (
+        <section>
+          <Container size="xl">
+            <div className="text-center mb-8 sm:mb-10">
+              <span className="text-[10px] sm:text-xs uppercase tracking-[0.25em] text-luxury-gold font-semibold">
+                {sectionSubtitle}
+              </span>
+              <h2 className="font-serif text-2xl sm:text-3xl font-bold text-white mt-1 uppercase tracking-wide">
+                {sectionTitle}
+              </h2>
+            </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-6">
-            {categories.map((cat) => (
-              <Link
-                key={cat.name}
-                href={cat.href}
-                className="group relative block p-5 sm:p-7 rounded-sm border border-neutral-850 bg-neutral-900/30 hover:border-luxury-gold/40 hover:bg-neutral-900/60 transition-all text-center"
-              >
-                <div className="h-9 w-9 mx-auto mb-3 rounded-full bg-neutral-800/80 border border-neutral-750 flex items-center justify-center text-luxury-gold group-hover:scale-105 group-hover:border-luxury-gold/40 transition-all">
-                  <Sparkles className="h-3.5 w-3.5" />
-                </div>
-                <h3 className="font-serif text-xs sm:text-sm md:text-base font-semibold text-white group-hover:text-luxury-gold transition-colors">
-                  {cat.name}
-                </h3>
-                <p className="text-[10px] sm:text-[11px] text-neutral-400 mt-1">{cat.count}</p>
-              </Link>
-            ))}
-          </div>
-        </Container>
-      </section>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-6">
+              {visibleCategories.map((cat) => (
+                <Link
+                  key={cat.id || cat.slug}
+                  href={`/category/${cat.slug}`}
+                  className="group relative block p-4 sm:p-6 rounded-sm border border-neutral-850 bg-neutral-900/30 hover:border-luxury-gold/40 hover:bg-neutral-900/60 transition-all text-center overflow-hidden"
+                >
+                  {cat.imageUrl ? (
+                    <div className="relative w-full h-28 sm:h-36 md:h-44 mb-3.5 rounded-sm overflow-hidden bg-neutral-950 border border-neutral-850/80 group-hover:border-luxury-gold/30 transition-all">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={cat.imageUrl}
+                        alt={cat.name}
+                        className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500"
+                        loading="lazy"
+                      />
+                    </div>
+                  ) : (
+                    <div className="h-10 w-10 mx-auto mb-3.5 rounded-full bg-neutral-800/80 border border-neutral-750 flex items-center justify-center text-luxury-gold group-hover:scale-105 group-hover:border-luxury-gold/40 transition-all">
+                      <Sparkles className="h-4 w-4" />
+                    </div>
+                  )}
+                  <h3 className="font-serif text-xs sm:text-sm md:text-base font-semibold text-white group-hover:text-luxury-gold transition-colors line-clamp-1">
+                    {cat.name}
+                  </h3>
+                  <p className="text-[10px] sm:text-[11px] text-neutral-400 mt-1 line-clamp-1">
+                    {cat.description || 'Curated Collection'}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          </Container>
+        </section>
+      )}
 
       {/* Instagram Community Section */}
       <section className="border-t border-neutral-850 bg-gradient-to-b from-neutral-950/80 to-black py-12 sm:py-16">

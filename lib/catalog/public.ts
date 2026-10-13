@@ -492,3 +492,65 @@ export const getStoreWhatsAppNumber = cache(async function getStoreWhatsAppNumbe
   }
   return DEFAULT_DEV_STORE_CONFIG.whatsAppNumber;
 });
+
+/**
+ * Retrieves all active categories for public storefront navigation, homepage display, and filters.
+ *
+ * Rules:
+ * 1. Queries public.categories with is_active = true.
+ * 2. Primary sort: display_order ASC.
+ * 3. Stable secondary sort: name ASC.
+ * 4. Deduplicates records by normalized slug to prevent duplicate navigation entries.
+ * 5. Handles empty category lists and database errors correctly.
+ * 6. Only uses development fallbacks (DEFAULT_STORE_CATEGORIES) when the database is genuinely unconfigured
+ *    (e.g., createPublicSupabaseClient() returns null in offline dev environment).
+ */
+export const getPublicCategories = cache(async function getPublicCategories(
+  client?: any
+): Promise<Category[]> {
+  const supabase = client !== undefined ? client : createPublicSupabaseClient();
+  if (!supabase) {
+    // Database is genuinely unconfigured (e.g. offline dev without credentials)
+    return DEFAULT_STORE_CATEGORIES;
+  }
+
+  const { data, error } = await (supabase.from('categories') as any)
+    .select('id, name, slug, description, image_url, display_order, is_active, created_at')
+    .eq('is_active', true)
+    .order('display_order', { ascending: true })
+    .order('name', { ascending: true });
+
+  if (error) {
+    console.error('[getPublicCategories] Database error querying categories:', error.message);
+    const dbError = new Error(`Database error querying categories: ${error.message}`);
+    (dbError as any).code = error.code;
+    (dbError as any).details = error.details;
+    throw dbError;
+  }
+
+  if (!data || !Array.isArray(data)) {
+    return [];
+  }
+
+  const seenSlugs = new Set<string>();
+  const categories: Category[] = [];
+
+  for (const row of data) {
+    const slug = (row.slug || '').trim().toLowerCase();
+    if (!slug || seenSlugs.has(slug)) continue;
+    seenSlugs.add(slug);
+
+    categories.push({
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      description: row.description,
+      imageUrl: row.image_url,
+      displayOrder: row.display_order ?? 0,
+      isActive: Boolean(row.is_active),
+      createdAt: row.created_at || '',
+    });
+  }
+
+  return categories;
+});

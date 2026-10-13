@@ -9,27 +9,49 @@ import { getStoreConfig, getInstagramLink } from '@/lib/config/store';
 import { InstagramIcon } from '@/components/icons/instagram';
 import { twMerge } from 'tailwind-merge';
 import { useCart } from '@/lib/cart/cart-context';
+import type { Category } from '@/types/product';
 
 interface HeaderProps {
   logoUrl?: string | null;
+  categories?: Category[];
 }
 
-export function StoreHeader({ logoUrl }: HeaderProps) {
+export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const pathname = usePathname();
   const config = getStoreConfig();
   const { totalCount, isLoaded } = useCart();
 
-  const navLinks = [
-    { label: 'Shop All', href: '/shop' },
-    { label: 'Rings', href: '/category/rings' },
-    { label: 'Necklaces', href: '/category/necklaces' },
-    { label: 'Bracelets', href: '/category/bracelets' },
-    { label: 'Earrings', href: '/category/earrings' },
-    { label: 'Men’s Collection', href: '/category/men' },
-    { label: 'About', href: '/about' },
-    { label: 'Contact', href: '/contact' },
-  ];
+  const dynamicCategoryLinks = React.useMemo(() => {
+    const seenSlugs = new Set<string>();
+    const links: Array<{ label: string; href: string }> = [];
+
+    for (const cat of categories) {
+      if (!cat || !cat.slug || !cat.name || cat.isActive === false) continue;
+      const cleanSlug = cat.slug.toLowerCase().trim();
+      if (!cleanSlug || seenSlugs.has(cleanSlug)) continue;
+      // Prevent colliding with static top-level routes
+      if (cleanSlug === 'shop' || cleanSlug === 'about' || cleanSlug === 'contact') continue;
+      seenSlugs.add(cleanSlug);
+
+      links.push({
+        label: cat.name,
+        href: `/category/${encodeURIComponent(cleanSlug)}`,
+      });
+    }
+
+    return links;
+  }, [categories]);
+
+  const navLinks = React.useMemo(
+    () => [
+      { label: 'Shop All', href: '/shop' },
+      ...dynamicCategoryLinks,
+      { label: 'About', href: '/about' },
+      { label: 'Contact', href: '/contact' },
+    ],
+    [dynamicCategoryLinks]
+  );
 
   return (
     <header className="sticky top-0 z-40 w-full bg-luxury-black/95 text-white backdrop-blur-md border-b border-neutral-850">
@@ -121,7 +143,7 @@ export function StoreHeader({ logoUrl }: HeaderProps) {
       {/* Dedicated Centered Navigation Row */}
       <nav className="hidden lg:block border-t border-neutral-850/80 bg-neutral-950/80">
         <Container size="xl">
-          <div className="flex items-center justify-center space-x-6 xl:space-x-8 py-2 text-[11px] xl:text-xs tracking-[0.18em] uppercase font-medium whitespace-nowrap">
+          <div className="flex items-center lg:justify-center space-x-4 lg:space-x-6 xl:space-x-8 py-2 text-[11px] xl:text-xs tracking-[0.18em] uppercase font-medium whitespace-nowrap overflow-x-auto scrollbar-none px-2">
             {navLinks.map((link) => {
               const isActive = pathname === link.href || (link.href !== '/' && (pathname === link.href || pathname.startsWith(`${link.href}/`)));
               return (

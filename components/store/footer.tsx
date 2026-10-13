@@ -4,10 +4,19 @@ import { Container } from '@/components/ui/container';
 import { getStoreConfig, getWhatsAppLink, getInstagramLink } from '@/lib/config/store';
 import { MessageCircle } from 'lucide-react';
 import { InstagramIcon } from '@/components/icons/instagram';
+import type { Category } from '@/types/product';
 
-export function StoreFooter() {
+interface FooterProps {
+  categories?: Category[];
+}
+
+export function StoreFooter({ categories = [] }: FooterProps = {}) {
   const config = getStoreConfig();
   const currentYear = new Date().getFullYear();
+
+  const activeCategories = (categories || [])
+    .filter((cat) => Boolean(cat && cat.slug && cat.name && cat.isActive !== false))
+    .slice(0, 6);
 
   return (
     <footer className="bg-luxury-black text-neutral-300 border-t border-neutral-800 pt-16 pb-12 text-sm">
@@ -63,31 +72,21 @@ export function StoreFooter() {
           <div className="space-y-3">
             <h4 className="text-xs uppercase tracking-widest font-semibold text-white">Collections</h4>
             <ul className="space-y-2 text-xs">
-              <li>
-                <Link href="/category/rings" className="hover:text-luxury-gold transition-colors">
-                  Rings
-                </Link>
-              </li>
-              <li>
-                <Link href="/category/necklaces" className="hover:text-luxury-gold transition-colors">
-                  Necklaces & Pendants
-                </Link>
-              </li>
-              <li>
-                <Link href="/category/bracelets" className="hover:text-luxury-gold transition-colors">
-                  Bracelets & Bangles
-                </Link>
-              </li>
-              <li>
-                <Link href="/category/earrings" className="hover:text-luxury-gold transition-colors">
-                  Earrings
-                </Link>
-              </li>
-              <li>
-                <Link href="/category/men" className="hover:text-luxury-gold transition-colors">
-                  Men’s Collection
-                </Link>
-              </li>
+              {activeCategories.length > 0 ? (
+                activeCategories.map((cat) => (
+                  <li key={cat.id || cat.slug}>
+                    <Link href={`/category/${cat.slug}`} className="hover:text-luxury-gold transition-colors">
+                      {cat.name}
+                    </Link>
+                  </li>
+                ))
+              ) : (
+                <li>
+                  <Link href="/shop" className="hover:text-luxury-gold transition-colors">
+                    All Jewelry Pieces
+                  </Link>
+                </li>
+              )}
             </ul>
           </div>
 

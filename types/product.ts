@@ -37,6 +37,7 @@ export interface ProductVariantPublic {
   attributes: Record<string, string>; // e.g. { color: "Gold", size: "17cm" }
   price: number;
   discountPrice?: number | null;
+  stockQuantity?: number; // Available inventory for storefront quantity bounds and cart validation
   stockStatus: StockStatus;
   images: ProductImage[];
   isActive: boolean;
