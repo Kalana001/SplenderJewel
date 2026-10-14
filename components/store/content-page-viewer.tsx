@@ -1,87 +1,73 @@
 import React from 'react';
 import { Container } from '@/components/ui/container';
 import type { ContentPage } from '@/types/cms';
+import {
+  CANONICAL_PAGE_TITLES,
+  isRedundantInitialHeading,
+  renderInlineContent,
+} from '@/lib/cms/headings';
 
 interface ContentPageViewerProps {
   page: ContentPage;
 }
 
-/**
- * Validates that a hyperlink URL uses safe, authorized protocols.
- * Prevents javascript:, data:, and relative protocol injections.
- */
-function isSafeUrl(url: string): boolean {
-  const trimmed = url.trim().toLowerCase();
-  return (
-    trimmed.startsWith('https://') ||
-    trimmed.startsWith('http://') ||
-    trimmed.startsWith('mailto:') ||
-    trimmed.startsWith('tel:') ||
-    (trimmed.startsWith('/') && !trimmed.startsWith('//'))
-  );
-}
-
-/**
- * Parses inline formatting for bold (**text**) and Markdown hyperlinks ([text](url)).
- */
-function renderInlineContent(text: string): React.ReactNode[] {
-  // Tokenize Markdown links [text](url) and bold **text**
-  const tokens = text.split(/(\[[^\]]+\]\([^\)]+\)|\*\*[^*]+\*\*)/g);
-
-  return tokens.map((token, idx) => {
-    // 1. Link matching: [label](url)
-    const linkMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-    if (linkMatch) {
-      const [, label, url] = linkMatch;
-      if (isSafeUrl(url)) {
-        const isExternal = url.startsWith('http://') || url.startsWith('https://');
-        return (
-          <a
-            key={idx}
-            href={url}
-            target={isExternal ? '_blank' : undefined}
-            rel={isExternal ? 'noopener noreferrer' : undefined}
-            className="text-luxury-gold underline hover:text-luxury-gold-light transition-colors font-medium"
-          >
-            {label}
-          </a>
-        );
-      }
-      return label;
-    }
-
-    // 2. Bold matching: **text**
-    if (token.startsWith('**') && token.endsWith('**') && token.length >= 4) {
-      return (
-        <strong key={idx} className="font-semibold text-white">
-          {token.slice(2, -2)}
-        </strong>
-      );
-    }
-
-    // 3. Regular text
-    return token;
-  });
-}
-
 export function ContentPageViewer({ page }: ContentPageViewerProps) {
-  // Safe, clean markdown parser handling headings (#, ##, ###), lists (-), and inline formatting
+  const normalizedSlug = page.slug?.toLowerCase().trim();
+  const displayTitle = (normalizedSlug && CANONICAL_PAGE_TITLES[normalizedSlug]) || page.title;
+
+  // Safe markdown parser: suppresses duplicate initial page title, avoids excessive spacing,
+  // demotes remaining H1s to H2 to preserve single-H1 accessibility, and formats links
   const renderFormattedContent = (rawText: string) => {
     const lines = rawText.split('\n');
 
+    // Find the first non-empty line
+    let firstNonEmptyIdx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim() !== '') {
+        firstNonEmptyIdx = i;
+        break;
+      }
+    }
+
+    // Check if the initial heading is redundant with the page title or known equivalents
+    let initialSuppressedIdx = -1;
+    if (firstNonEmptyIdx !== -1) {
+      const firstLine = lines[firstNonEmptyIdx].trim();
+      if (firstLine.startsWith('#')) {
+        if (isRedundantInitialHeading(firstLine, page.slug, displayTitle, page.title)) {
+          initialSuppressedIdx = firstNonEmptyIdx;
+        }
+      }
+    }
+
+    let skipImmediateBlanks = initialSuppressedIdx !== -1;
+
     return lines.map((line, idx) => {
       const trimmed = line.trim();
+
+      // Suppress initial redundant heading
+      if (idx === initialSuppressedIdx) {
+        return null;
+      }
+
+      // Skip empty lines immediately following the suppressed heading to avoid excessive vertical gap
+      if (skipImmediateBlanks && idx > initialSuppressedIdx) {
+        if (!trimmed) {
+          return null;
+        }
+        skipImmediateBlanks = false;
+      }
 
       if (!trimmed) {
         return <div key={idx} className="h-3" />;
       }
 
-      // Heading 1 (# )
+      // Heading 1 (# ): Demoted to H2 so the page has exactly one H1
       if (trimmed.startsWith('# ')) {
         return (
-          <h1 key={idx} className="font-serif font-bold text-2xl sm:text-3xl text-white tracking-wide pt-4 pb-2 border-b border-neutral-800">
-            {trimmed.replace('# ', '')}
-          </h1>
+          <h2 key={idx} className="font-serif font-bold text-xl sm:text-2xl text-white tracking-wide pt-4 pb-1 border-b border-neutral-850">
+            {renderInlineContent(trimmed.replace(/^#\s+/, ''))}
+          </h2>
         );
       }
 
@@ -89,7 +75,7 @@ export function ContentPageViewer({ page }: ContentPageViewerProps) {
       if (trimmed.startsWith('## ')) {
         return (
           <h2 key={idx} className="font-serif font-bold text-xl sm:text-2xl text-white tracking-wide pt-4 pb-1 border-b border-neutral-850">
-            {renderInlineContent(trimmed.replace('## ', ''))}
+            {renderInlineContent(trimmed.replace(/^##\s+/, ''))}
           </h2>
         );
       }
@@ -98,7 +84,7 @@ export function ContentPageViewer({ page }: ContentPageViewerProps) {
       if (trimmed.startsWith('### ')) {
         return (
           <h3 key={idx} className="font-serif font-bold text-lg text-luxury-gold pt-3 pb-1">
-            {renderInlineContent(trimmed.replace('### ', ''))}
+            {renderInlineContent(trimmed.replace(/^###\s+/, ''))}
           </h3>
         );
       }
@@ -107,7 +93,7 @@ export function ContentPageViewer({ page }: ContentPageViewerProps) {
       if (trimmed.startsWith('- ')) {
         return (
           <li key={idx} className="text-xs sm:text-sm text-neutral-300 ml-5 list-disc leading-relaxed">
-            {renderInlineContent(trimmed.replace('- ', ''))}
+            {renderInlineContent(trimmed.replace(/^- \s*/, ''))}
           </li>
         );
       }
@@ -129,7 +115,7 @@ export function ContentPageViewer({ page }: ContentPageViewerProps) {
             Splender Jewel • Official Information
           </span>
           <h1 className="text-2xl sm:text-4xl font-serif font-bold text-white tracking-wide mt-1">
-            {page.title}
+            {displayTitle}
           </h1>
         </div>
 

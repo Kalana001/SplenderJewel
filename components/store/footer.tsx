@@ -127,7 +127,7 @@ export function StoreFooter({ categories = [] }: FooterProps = {}) {
               </li>
               <li>
                 <Link href="/terms" className="hover:text-luxury-gold transition-colors">
-                  Terms of Service
+                  Terms & Conditions
                 </Link>
               </li>
               <li>

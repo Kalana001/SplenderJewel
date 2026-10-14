@@ -47,7 +47,7 @@ function RegisterForm() {
     }
 
     if (!agreeTerms) {
-      setErrorMessage('Please accept the Terms of Service and Privacy Policy to create your account.');
+      setErrorMessage('Please accept the Terms & Conditions and Privacy Policy to create your account.');
       return;
     }
 
@@ -292,7 +292,7 @@ function RegisterForm() {
                 <label htmlFor="agreeTerms" className="text-xs text-neutral-600 dark:text-neutral-400 leading-tight">
                   I agree to the{' '}
                   <Link href="/terms" className="text-luxury-gold hover:underline">
-                    Terms of Service
+                    Terms & Conditions
                   </Link>{' '}
                   and{' '}
                   <Link href="/privacy" className="text-luxury-gold hover:underline">
