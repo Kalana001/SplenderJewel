@@ -37,12 +37,13 @@ import {
   adjustVariantStockAction,
 } from '@/lib/catalog/variants';
 import {
-  uploadProductImageAction,
   attachProductImageAction,
   setPrimaryProductImageAction,
   deleteProductImageAction,
   updateProductImageVariantAction,
+  deleteUnattachedProductImageAction,
 } from '@/lib/catalog/storage';
+import { uploadProductImageFile } from '@/lib/catalog/upload-client';
 import type { ProductAdmin, Category, ProductVariantAdmin, ProductImage } from '@/types/product';
 
 interface ProductEditManagerProps {
@@ -272,43 +273,66 @@ export function ProductEditManager({ initialProduct, categories }: ProductEditMa
     setUploadingImage(true);
     setErrorMessage(null);
     let uploadedCount = 0;
+    const errors: string[] = [];
     const targetVariantId = uploadTargetVariantId ? uploadTargetVariantId : null;
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const formData = new FormData();
-      formData.append('file', file);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
 
-      const uploadRes = await uploadProductImageAction(formData);
-      if (uploadRes.success && uploadRes.url) {
-        const attachRes = await attachProductImageAction({
-          productId: product.id,
-          variantId: targetVariantId,
-          url: uploadRes.url,
-          altText: product.name,
-          isPrimary: product.images.length === 0 && i === 0,
-        });
+        try {
+          const uploadRes = await uploadProductImageFile(file);
+          if (uploadRes.success && uploadRes.url) {
+            try {
+              const attachRes = await attachProductImageAction({
+                productId: product.id,
+                variantId: targetVariantId,
+                url: uploadRes.url,
+                altText: product.name,
+                isPrimary: product.images.length === 0 && uploadedCount === 0,
+              });
 
-        if (attachRes.success && attachRes.image) {
-          uploadedCount++;
-          setProduct((prev) => ({
-            ...prev,
-            images: [...prev.images, attachRes.image!],
-          }));
-        } else {
-          setErrorMessage(attachRes.error || `Failed to link image ${file.name}`);
+              if (attachRes.success && attachRes.image) {
+                uploadedCount++;
+                setProduct((prev) => ({
+                  ...prev,
+                  images: [...prev.images, attachRes.image!],
+                }));
+              } else {
+                errors.push(`${file.name}: ${attachRes.error || 'Failed to attach image to product database record.'}`);
+                // Best-effort cleanup of newly uploaded, unreferenced file
+                await deleteUnattachedProductImageAction(uploadRes.url).catch(() => {});
+              }
+            } catch (attachErr: unknown) {
+              errors.push(`${file.name}: ${attachErr instanceof Error ? attachErr.message : 'Database attachment error.'}`);
+              await deleteUnattachedProductImageAction(uploadRes.url).catch(() => {});
+            }
+          } else {
+            errors.push(`${file.name}: ${uploadRes.error || 'Upload failed.'}`);
+          }
+        } catch (fileErr: unknown) {
+          errors.push(`${file.name}: ${fileErr instanceof Error ? fileErr.message : 'Upload failed.'}`);
         }
-      } else {
-        setErrorMessage(uploadRes.error || `Failed to upload ${file.name}`);
       }
-    }
 
-    setUploadingImage(false);
-    if (e.target) {
-      e.target.value = '';
-    }
-    if (uploadedCount > 0) {
-      setSuccessMessage(`${uploadedCount} ${uploadedCount === 1 ? 'image' : 'images'} uploaded successfully.`);
+      if (errors.length > 0) {
+        setErrorMessage(errors.join(' | '));
+      }
+
+      if (uploadedCount > 0) {
+        setSuccessMessage(
+          `${uploadedCount} ${uploadedCount === 1 ? 'image' : 'images'} uploaded successfully.${
+            errors.length > 0 ? ` (${errors.length} failed)` : ''
+          }`
+        );
+      }
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : 'An unexpected error occurred during image upload.');
+    } finally {
+      setUploadingImage(false);
+      if (e.target) {
+        e.target.value = '';
+      }
     }
   }
 

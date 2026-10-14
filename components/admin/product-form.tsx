@@ -26,7 +26,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { createProductAction, generateProductSlug } from '@/lib/catalog/products';
-import { uploadProductImageAction, deleteUnattachedProductImageAction } from '@/lib/catalog/storage';
+import { deleteUnattachedProductImageAction } from '@/lib/catalog/storage';
+import { uploadProductImageFile } from '@/lib/catalog/upload-client';
 import type { Category } from '@/types/product';
 
 export interface FormVariantItem {
@@ -244,28 +245,41 @@ export function ProductForm({ categories }: ProductFormProps) {
 
     setUploadingImage(true);
     setErrorMessage(null);
+    const errors: string[] = [];
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const formData = new FormData();
-      formData.append('file', file);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
 
-      const res = await uploadProductImageAction(formData);
-      if (res.success && res.url) {
-        const uploadedUrl = res.url;
-        setVariants((prev) => {
-          const copy = [...prev];
-          const v = copy[variantIndex];
-          copy[variantIndex] = { ...v, imageUrls: [...v.imageUrls, uploadedUrl] };
-          return copy;
-        });
-      } else {
-        setErrorMessage(res.error || `Failed to upload image for variation`);
+        try {
+          const res = await uploadProductImageFile(file);
+          if (res.success && res.url) {
+            const uploadedUrl = res.url;
+            setVariants((prev) => {
+              const copy = [...prev];
+              const v = copy[variantIndex];
+              copy[variantIndex] = { ...v, imageUrls: [...v.imageUrls, uploadedUrl] };
+              return copy;
+            });
+          } else {
+            errors.push(`${file.name}: ${res.error || 'Failed to upload image'}`);
+          }
+        } catch (fileErr: unknown) {
+          errors.push(`${file.name}: ${fileErr instanceof Error ? fileErr.message : 'Upload failed.'}`);
+        }
+      }
+
+      if (errors.length > 0) {
+        setErrorMessage(errors.join(' | '));
+      }
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : 'An error occurred during variation image upload.');
+    } finally {
+      setUploadingImage(false);
+      if (e.target) {
+        e.target.value = '';
       }
     }
-
-    setUploadingImage(false);
-    e.target.value = '';
   }
 
   function handleRemoveVariantImage(variantIndex: number, imgIndex: number) {
@@ -299,22 +313,35 @@ export function ProductForm({ categories }: ProductFormProps) {
 
     setUploadingImage(true);
     setErrorMessage(null);
+    const errors: string[] = [];
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const formData = new FormData();
-      formData.append('file', file);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
 
-      const res = await uploadProductImageAction(formData);
-      if (res.success && res.url) {
-        setImageUrls((prev) => [...prev, res.url!]);
-      } else {
-        setErrorMessage(res.error || `Failed to upload ${file.name}`);
+        try {
+          const res = await uploadProductImageFile(file);
+          if (res.success && res.url) {
+            setImageUrls((prev) => [...prev, res.url!]);
+          } else {
+            errors.push(`${file.name}: ${res.error || 'Failed to upload image'}`);
+          }
+        } catch (fileErr: unknown) {
+          errors.push(`${file.name}: ${fileErr instanceof Error ? fileErr.message : 'Upload failed.'}`);
+        }
+      }
+
+      if (errors.length > 0) {
+        setErrorMessage(errors.join(' | '));
+      }
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : 'An error occurred during image upload.');
+    } finally {
+      setUploadingImage(false);
+      if (e.target) {
+        e.target.value = '';
       }
     }
-
-    setUploadingImage(false);
-    e.target.value = '';
   }
 
   function handleRemoveImage(index: number) {

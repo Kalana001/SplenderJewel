@@ -6,14 +6,35 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAdminAuth } from '@/lib/auth/server';
 import type { ProductImage } from '@/types/product';
 
+import {
+  MAX_IMAGE_FILE_SIZE,
+  ALLOWED_IMAGE_MIME_TYPES,
+  validateImageFile,
+  generateCatalogStoragePath,
+} from '@/lib/catalog/image-validation';
+
 const BUCKET_NAME = 'products';
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
-const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+export { MAX_IMAGE_FILE_SIZE, ALLOWED_IMAGE_MIME_TYPES };
 
 export interface UploadImageResult {
   success: boolean;
   url?: string;
   path?: string;
+  error?: string;
+}
+
+export interface CreateSignedUploadUrlInput {
+  filename: string;
+  contentType: string;
+  fileSize: number;
+}
+
+export interface CreateSignedUploadUrlResult {
+  success: boolean;
+  signedUrl?: string;
+  path?: string;
+  token?: string;
+  publicUrl?: string;
   error?: string;
 }
 
@@ -24,6 +45,59 @@ export interface AttachImageInput {
   altText?: string | null;
   displayOrder?: number;
   isPrimary?: boolean;
+}
+
+/**
+ * Generates an authenticated signed upload URL for the 'products' storage bucket.
+ * Allows client browser to directly upload images up to 5MB, bypassing Vercel serverless function payload limits.
+ * Validates admin credentials, file size (<= 5MB), and allowed image types.
+ */
+export async function createProductImageUploadUrlAction(
+  input: CreateSignedUploadUrlInput
+): Promise<CreateSignedUploadUrlResult> {
+  try {
+    await requireAdminAuth();
+    const adminClient = createAdminClient();
+
+    const validation = validateImageFile({
+      name: input.filename,
+      size: input.fileSize,
+      type: input.contentType,
+    });
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+
+    const storagePath = generateCatalogStoragePath(input.contentType);
+
+    const { data, error } = await adminClient.storage
+      .from(BUCKET_NAME)
+      .createSignedUploadUrl(storagePath);
+
+    if (error || !data) {
+      return {
+        success: false,
+        error: `Failed to create signed upload URL: ${error?.message || 'Storage service error.'}`,
+      };
+    }
+
+    const { data: urlData } = adminClient.storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(storagePath);
+
+    return {
+      success: true,
+      signedUrl: data.signedUrl,
+      path: storagePath,
+      token: data.token,
+      publicUrl: urlData.publicUrl,
+    };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to generate signed upload URL.',
+    };
+  }
 }
 
 /**
@@ -40,29 +114,16 @@ export async function uploadProductImageAction(formData: FormData): Promise<Uplo
       return { success: false, error: 'No image file provided.' };
     }
 
-    if (file.size > MAX_FILE_SIZE) {
-      return {
-        success: false,
-        error: `File size exceeds the 5MB limit (received ${(file.size / (1024 * 1024)).toFixed(2)} MB).`,
-      };
+    const validation = validateImageFile({
+      name: file.name,
+      size: file.size,
+      type: file.type,
+    });
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
     }
 
-    if (!ALLOWED_MIME_TYPES.includes(file.type)) {
-      return {
-        success: false,
-        error: `Invalid image format (${file.type}). Allowed formats: JPEG, PNG, WebP.`,
-      };
-    }
-
-    // Determine extension safely
-    const extMap: Record<string, string> = {
-      'image/jpeg': 'jpg',
-      'image/png': 'png',
-      'image/webp': 'webp',
-    };
-    const ext = extMap[file.type] || 'jpg';
-    const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    const storagePath = `catalog/${uniqueSuffix}.${ext}`;
+    const storagePath = generateCatalogStoragePath(file.type);
 
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
