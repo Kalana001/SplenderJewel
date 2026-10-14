@@ -3,6 +3,8 @@ import type { Metadata } from 'next';
 import { getPublicProductBySlug, getStoreWhatsAppNumber } from '@/lib/catalog/public';
 import { ProductDetailViewer } from '@/components/store/product-detail-viewer';
 import { Container } from '@/components/ui/container';
+import { getCurrentUser } from '@/lib/auth/server';
+import { getCustomerWishlist } from '@/lib/wishlist/actions';
 
 export const revalidate = 300;
 
@@ -47,14 +49,19 @@ export async function generateMetadata({ params }: ProductDetailPageProps): Prom
 export default async function ProductDetailPage({ params }: ProductDetailPageProps) {
   const { slug } = await params;
 
-  const [product, whatsAppNumber] = await Promise.all([
+  const [product, whatsAppNumber, user, wishlistRes] = await Promise.all([
     getPublicProductBySlug(slug),
     getStoreWhatsAppNumber(),
+    getCurrentUser(),
+    getCustomerWishlist(),
   ]);
 
   if (!product) {
     notFound();
   }
+
+  const isWishlisted = Boolean(wishlistRes?.items?.some((item) => item.productId === product.id));
+  const isAuthenticated = Boolean(user);
 
   // Safely construct Schema.org Product structured data (no confidential data or exact stock)
   const isAvailable = product.variants.some((v) => v.stockStatus !== 'out_of_stock');
@@ -90,6 +97,8 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
         <ProductDetailViewer
           product={product}
           storeWhatsAppNumber={whatsAppNumber}
+          initialIsWishlisted={isWishlisted}
+          isAuthenticated={isAuthenticated}
         />
       </Container>
     </div>

@@ -214,7 +214,7 @@ export default function CartPage() {
               Your Shopping Bag is Empty
             </h1>
             <p className="text-sm text-neutral-400 leading-relaxed">
-              Discover our curated collections of fine gold-plated jewelry, necklaces, rings, and statement pieces.
+              Discover our curated collections of fashion jewellery and accessories for everyday wear and memorable occasions.
             </p>
           </div>
 
@@ -546,7 +546,7 @@ export default function CartPage() {
                 )}
 
                 <p className="text-[11px] text-neutral-400 text-center leading-relaxed">
-                  Cash on Delivery & Bank Transfer via WhatsApp accepted.
+                  Cash on Delivery (COD) & Bank Transfer accepted.
                 </p>
               </div>
 
@@ -554,7 +554,7 @@ export default function CartPage() {
               <div className="border-t border-neutral-800 pt-4 space-y-2.5 text-xs text-neutral-400">
                 <div className="flex items-center gap-2">
                   <Truck className="h-4 w-4 text-luxury-gold shrink-0" />
-                  <span>Islandwide home delivery across all 25 districts</span>
+                  <span>Islandwide Delivery across Sri Lanka</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="h-4 w-4 text-luxury-gold shrink-0" />

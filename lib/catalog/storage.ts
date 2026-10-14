@@ -207,6 +207,40 @@ export async function setPrimaryProductImageAction(
 }
 
 /**
+ * Updates the variant association of a product image.
+ * Passing variantId = null associates the image with the product in general (all variations).
+ */
+export async function updateProductImageVariantAction(
+  productId: string,
+  imageId: string,
+  variantId: string | null
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await requireAdminAuth();
+    const adminClient = createAdminClient();
+
+    const { error } = await (adminClient.from('product_images') as any)
+      .update({ variant_id: variantId || null })
+      .eq('id', imageId)
+      .eq('product_id', productId);
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath(`/admin/products/${productId}`);
+    revalidatePath('/shop');
+    return { success: true };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to update image variation.',
+    };
+  }
+}
+
+
+/**
  * Reorders product gallery images.
  */
 export async function reorderProductImagesAction(

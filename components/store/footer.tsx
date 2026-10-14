@@ -41,8 +41,7 @@ export function StoreFooter({ categories = [] }: FooterProps = {}) {
               </div>
             </div>
             <p className="text-xs text-neutral-400 leading-relaxed">
-              Curated fine fashion jewelry designed for enduring beauty and timeless sophistication.
-              Gold-plated, tiger eye, pearl jewelry, and modern accents for women and men.
+              Curated fashion jewellery and accessories bringing together elegance, modern trends, and timeless style across Sri Lanka.
             </p>
             <div className="space-y-2 pt-1">
               <a
@@ -95,18 +94,13 @@ export function StoreFooter({ categories = [] }: FooterProps = {}) {
             <h4 className="text-xs uppercase tracking-widest font-semibold text-white">Customer Care</h4>
             <ul className="space-y-2 text-xs">
               <li>
-                <Link href="/shipping" className="hover:text-luxury-gold transition-colors">
-                  Delivery & Shipping
+                <Link href="/faq" className="hover:text-luxury-gold transition-colors">
+                  Frequently Asked Questions
                 </Link>
               </li>
               <li>
                 <Link href="/returns" className="hover:text-luxury-gold transition-colors">
                   Returns & Exchanges
-                </Link>
-              </li>
-              <li>
-                <Link href="/faq" className="hover:text-luxury-gold transition-colors">
-                  Frequently Asked Questions
                 </Link>
               </li>
               <li>
@@ -160,7 +154,7 @@ export function StoreFooter({ categories = [] }: FooterProps = {}) {
             </a>
             <span className="text-neutral-700">|</span>
             <p className="text-[11px] text-neutral-600">
-              Secure Home Delivery across Sri Lanka
+              Islandwide Delivery across Sri Lanka
             </p>
           </div>
         </div>

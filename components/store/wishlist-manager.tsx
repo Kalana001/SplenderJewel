@@ -201,10 +201,10 @@ export function WishlistManager({ initialItems }: WishlistManagerProps) {
                     {/* Stock Status Pill */}
                     <div className="absolute top-2.5 left-2.5">
                       <Badge
-                        variant={item.stockStatus === 'in_stock' ? 'success' : 'warning'}
+                        variant={item.stockStatus === 'out_of_stock' ? 'outline' : 'success'}
                         className="text-[10px] uppercase font-bold tracking-wider"
                       >
-                        {item.stockStatus === 'in_stock' ? 'In Stock' : 'Low Stock'}
+                        {item.stockStatus === 'out_of_stock' ? 'Out of Stock' : 'In Stock'}
                       </Badge>
                     </div>
 

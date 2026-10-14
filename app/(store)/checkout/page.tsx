@@ -20,7 +20,7 @@ import { Container } from '@/components/ui/container';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useCart } from '@/lib/cart/cart-context';
-import { formatCurrency } from '@/lib/config/store';
+import { formatCurrency, getWhatsAppLink } from '@/lib/config/store';
 import { SRI_LANKA_DISTRICTS, getEstimatedDeliveryFee, type SriLankaDistrict } from '@/lib/config/districts';
 import { PAYMENT_METHODS, type PaymentMethod } from '@/lib/config/constants';
 import { createOrderAction } from '@/lib/orders/actions';
@@ -29,6 +29,7 @@ import { validateCouponAction } from '@/lib/coupons/actions';
 export default function CheckoutPage() {
   const router = useRouter();
   const { items, isLoaded, totalCount, subtotal, clearCart } = useCart();
+  const isLiveCheckout = process.env.NEXT_PUBLIC_ENABLE_LIVE_CHECKOUT === 'true';
 
   // Form Fields
   const [customerName, setCustomerName] = useState('');
@@ -100,6 +101,14 @@ export default function CheckoutPage() {
     e.preventDefault();
     if (isSubmitting) return;
     setErrorMessage(null);
+
+    // Testing Mode Client Block
+    if (!isLiveCheckout) {
+      setErrorMessage(
+        'Online checkout is currently in development testing mode. Live order submission is disabled. For priority orders, please reach out via WhatsApp (+94 76 468 9907).'
+      );
+      return;
+    }
 
     if (items.length === 0) {
       setErrorMessage('Your shopping bag is empty. Please add items before checking out.');
@@ -253,11 +262,19 @@ export default function CheckoutPage() {
         {/* Navigation Breadcrumb / Return */}
         <div className="flex items-center justify-between border-b border-neutral-800 pb-5">
           <div>
+            {!isLiveCheckout && (
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wider bg-amber-950/70 border border-amber-800/60 text-amber-300 mb-2">
+                <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
+                Storefront Testing Mode
+              </div>
+            )}
             <h1 className="text-2xl sm:text-3xl font-serif font-bold text-white tracking-wide">
-              Secure Checkout
+              {isLiveCheckout ? 'Secure Checkout' : 'Order Review & Checkout Preview'}
             </h1>
             <p className="text-xs sm:text-sm text-neutral-400 mt-1">
-              Islandwide home delivery across all 25 Sri Lankan districts
+              {isLiveCheckout
+                ? 'Islandwide Delivery across Sri Lanka'
+                : 'Online order placement is currently inactive while storefront testing is underway'}
             </p>
           </div>
 
@@ -470,13 +487,13 @@ export default function CheckoutPage() {
                           <span className="text-sm font-semibold text-white">Cash on Delivery (COD)</span>
                         </div>
                         <p className="text-xs text-neutral-400 mt-1 leading-relaxed">
-                          Pay in cash upon physical receipt at your doorstep anywhere in Sri Lanka. Inspected prior to handover.
+                          Pay in cash when you receive your parcel. Dispatched through Sri Lanka Post COD Service. No advance payment required.
                         </p>
                       </div>
                     </div>
                   </label>
 
-                  {/* Option 2: Bank Transfer via WhatsApp */}
+                  {/* Option 2: Bank Transfer */}
                   <label
                     className={`block p-4 rounded-lg border cursor-pointer transition-all ${
                       paymentMethod === PAYMENT_METHODS.BANK_TRANSFER
@@ -496,10 +513,10 @@ export default function CheckoutPage() {
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
                           <MessageCircle className="h-4 w-4 text-emerald-400" />
-                          <span className="text-sm font-semibold text-white">Bank Deposit / Transfer (via WhatsApp)</span>
+                          <span className="text-sm font-semibold text-white">Bank Transfer</span>
                         </div>
                         <p className="text-xs text-neutral-400 mt-1 leading-relaxed">
-                          Direct bank deposit. You will receive account details on the next screen and can share your deposit slip directly to WhatsApp (+94 76 468 9907) for priority order verification.
+                          Direct bank deposit or transfer. Dispatched through Sri Lanka Post Speed Post Service after payment confirmation.
                         </p>
                       </div>
                     </div>
@@ -634,37 +651,80 @@ export default function CheckoutPage() {
                 </div>
 
                 {/* Storefront Preview / Testing Mode Notice */}
-                <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-lg text-amber-200 text-xs flex items-start gap-2.5">
-                  <AlertCircle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <strong className="block font-semibold text-amber-300">Storefront Testing Mode</strong>
+                {!isLiveCheckout && (
+                  <div className="p-4 bg-amber-950/40 border border-amber-800/60 rounded-lg text-amber-200 text-xs space-y-2.5">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
+                      <strong className="font-semibold text-amber-300">Storefront Testing Mode</strong>
+                    </div>
                     <p className="text-[11px] text-amber-200/90 leading-relaxed">
-                      Online checkout submission is currently in development testing mode. Live customer orders are not being processed yet. For order inquiries, please contact our team via WhatsApp.
+                      Online automated checkout is currently in development testing mode. Live orders and payments are not being processed through this form.
                     </p>
+                    <a
+                      href="https://wa.me/94764689907?text=Hello%20Splender%20Jewel%2C%20I%20would%20like%20to%20place%20an%20order."
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs text-luxury-gold hover:text-luxury-gold-light font-medium transition-colors pt-0.5"
+                    >
+                      <MessageCircle className="h-3.5 w-3.5" />
+                      <span>Order directly via WhatsApp Concierge (+94 76 468 9907)</span>
+                    </a>
                   </div>
-                </div>
+                )}
 
                 {/* Submit Action */}
                 <div className="space-y-3 pt-2">
-                  <Button
-                    type="submit"
-                    variant="gold"
-                    size="lg"
-                    disabled={isSubmitting || items.length === 0}
-                    className="w-full text-base font-semibold py-4 flex items-center justify-center gap-2 shadow-lg shadow-luxury-gold/15 hover:shadow-luxury-gold/25"
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                        <span>Processing Order...</span>
-                      </>
-                    ) : (
-                      <span>Confirm & Place Order</span>
-                    )}
-                  </Button>
+                  {isLiveCheckout ? (
+                    <Button
+                      type="submit"
+                      variant="gold"
+                      size="lg"
+                      disabled={isSubmitting || items.length === 0}
+                      className="w-full text-base font-semibold py-4 flex items-center justify-center gap-2 shadow-lg shadow-luxury-gold/15 hover:shadow-luxury-gold/25"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                          <span>Processing Order...</span>
+                        </>
+                      ) : (
+                        <span>Confirm & Place Order</span>
+                      )}
+                    </Button>
+                  ) : (
+                    <div className="space-y-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="lg"
+                        disabled={true}
+                        className="w-full text-xs sm:text-sm font-semibold py-3.5 flex items-center justify-center gap-2 border-amber-600/40 text-amber-300/80 bg-amber-950/20 cursor-not-allowed select-none"
+                      >
+                        <span>Place Order Disabled (Testing Mode)</span>
+                      </Button>
+                      <a
+                        href={getWhatsAppLink('Hello Splender Jewel, I would like to inquire about items from your collection.')}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block"
+                      >
+                        <Button
+                          type="button"
+                          variant="gold"
+                          size="lg"
+                          className="w-full text-xs uppercase tracking-wider font-semibold py-3 flex items-center justify-center gap-2 shadow-md shadow-luxury-gold/10"
+                        >
+                          <MessageCircle className="h-4 w-4" />
+                          <span>Contact Us on WhatsApp</span>
+                        </Button>
+                      </a>
+                    </div>
+                  )}
 
                   <p className="text-[11px] text-neutral-400 text-center leading-relaxed">
-                    By confirming, you agree to our islandwide courier delivery terms.
+                    {isLiveCheckout
+                      ? 'By confirming, you agree to our islandwide delivery terms.'
+                      : 'Testing preview only. No charge or real delivery will be scheduled.'}
                   </p>
                 </div>
 
@@ -672,11 +732,11 @@ export default function CheckoutPage() {
                 <div className="border-t border-neutral-800 pt-4 space-y-2 text-xs text-neutral-400">
                   <div className="flex items-center gap-2">
                     <Truck className="h-4 w-4 text-luxury-gold shrink-0" />
-                    <span>Safe doorstep delivery in {district}</span>
+                    <span>Islandwide Delivery via Sri Lanka Post</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <ShieldCheck className="h-4 w-4 text-luxury-gold shrink-0" />
-                    <span>Verified customer privacy & encrypted actions</span>
+                    <span>Customer data protection & encrypted privacy</span>
                   </div>
                 </div>
               </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useTransition } from 'react';
+import React, { useState, useTransition, useRef } from 'react';
 import Link from 'next/link';
 import {
   Package,
@@ -41,6 +41,7 @@ import {
   attachProductImageAction,
   setPrimaryProductImageAction,
   deleteProductImageAction,
+  updateProductImageVariantAction,
 } from '@/lib/catalog/storage';
 import type { ProductAdmin, Category, ProductVariantAdmin, ProductImage } from '@/types/product';
 
@@ -92,6 +93,9 @@ export function ProductEditManager({ initialProduct, categories }: ProductEditMa
 
   // Tab 3: Uploading images state
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadTargetVariantId, setUploadTargetVariantId] = useState<string>('');
+  const [updatingImageId, setUpdatingImageId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Tab 4: Stock adjustment modal
   const [stockModalOpen, setStockModalOpen] = useState(false);
@@ -267,6 +271,8 @@ export function ProductEditManager({ initialProduct, categories }: ProductEditMa
 
     setUploadingImage(true);
     setErrorMessage(null);
+    let uploadedCount = 0;
+    const targetVariantId = uploadTargetVariantId ? uploadTargetVariantId : null;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -277,16 +283,20 @@ export function ProductEditManager({ initialProduct, categories }: ProductEditMa
       if (uploadRes.success && uploadRes.url) {
         const attachRes = await attachProductImageAction({
           productId: product.id,
+          variantId: targetVariantId,
           url: uploadRes.url,
           altText: product.name,
           isPrimary: product.images.length === 0 && i === 0,
         });
 
         if (attachRes.success && attachRes.image) {
+          uploadedCount++;
           setProduct((prev) => ({
             ...prev,
             images: [...prev.images, attachRes.image!],
           }));
+        } else {
+          setErrorMessage(attachRes.error || `Failed to link image ${file.name}`);
         }
       } else {
         setErrorMessage(uploadRes.error || `Failed to upload ${file.name}`);
@@ -294,8 +304,43 @@ export function ProductEditManager({ initialProduct, categories }: ProductEditMa
     }
 
     setUploadingImage(false);
-    e.target.value = '';
-    setSuccessMessage('Images uploaded successfully.');
+    if (e.target) {
+      e.target.value = '';
+    }
+    if (uploadedCount > 0) {
+      setSuccessMessage(`${uploadedCount} ${uploadedCount === 1 ? 'image' : 'images'} uploaded successfully.`);
+    }
+  }
+
+  async function handleUpdateImageVariant(imageId: string, variantId: string | null) {
+    setUpdatingImageId(imageId);
+    setErrorMessage(null);
+
+    try {
+      const res = await updateProductImageVariantAction(product.id, imageId, variantId);
+      if (!res.success) {
+        setErrorMessage(res.error || 'Failed to update image variation.');
+        return;
+      }
+
+      setProduct((prev) => ({
+        ...prev,
+        images: prev.images.map((img) =>
+          img.id === imageId ? { ...img, variantId: variantId || null } : img
+        ),
+      }));
+
+      const variantTitle = product.variants.find((v) => v.id === variantId)?.title;
+      setSuccessMessage(
+        variantId && variantTitle
+          ? `Image assigned to variant "${variantTitle}".`
+          : 'Image assigned to general product gallery.'
+      );
+    } catch (err: unknown) {
+      setErrorMessage(err instanceof Error ? err.message : 'Failed to update image variation.');
+    } finally {
+      setUpdatingImageId(null);
+    }
   }
 
   async function handleSetPrimaryImage(imageId: string) {
@@ -318,7 +363,7 @@ export function ProductEditManager({ initialProduct, categories }: ProductEditMa
   }
 
   async function handleDeleteImage(imageId: string) {
-    if (!confirm('Are you sure you want to delete this image?')) return;
+    if (!confirm('Are you sure you want to delete this image? This action cannot be undone.')) return;
 
     startTransition(async () => {
       const res = await deleteProductImageAction(product.id, imageId);
@@ -829,12 +874,33 @@ export function ProductEditManager({ initialProduct, categories }: ProductEditMa
             <div>
               <h3 className="text-md font-serif text-white">Product Images & Gallery</h3>
               <p className="text-xs text-neutral-400">
-                Uploaded images are saved securely to the Supabase Storage 'products' bucket. Click the star to set cover image.
+                Uploaded images are saved securely to the Supabase Storage 'products' bucket. Images can be assigned to specific variations or displayed product-wide.
               </p>
             </div>
 
-            <div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              {product.variants.length > 0 && (
+                <div className="flex items-center gap-1.5 text-xs text-neutral-300">
+                  <span className="text-[11px] text-neutral-400 hidden sm:inline">Target:</span>
+                  <select
+                    value={uploadTargetVariantId}
+                    onChange={(e) => setUploadTargetVariantId(e.target.value)}
+                    disabled={uploadingImage}
+                    className="bg-neutral-900 border border-neutral-700 text-neutral-200 text-xs rounded px-2.5 py-1.5 focus:border-luxury-gold focus:outline-none"
+                    title="Select variation target for new image uploads"
+                  >
+                    <option value="">All Variations (Product Level)</option>
+                    {product.variants.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.title} ({v.sku})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <input
+                ref={fileInputRef}
                 type="file"
                 id="gallery-images-upload"
                 multiple
@@ -843,14 +909,26 @@ export function ProductEditManager({ initialProduct, categories }: ProductEditMa
                 disabled={uploadingImage}
                 className="hidden"
               />
-              <label htmlFor="gallery-images-upload">
-                <Button variant="gold" size="sm" asChild disabled={uploadingImage} className="cursor-pointer">
-                  <span>
-                    {uploadingImage ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />}
-                    Upload New Images
-                  </span>
-                </Button>
-              </label>
+              <Button
+                type="button"
+                variant="gold"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingImage}
+                className="cursor-pointer font-medium flex items-center gap-1.5"
+              >
+                {uploadingImage ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Uploading Images...</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4" />
+                    <span>Add Image</span>
+                  </>
+                )}
+              </Button>
             </div>
           </div>
 
@@ -862,58 +940,96 @@ export function ProductEditManager({ initialProduct, categories }: ProductEditMa
               <p className="text-xs text-neutral-400 mb-4">
                 Upload JPEG, PNG, or WebP images under 5MB to display on the storefront.
               </p>
-              <label htmlFor="gallery-images-upload">
-                <Button variant="gold" size="sm" asChild className="cursor-pointer">
-                  <span>
-                    <Upload className="h-4 w-4 mr-1" />
-                    Upload Cover Image
-                  </span>
-                </Button>
-              </label>
+              <Button
+                type="button"
+                variant="gold"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingImage}
+                className="cursor-pointer font-medium"
+              >
+                {uploadingImage ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    <span>Uploading...</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4 mr-1" />
+                    <span>Add Image / Upload Cover</span>
+                  </>
+                )}
+              </Button>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {product.images.map((img) => (
-                <div
-                  key={img.id}
-                  className={`relative group rounded-md border bg-neutral-900 overflow-hidden aspect-square ${
-                    img.isPrimary ? 'border-luxury-gold ring-1 ring-luxury-gold' : 'border-neutral-700'
-                  }`}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={img.url} alt={img.altText || product.name} className="w-full h-full object-cover" />
+              {product.images.map((img) => {
+                const isUpdatingThis = updatingImageId === img.id;
 
-                  {img.isPrimary && (
-                    <span className="absolute top-2 left-2 bg-luxury-gold text-luxury-black text-[10px] font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-1">
-                      <Star className="h-3 w-3 fill-current" /> Cover
-                    </span>
-                  )}
+                return (
+                  <div
+                    key={img.id}
+                    className={`relative group rounded-md border bg-neutral-900 overflow-hidden flex flex-col ${
+                      img.isPrimary ? 'border-luxury-gold ring-1 ring-luxury-gold' : 'border-neutral-700'
+                    }`}
+                  >
+                    <div className="relative aspect-square w-full overflow-hidden bg-neutral-950">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={img.url} alt={img.altText || product.name} className="w-full h-full object-cover" />
 
-                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                    {!img.isPrimary && (
-                      <Button
-                        variant="gold"
-                        size="sm"
-                        onClick={() => handleSetPrimaryImage(img.id)}
-                        className="text-xs h-7 px-2"
-                        title="Set as Cover Image"
+                      {img.isPrimary && (
+                        <span className="absolute top-2 left-2 bg-luxury-gold text-luxury-black text-[10px] font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-1 z-10">
+                          <Star className="h-3 w-3 fill-current" /> Cover
+                        </span>
+                      )}
+
+                      {/* Top right quick actions */}
+                      <div className="absolute top-2 right-2 flex items-center gap-1 z-10">
+                        {!img.isPrimary && (
+                          <button
+                            type="button"
+                            onClick={() => handleSetPrimaryImage(img.id)}
+                            className="bg-black/70 hover:bg-luxury-gold hover:text-luxury-black text-neutral-300 p-1.5 rounded transition-colors"
+                            title="Set as Cover Image"
+                          >
+                            <Star className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteImage(img.id)}
+                          className="bg-black/70 hover:bg-rose-700 text-neutral-300 hover:text-white p-1.5 rounded transition-colors"
+                          title="Delete Image"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Bottom: Variation selector */}
+                    <div className="p-2 bg-neutral-900 border-t border-neutral-800 space-y-1">
+                      <div className="flex items-center justify-between text-[10px] text-neutral-400">
+                        <span>Variation:</span>
+                        {isUpdatingThis && <Loader2 className="h-2.5 w-2.5 animate-spin text-luxury-gold" />}
+                      </div>
+                      <select
+                        value={img.variantId || ''}
+                        disabled={isUpdatingThis}
+                        onChange={(e) => handleUpdateImageVariant(img.id, e.target.value || null)}
+                        className="w-full text-[11px] bg-neutral-950 text-neutral-200 border border-neutral-700 rounded px-1.5 py-1 focus:border-luxury-gold focus:outline-none truncate"
+                        title="Assign to variation or product"
                       >
-                        Make Cover
-                      </Button>
-                    )}
-
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => handleDeleteImage(img.id)}
-                      className="text-xs h-7 w-7 p-0"
-                      title="Delete Image"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                        <option value="">All Variations</option>
+                        {product.variants.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.title}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

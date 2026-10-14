@@ -25,14 +25,28 @@ import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/lib/config/store';
 import { useCart } from '@/lib/cart/cart-context';
 import { checkVariantAvailabilityAction } from '@/lib/cart/actions';
+import { addToWishlist, removeProductFromWishlist } from '@/lib/wishlist/actions';
 import type { ProductPublic, ProductVariantPublic, ProductImage } from '@/types/product';
 
 interface ProductDetailViewerProps {
   product: ProductPublic;
   storeWhatsAppNumber: string;
+  initialIsWishlisted?: boolean;
+  isAuthenticated?: boolean;
 }
 
-export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDetailViewerProps) {
+export function ProductDetailViewer({
+  product,
+  storeWhatsAppNumber,
+  initialIsWishlisted = false,
+  isAuthenticated = false,
+}: ProductDetailViewerProps) {
+  // Wishlist state
+  const [isWishlisted, setIsWishlisted] = useState(Boolean(initialIsWishlisted));
+  const [isTogglingWishlist, setIsTogglingWishlist] = useState(false);
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
+  const [wishlistMessage, setWishlistMessage] = useState<string | null>(null);
+
   // Variant selection: default to first active variant
   const [selectedVariant, setSelectedVariant] = useState<ProductVariantPublic>(
     product.variants[0] || null
@@ -140,6 +154,46 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
     const variantImage = product.images.find((img) => img.variantId === variant.id);
     if (variantImage) {
       setActiveImage(variantImage);
+    }
+  }
+
+  // Handler: Toggle wishlist item for customer
+  async function handleToggleWishlist() {
+    if (!isAuthenticated) {
+      setShowLoginPrompt(true);
+      return;
+    }
+
+    const previousState = isWishlisted;
+    setIsWishlisted(!previousState);
+    setIsTogglingWishlist(true);
+    setWishlistMessage(null);
+
+    try {
+      if (previousState) {
+        const res = await removeProductFromWishlist(product.id, selectedVariant?.id);
+        if (!res.success) {
+          setIsWishlisted(previousState);
+          setWishlistMessage(res.error || 'Failed to update wishlist.');
+        } else {
+          setWishlistMessage('Removed from your wishlist.');
+          setTimeout(() => setWishlistMessage(null), 3000);
+        }
+      } else {
+        const res = await addToWishlist(product.id, selectedVariant?.id);
+        if (!res.success) {
+          setIsWishlisted(previousState);
+          setWishlistMessage(res.error || 'Failed to save to wishlist.');
+        } else {
+          setWishlistMessage('Saved to your wishlist.');
+          setTimeout(() => setWishlistMessage(null), 3000);
+        }
+      }
+    } catch {
+      setIsWishlisted(previousState);
+      setWishlistMessage('An error occurred updating wishlist.');
+    } finally {
+      setIsTogglingWishlist(false);
     }
   }
 
@@ -309,23 +363,55 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
         <div className="space-y-6 flex flex-col justify-start">
           {/* Header Info */}
           <div>
-            <div className="flex items-center gap-2 mb-2">
-              {product.category && (
-                <span className="text-xs uppercase tracking-widest text-luxury-gold font-semibold">
-                  {product.category.name}
-                </span>
-              )}
-              {product.gender && (
-                <>
-                  <span className="text-neutral-600">•</span>
-                  <span className="text-xs text-neutral-400 capitalize">{product.gender}'s Collection</span>
-                </>
-              )}
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-2">
+                  {product.category && (
+                    <span className="text-xs uppercase tracking-widest text-luxury-gold font-semibold">
+                      {product.category.name}
+                    </span>
+                  )}
+                  {product.gender && (
+                    <>
+                      <span className="text-neutral-600">•</span>
+                      <span className="text-xs text-neutral-400 capitalize">{product.gender}'s Collection</span>
+                    </>
+                  )}
+                </div>
+
+                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-serif text-white leading-tight">
+                  {product.name}
+                </h1>
+              </div>
+
+              {/* Wishlist Heart Action */}
+              <button
+                type="button"
+                onClick={handleToggleWishlist}
+                disabled={isTogglingWishlist}
+                aria-label={isWishlisted ? 'Remove from Wishlist' : 'Save to Wishlist'}
+                className={`p-2.5 sm:p-3 rounded-full border transition-all shrink-0 select-none ${
+                  isWishlisted
+                    ? 'bg-rose-950/70 border-rose-500/60 text-rose-500 shadow-lg shadow-rose-950/50'
+                    : 'bg-neutral-900/80 border-neutral-750 text-neutral-400 hover:text-rose-400 hover:border-neutral-600'
+                }`}
+                title={isWishlisted ? 'Saved in Wishlist' : 'Add to Wishlist'}
+              >
+                <Heart
+                  className={`h-5 w-5 sm:h-6 sm:w-6 transition-transform active:scale-125 ${
+                    isWishlisted ? 'fill-rose-500 text-rose-500' : ''
+                  }`}
+                />
+              </button>
             </div>
 
-            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-serif text-white leading-tight">
-              {product.name}
-            </h1>
+            {/* Wishlist Feedback Toast */}
+            {wishlistMessage && (
+              <p className="text-xs text-rose-400 mt-2 flex items-center gap-1.5 animate-fadeIn">
+                <Heart className="h-3.5 w-3.5 fill-current" />
+                <span>{wishlistMessage}</span>
+              </p>
+            )}
 
             <div className="flex items-center gap-3 text-xs font-mono text-neutral-400 mt-2">
               <span>SKU: {selectedVariant?.sku || product.productCode || 'SJ-JWL'}</span>
@@ -367,17 +453,12 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
               ) : isOutOfStock ? (
                 <span className="inline-flex items-center gap-1.5 text-xs font-medium text-rose-400 bg-rose-950/60 border border-rose-800/40 px-2.5 py-1 rounded">
                   <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
-                  Currently Out of Stock
-                </span>
-              ) : isLowStock ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-400 bg-amber-950/60 border border-amber-800/40 px-2.5 py-1 rounded">
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
-                  Low Stock ({availableStock} remaining)
+                  Out of Stock
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-2.5 py-1 rounded">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                  In Stock & Ready for Delivery
+                  In Stock
                 </span>
               )}
             </div>
@@ -483,7 +564,7 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
                     <ShoppingBag className="h-5 w-5 text-luxury-black" />
                     <span>
                       {isOutOfStock
-                        ? 'Currently Out of Stock'
+                        ? 'Out of Stock'
                         : isMaxInBag
                         ? 'All in Bag'
                         : 'Add to Bag'}
@@ -559,12 +640,12 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-4 border-t border-luxury-border">
             <div className="flex items-center gap-2.5 text-xs text-neutral-300">
               <Truck className="h-4 w-4 text-luxury-gold shrink-0" />
-              <span>Islandwide Delivery (25 Districts)</span>
+              <span>Islandwide Delivery</span>
             </div>
 
             <div className="flex items-center gap-2.5 text-xs text-neutral-300">
               <ShieldCheck className="h-4 w-4 text-luxury-gold shrink-0" />
-              <span>100% Quality Inspected</span>
+              <span>Secure Protective Packaging</span>
             </div>
 
             <div className="flex items-center gap-2.5 text-xs text-neutral-300">
@@ -590,7 +671,7 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
               </h3>
               <div className="text-sm text-neutral-300 leading-relaxed whitespace-pre-line">
                 {product.description ||
-                  'Each Splender Jewel creation is crafted to elevate everyday luxury. Handcrafted with fine detailing, durable plating, and thoughtful finishing for timeless elegance.'}
+                  'Each Splender Jewel piece brings together elegance, modern trends, and timeless style, offering beautiful accessories for everyday wear and memorable occasions.'}
               </div>
             </div>
 
@@ -620,6 +701,43 @@ export function ProductDetailViewer({ product, storeWhatsAppNumber }: ProductDet
           </div>
         </div>
       </div>
+
+      {/* Modal: Guest Login Prompt for Wishlist */}
+      {showLoginPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-luxury-card border border-luxury-border rounded-lg max-w-sm w-full p-6 shadow-2xl relative text-center space-y-4 animate-scaleUp">
+            <button
+              type="button"
+              onClick={() => setShowLoginPrompt(false)}
+              className="absolute top-4 right-4 text-neutral-400 hover:text-white transition-colors"
+              aria-label="Close modal"
+            >
+              ✕
+            </button>
+            <div className="inline-flex items-center justify-center h-14 w-14 rounded-full bg-rose-950/50 border border-rose-500/30 text-rose-400 mx-auto">
+              <Heart className="h-7 w-7 fill-rose-500 text-rose-500" />
+            </div>
+            <div>
+              <h3 className="text-lg font-serif text-white font-bold">Save to Wishlist</h3>
+              <p className="text-xs text-neutral-400 mt-1 leading-relaxed">
+                Please log in to save fine jewelry pieces to your wishlist and access your saved pieces anytime.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 pt-2">
+              <Link href={`/login?redirect=/products/${product.slug}`}>
+                <Button variant="gold" size="md" className="w-full font-semibold text-xs uppercase tracking-wider">
+                  Sign In to Save
+                </Button>
+              </Link>
+              <Link href={`/register?redirect=/products/${product.slug}`}>
+                <Button variant="outline" size="md" className="w-full text-xs">
+                  Create New Account
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

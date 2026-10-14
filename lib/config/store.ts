@@ -38,7 +38,7 @@ export const DEFAULT_DEV_STORE_CONFIG: StoreConfig = {
   currency: 'LKR',
   currencySymbol: 'Rs.',
   whatsAppNumber: process.env.NEXT_PUBLIC_DEFAULT_WHATSAPP_NUMBER || '+94764689907',
-  instagramUrl: 'https://www.instagram.com/splender_jewel?igsh=MXE1dXVsbW5nNG13bQ==',
+  instagramUrl: 'https://www.instagram.com/splender_jewel/',
   contactEmail: '',
   freeDeliveryEnabled: false,
   defaultDeliveryFee: 0,
@@ -56,7 +56,7 @@ export const DEFAULT_STORE_CATEGORIES = [
     id: 'default-rings',
     name: 'Rings',
     slug: 'rings',
-    description: 'Curated collection of fine gold-plated, statement, and gemstone rings.',
+    description: 'Curated collection of stylish rings, statement pieces, and everyday accents.',
     imageUrl: null as string | null,
     displayOrder: 1,
     isActive: true,
@@ -147,6 +147,6 @@ export function getWhatsAppLink(message?: string, config: StoreConfig = DEFAULT_
  * Returns the official Instagram profile URL for Splender Jewel.
  */
 export function getInstagramLink(config: StoreConfig = DEFAULT_DEV_STORE_CONFIG): string {
-  return config.instagramUrl || 'https://www.instagram.com/splender_jewel?igsh=MXE1dXVsbW5nNG13bQ==';
+  return config.instagramUrl || 'https://www.instagram.com/splender_jewel/';
 }
 

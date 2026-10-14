@@ -3,15 +3,15 @@ import { Container } from '@/components/ui/container';
 import { Button } from '@/components/ui/button';
 import { getStoreConfig, getWhatsAppLink, getInstagramLink } from '@/lib/config/store';
 import { InstagramIcon } from '@/components/icons/instagram';
-import { MessageCircle, Shield, Truck, Clock } from 'lucide-react';
+import { MessageCircle, Shield, Truck, MapPin } from 'lucide-react';
 import { getPublicContentPage } from '@/lib/cms/public';
 import { ContentPageViewer } from '@/components/store/content-page-viewer';
 
 export const revalidate = 60;
 
 export const metadata = {
-  title: 'Contact Us | Splender Jewel Concierge',
-  description: 'Connect with Splender Jewel concierge for personal care, custom orders, and islandwide delivery assistance.',
+  title: 'Contact Us | Splender Jewel',
+  description: 'Connect with the Splender Jewel team in Negombo, Sri Lanka for assistance, inquiries, and Bank Transfer verifications.',
 };
 
 export default async function ContactPage() {
@@ -23,17 +23,17 @@ export default async function ContactPage() {
       {/* CMS Managed Content Section */}
       {page && <ContentPageViewer page={page} />}
 
-      {/* Primary Contact Channels & Direct Concierge CTA */}
+      {/* Primary Contact Channels & Direct Customer Assistance */}
       <Container size="lg">
         <div className="text-center max-w-2xl mx-auto mb-10">
           <span className="text-xs uppercase tracking-[0.25em] text-luxury-gold font-semibold">
-            Direct Concierge Channels
+            Official Channels
           </span>
           <h2 className="font-serif text-2xl sm:text-3xl font-bold text-white mt-2 uppercase tracking-wide">
-            Instant Client Assistance
+            Customer Assistance
           </h2>
           <p className="text-xs sm:text-sm text-neutral-400 mt-2 leading-relaxed">
-            Connect directly with our master stylists for immediate sizing advice, high-resolution videos of pieces, and Bank Transfer verifications.
+            Reach out to our team for product inquiries, order questions, and Bank Transfer payment confirmations.
           </p>
         </div>
 
@@ -45,10 +45,10 @@ export default async function ContactPage() {
                 <MessageCircle className="h-6 w-6" />
               </div>
               <h3 className="font-serif text-xl font-semibold text-white">
-                WhatsApp Concierge
+                WhatsApp Support
               </h3>
               <p className="text-xs text-neutral-400 leading-relaxed">
-                Connect directly for instant stock inquiries, high-resolution photos/videos of pieces, custom orders, and Bank Transfer payment confirmations.
+                Connect directly on WhatsApp for stock inquiries, order questions, and Bank Transfer payment confirmations.
               </p>
               <div className="pt-2 text-sm text-luxury-gold font-mono">
                 {config.whatsAppNumber}
@@ -78,7 +78,7 @@ export default async function ContactPage() {
                 Official Instagram
               </h3>
               <p className="text-xs text-neutral-400 leading-relaxed">
-                Follow our official page for new arrivals, jewelry styling inspiration, customer showcases, and direct messaging (DM).
+                Follow our official Instagram page for new arrival showcases, collection updates, styling ideas, and direct messaging (DM).
               </p>
               <div className="pt-2 text-sm text-luxury-gold font-mono">
                 @splender_jewel
@@ -102,19 +102,19 @@ export default async function ContactPage() {
         {/* Support Information Pillars */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-6 border-t border-neutral-800/80 text-center">
           <div className="p-5 rounded-sm border border-neutral-850 bg-neutral-950/40">
-            <Clock className="h-5 w-5 text-luxury-gold mx-auto mb-2" />
-            <h4 className="text-xs uppercase tracking-wider text-white font-semibold">Service Hours</h4>
-            <p className="text-xs text-neutral-400 mt-1">Monday – Sunday: 9:00 AM – 9:00 PM</p>
+            <MapPin className="h-5 w-5 text-luxury-gold mx-auto mb-2" />
+            <h4 className="text-xs uppercase tracking-wider text-white font-semibold">Location</h4>
+            <p className="text-xs text-neutral-400 mt-1">Negombo, Sri Lanka</p>
           </div>
           <div className="p-5 rounded-sm border border-neutral-850 bg-neutral-950/40">
             <Truck className="h-5 w-5 text-luxury-gold mx-auto mb-2" />
             <h4 className="text-xs uppercase tracking-wider text-white font-semibold">Delivery Coverage</h4>
-            <p className="text-xs text-neutral-400 mt-1">All 25 Administrative Districts</p>
+            <p className="text-xs text-neutral-400 mt-1">Islandwide Delivery via Sri Lanka Post</p>
           </div>
           <div className="p-5 rounded-sm border border-neutral-850 bg-neutral-950/40">
             <Shield className="h-5 w-5 text-luxury-gold mx-auto mb-2" />
-            <h4 className="text-xs uppercase tracking-wider text-white font-semibold">Guaranteed Security</h4>
-            <p className="text-xs text-neutral-400 mt-1">Insured Packaging & Delivery</p>
+            <h4 className="text-xs uppercase tracking-wider text-white font-semibold">Payment Methods</h4>
+            <p className="text-xs text-neutral-400 mt-1">Cash on Delivery & Bank Transfer</p>
           </div>
         </div>
       </Container>

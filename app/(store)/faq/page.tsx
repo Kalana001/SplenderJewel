@@ -6,7 +6,7 @@ export const revalidate = 60;
 
 export const metadata = {
   title: 'Frequently Asked Questions | Splender Jewel',
-  description: 'Common questions on jewelry care, islandwide delivery in Sri Lanka, and payment verification.',
+  description: 'Find answers regarding Splender Jewel fashion jewellery, Islandwide Delivery via Sri Lanka Post, and payment methods.',
 };
 
 export default async function FAQPage() {

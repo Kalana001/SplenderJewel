@@ -198,6 +198,49 @@ export async function removeFromWishlist(wishlistItemId: string): Promise<{
   }
 }
 
+export async function removeProductFromWishlist(
+  productId: string,
+  variantId?: string | null
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const profile = await requireCustomerAuth();
+    const supabase = await createServerSupabaseClient();
+    if (!supabase) {
+      return { success: false, error: 'Database service is currently unavailable.' };
+    }
+
+    const { data: wishlist } = await (supabase.from('wishlists') as any)
+      .select('id')
+      .eq('user_id', profile.id)
+      .maybeSingle();
+
+    if (!wishlist) {
+      return { success: true };
+    }
+
+    const targetVariantId = variantId || null;
+    let query = (supabase.from('wishlist_items') as any)
+      .delete()
+      .eq('wishlist_id', wishlist.id)
+      .eq('product_id', productId);
+
+    if (targetVariantId) {
+      query = query.eq('variant_id', targetVariantId);
+    } else {
+      query = query.is('variant_id', null);
+    }
+
+    const { error } = await query;
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to remove product from wishlist.' };
+  }
+}
+
 export async function clearWishlist(): Promise<{
   success: boolean;
   error?: string;

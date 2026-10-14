@@ -9,11 +9,11 @@ const siteUrl =
 
 export const metadata: Metadata = {
   title: {
-    template: '%s | Splender — The Jewel Gallery',
-    default: 'Splender — The Jewel Gallery | Timeless Elegance & Luxury Jewelry',
+    template: '%s | Splender Jewel',
+    default: 'Splender Jewel | Fashion Jewellery & Accessories — Sri Lanka',
   },
   description:
-    'Curated fine fashion jewelry collections for women and men. Discover gold-plated, tiger eye, pearl jewelry, rings, necklaces, bracelets, and earrings with islandwide home delivery in Sri Lanka.',
+    'Discover Splender Jewel — stylish fashion jewellery and accessories based in Negombo, Sri Lanka. Elegance, modern trends, and timeless style with Islandwide Delivery.',
   metadataBase: new URL(siteUrl),
   icons: {
     icon: '/images/logo.png',
@@ -22,13 +22,13 @@ export const metadata: Metadata = {
   openGraph: {
     type: 'website',
     locale: 'en_LK',
-    siteName: 'Splender — The Jewel Gallery',
+    siteName: 'Splender Jewel',
     images: [
       {
         url: '/images/logo.png',
         width: 800,
         height: 800,
-        alt: 'Splender — The Jewel Gallery',
+        alt: 'Splender Jewel',
       },
     ],
   },

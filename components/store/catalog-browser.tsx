@@ -106,11 +106,11 @@ export function CatalogBrowser({
       {/* Category / Catalog Header */}
       <div className="border-b border-luxury-border pb-6 text-center max-w-2xl mx-auto">
         <h1 className="text-3xl sm:text-4xl font-serif text-white mb-2">
-          {categoryTitle || 'Fine Fashion Jewelry'}
+          {categoryTitle || 'Fashion Jewellery'}
         </h1>
         <p className="text-sm sm:text-base text-neutral-400">
           {categoryDescription ||
-            'Discover timeless elegance with Splender Jewel’s curated collections. Crafted with 18K gold-plating, pearls, and premium stones.'}
+            'Discover elegance and timeless style with Splender Jewel’s curated collections of fashion jewellery and accessories.'}
         </p>
       </div>
 
@@ -120,7 +120,7 @@ export function CatalogBrowser({
         <div className="relative flex-grow max-w-md">
           <Search className="h-4 w-4 absolute left-3 top-3 text-neutral-400" />
           <Input
-            placeholder="Search jewelry by name or material..."
+            placeholder="Search jewellery by name or collection..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="pl-9 bg-luxury-surface border-neutral-700 text-white text-sm"

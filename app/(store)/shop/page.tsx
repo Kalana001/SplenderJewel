@@ -6,8 +6,8 @@ import { Container } from '@/components/ui/container';
 export const revalidate = 300;
 
 export const metadata = {
-  title: 'Jewelry Catalog | Splender Jewel',
-  description: 'Explore the full fine fashion jewelry collection by Splender Jewel. 18K gold-plated rings, necklaces, bracelets, and earrings.',
+  title: 'Jewellery Catalog | Splender Jewel',
+  description: 'Explore the full fashion jewellery collection by Splender Jewel. Rings, necklaces, bracelets, and earrings with Islandwide Delivery.',
 };
 
 export default async function ShopPage() {
@@ -22,8 +22,8 @@ export default async function ShopPage() {
         <CatalogBrowser
           initialProducts={productsRes.products}
           categories={categories}
-          categoryTitle="All Jewelry Pieces"
-          categoryDescription="Explore our curated collection of fine fashion jewelry. Handcrafted with gold plating, premium pearls, and natural gemstones."
+          categoryTitle="All Jewellery Pieces"
+          categoryDescription="Explore our curated collection of fashion jewellery and accessories for everyday wear, gifting, and memorable occasions."
         />
       </Container>
     </div>

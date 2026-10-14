@@ -97,10 +97,10 @@ export default async function HomePage() {
                       </div>
                       <div>
                         <h3 className="font-serif text-sm sm:text-base font-semibold text-white tracking-wide">
-                          Curated Luxury
+                          Curated Fashion Jewellery
                         </h3>
                         <p className="text-xs text-neutral-400 mt-1 leading-relaxed">
-                          Carefully selected gold-plated, tiger eye, and pearl fashion jewelry designed with fine detail.
+                          Carefully selected fashion jewellery and accessories designed for everyday wear and special occasions.
                         </p>
                       </div>
                     </div>
@@ -111,10 +111,10 @@ export default async function HomePage() {
                       </div>
                       <div>
                         <h3 className="font-serif text-sm sm:text-base font-semibold text-white tracking-wide">
-                          Islandwide Home Delivery
+                          Islandwide Delivery
                         </h3>
                         <p className="text-xs text-neutral-400 mt-1 leading-relaxed">
-                          Safe, direct doorstep delivery across all 25 administrative districts of Sri Lanka.
+                          Safe, dependable delivery across Sri Lanka through Sri Lanka Post services.
                         </p>
                       </div>
                     </div>
@@ -128,7 +128,7 @@ export default async function HomePage() {
                           Personal Customer Care
                         </h3>
                         <p className="text-xs text-neutral-400 mt-1 leading-relaxed">
-                          Convenient Cash on Delivery and direct WhatsApp Bank Transfer support.
+                          Cash on Delivery (COD) and direct Bank Transfer payment options.
                         </p>
                       </div>
                     </div>

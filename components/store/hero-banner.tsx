@@ -64,10 +64,8 @@ export function HeroBanner({ banners, heroSection }: HeroBannerProps) {
             </span>
           </h1>
 
-          {/* Description */}
           <p className="mt-4 sm:mt-6 text-xs sm:text-sm md:text-base text-neutral-300 max-w-2xl mx-auto leading-relaxed font-light">
-            Discover exquisite fashion jewelry crafted for everyday distinction and special occasions.
-            Gold-plated designs, tiger eye, pearl jewelry, and bespoke modern accents for women and men.
+            Discover beautiful fashion jewellery and accessories bringing together elegance, modern trends, and timeless style for everyday wear and memorable occasions.
           </p>
 
           {/* Actions */}

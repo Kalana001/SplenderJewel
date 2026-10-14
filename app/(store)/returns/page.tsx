@@ -6,7 +6,7 @@ export const revalidate = 60;
 
 export const metadata = {
   title: 'Returns & Exchanges | Splender Jewel',
-  description: 'Quality guarantee and straightforward exchange policy for our fine jewelry collections.',
+  description: 'Returns and exchanges policy for Splender Jewel fashion jewellery and accessories.',
 };
 
 export default async function ReturnsPage() {
