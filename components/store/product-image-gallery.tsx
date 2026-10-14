@@ -22,6 +22,10 @@ export interface ProductImageGalleryProps {
   onActiveImageChange?: (image: ProductImage | null) => void;
 }
 
+import { filterGalleryImages } from '@/lib/catalog/gallery-logic';
+export { filterGalleryImages };
+
+
 export function ProductImageGallery({
   images,
   productName,
@@ -31,21 +35,9 @@ export function ProductImageGallery({
   isNewArrival,
   onActiveImageChange,
 }: ProductImageGalleryProps) {
-  // 1. Filter images for current variation:
-  // - Images explicitly associated with this variant
-  // - Product-level unassigned images (variantId is null/undefined)
-  // - Exclude images mapped to other distinct variants
+  // 1. Compute filtered images for current variation
   const filteredImages = useMemo(() => {
-    if (!images || images.length === 0) return [];
-    if (!selectedVariantId) return images;
-
-    const variantSpecific = images.filter((img) => img.variantId === selectedVariantId);
-    const generalImages = images.filter((img) => !img.variantId);
-
-    if (variantSpecific.length > 0) {
-      return [...variantSpecific, ...generalImages];
-    }
-    return generalImages.length > 0 ? generalImages : images;
+    return filterGalleryImages(images, selectedVariantId);
   }, [images, selectedVariantId]);
 
   const [activeIndex, setActiveIndex] = useState<number>(0);
@@ -60,56 +52,92 @@ export function ProductImageGallery({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const thumbnailRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
-  // 2. Synchronize active index when variant or images change
+  // Safe clamped active image
+  const safeActiveIndex =
+    filteredImages.length > 0
+      ? Math.max(0, Math.min(activeIndex, filteredImages.length - 1))
+      : 0;
+  const activeImage = filteredImages[safeActiveIndex] || null;
+
+  // Stable ref for parent callback to prevent re-triggering effects
+  const onActiveImageChangeRef = useRef(onActiveImageChange);
   useEffect(() => {
-    if (filteredImages.length === 0) {
-      setActiveIndex(0);
-      onActiveImageChange?.(null);
+    onActiveImageChangeRef.current = onActiveImageChange;
+  });
+
+  // Track previous variant ID to isolate variant-switch synchronization from ordinary navigation
+  const prevVariantIdRef = useRef<string | null | undefined>(selectedVariantId);
+
+  // Effect 1: Variation Change Synchronization
+  // Runs ONLY when selectedVariantId changes or images change
+  useEffect(() => {
+    // If variant hasn't changed, just ensure activeIndex is clamped if list shrank
+    if (prevVariantIdRef.current === selectedVariantId) {
+      setActiveIndex((prev) => {
+        if (filteredImages.length === 0) return 0;
+        return prev >= filteredImages.length ? filteredImages.length - 1 : prev;
+      });
       return;
     }
 
-    // If variant has specific image, target it first
+    // Variant changed: update tracked variant
+    prevVariantIdRef.current = selectedVariantId;
+
+    if (filteredImages.length === 0) {
+      setActiveIndex(0);
+      return;
+    }
+
+    // If new variant has a specific image in filteredImages, target it (typically index 0)
     if (selectedVariantId) {
       const variantIdx = filteredImages.findIndex((img) => img.variantId === selectedVariantId);
       if (variantIdx !== -1) {
         setActiveIndex(variantIdx);
-        onActiveImageChange?.(filteredImages[variantIdx]);
         return;
       }
     }
 
-    // Otherwise, check if active index is still within bounds; if not, prefer primary image
-    setActiveIndex((prev) => {
-      let nextIdx = prev;
-      if (nextIdx >= filteredImages.length) {
-        const primaryIdx = filteredImages.findIndex((img) => img.isPrimary);
-        nextIdx = primaryIdx !== -1 ? primaryIdx : 0;
-      }
-      onActiveImageChange?.(filteredImages[nextIdx]);
-      return nextIdx;
-    });
-  }, [filteredImages, selectedVariantId, onActiveImageChange]);
+    // If new variant has no specific image, default to primary image or 0
+    const primaryIdx = filteredImages.findIndex((img) => img.isPrimary);
+    setActiveIndex(primaryIdx !== -1 ? primaryIdx : 0);
+  }, [selectedVariantId, filteredImages]);
 
-  // Keep parent in sync when active index changes
-  const activeImage = filteredImages[activeIndex] || null;
+  // Effect 2: Synchronize activeImage with parent component outside of state updaters
+  const lastReportedImageRef = useRef<{ id: string | undefined; url: string | undefined } | null>(null);
 
+  useEffect(() => {
+    const currentId = activeImage?.id;
+    const currentUrl = activeImage?.url;
+
+    if (
+      !lastReportedImageRef.current ||
+      lastReportedImageRef.current.id !== currentId ||
+      lastReportedImageRef.current.url !== currentUrl
+    ) {
+      lastReportedImageRef.current = { id: currentId, url: currentUrl };
+      onActiveImageChangeRef.current?.(activeImage);
+    }
+  }, [activeImage]);
+
+  // Navigation handlers with functional updates (dependencies ONLY filteredImages.length)
   const handleSelectIndex = useCallback(
     (index: number) => {
       if (filteredImages.length === 0) return;
       const safeIndex = (index + filteredImages.length) % filteredImages.length;
       setActiveIndex(safeIndex);
-      onActiveImageChange?.(filteredImages[safeIndex]);
     },
-    [filteredImages, onActiveImageChange]
+    [filteredImages.length]
   );
 
   const handlePrev = useCallback(() => {
-    handleSelectIndex(activeIndex - 1);
-  }, [activeIndex, handleSelectIndex]);
+    if (filteredImages.length <= 1) return;
+    setActiveIndex((prev) => (prev - 1 + filteredImages.length) % filteredImages.length);
+  }, [filteredImages.length]);
 
   const handleNext = useCallback(() => {
-    handleSelectIndex(activeIndex + 1);
-  }, [activeIndex, handleSelectIndex]);
+    if (filteredImages.length <= 1) return;
+    setActiveIndex((prev) => (prev + 1) % filteredImages.length);
+  }, [filteredImages.length]);
 
   // Keyboard navigation on main gallery container
   const handleKeyDown = useCallback(
@@ -165,14 +193,14 @@ export function ProductImageGallery({
 
   // Auto-scroll active thumbnail into view
   useEffect(() => {
-    if (thumbnailRefs.current[activeIndex]) {
-      thumbnailRefs.current[activeIndex]?.scrollIntoView({
+    if (thumbnailRefs.current[safeActiveIndex]) {
+      thumbnailRefs.current[safeActiveIndex]?.scrollIntoView({
         behavior: 'smooth',
         block: 'nearest',
         inline: 'center',
       });
     }
-  }, [activeIndex]);
+  }, [safeActiveIndex]);
 
   // Lightbox keyboard controls & body scroll lock
   useEffect(() => {
@@ -288,7 +316,7 @@ export function ProductImageGallery({
         <div className="absolute bottom-3 right-3 flex items-center gap-2 z-10">
           {hasMultiple && (
             <div className="bg-black/75 backdrop-blur-sm text-neutral-300 font-mono text-xs px-2.5 py-1 rounded-sm border border-neutral-800 tracking-wider shadow-md">
-              {activeIndex + 1} / {filteredImages.length}
+              {safeActiveIndex + 1} / {filteredImages.length}
             </div>
           )}
 
@@ -310,7 +338,7 @@ export function ProductImageGallery({
       {hasMultiple && (
         <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none pt-0.5">
           {filteredImages.map((img, idx) => {
-            const isActive = idx === activeIndex;
+            const isActive = idx === safeActiveIndex;
             return (
               <button
                 key={img.id || `${img.url}-${idx}`}
@@ -352,7 +380,7 @@ export function ProductImageGallery({
               <span>{productName}</span>
               {hasMultiple && (
                 <span className="text-luxury-gold font-mono ml-3 text-xs">
-                  {activeIndex + 1} / {filteredImages.length}
+                  {safeActiveIndex + 1} / {filteredImages.length}
                 </span>
               )}
             </div>
@@ -442,7 +470,7 @@ export function ProductImageGallery({
                     setLightboxZoomed(false);
                   }}
                   className={`relative aspect-square w-14 rounded-sm overflow-hidden border-2 transition-all shrink-0 ${
-                    idx === activeIndex
+                    idx === safeActiveIndex
                       ? 'border-luxury-gold ring-1 ring-luxury-gold scale-105'
                       : 'border-neutral-800 opacity-50 hover:opacity-100'
                   }`}

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import {
   Package,
@@ -106,6 +106,14 @@ export function ProductDetailViewer({
   // Gallery image selection: default to primary image or first image
   const primaryImage = product.images.find((img) => img.isPrimary) || product.images[0] || null;
   const [activeImage, setActiveImage] = useState<ProductImage | null>(primaryImage);
+
+  // Memoized callback to prevent recreating on every render and avoid redundant parent state updates
+  const handleActiveImageChange = useCallback((img: ProductImage | null) => {
+    setActiveImage((prev) => {
+      if (prev?.id === img?.id && prev?.url === img?.url) return prev;
+      return img;
+    });
+  }, []);
 
   // Compute pricing for selected variant
   const currentPrice = selectedVariant
@@ -311,7 +319,7 @@ export function ProductDetailViewer({
           hasDiscount={hasDiscount}
           discountPercent={discountPercent}
           isNewArrival={product.isNewArrival}
-          onActiveImageChange={(img) => setActiveImage(img)}
+          onActiveImageChange={handleActiveImageChange}
         />
 
 
