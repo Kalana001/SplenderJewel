@@ -1,7 +1,22 @@
 'use client';
 
-import React, { useState, useTransition } from 'react';
-import { Layers, Plus, Edit2, Trash2, CheckCircle2, XCircle, AlertCircle, Eye, EyeOff, Loader2 } from 'lucide-react';
+import React, { useState, useRef, useTransition } from 'react';
+import {
+  Layers,
+  Plus,
+  Edit2,
+  Trash2,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  Eye,
+  EyeOff,
+  Loader2,
+  Upload,
+  Image as ImageIcon,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -13,6 +28,7 @@ import {
   deleteCategoryAction,
   generateCategorySlug,
 } from '@/lib/catalog/categories';
+import { uploadCategoryImageFile } from '@/lib/catalog/upload-client';
 
 interface CategoriesManagerProps {
   initialCategories: CategoryWithProductCount[];
@@ -37,9 +53,16 @@ export function CategoriesManager({ initialCategories }: CategoriesManagerProps)
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Image Upload state
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [imageUploadError, setImageUploadError] = useState<string | null>(null);
+  const [showManualUrl, setShowManualUrl] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   // Delete confirmation
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
 
   function resetForm() {
     setEditingId(null);
@@ -53,6 +76,9 @@ export function CategoriesManager({ initialCategories }: CategoriesManagerProps)
     });
     setSlugManual(false);
     setErrorMessage(null);
+    setImageUploadError(null);
+    setIsUploadingImage(false);
+    setShowManualUrl(false);
   }
 
   function handleOpenCreate() {
@@ -72,8 +98,38 @@ export function CategoriesManager({ initialCategories }: CategoriesManagerProps)
     });
     setSlugManual(true);
     setErrorMessage(null);
+    setImageUploadError(null);
+    setIsUploadingImage(false);
+    setShowManualUrl(false);
     setModalOpen(true);
   }
+
+  async function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImageUploadError(null);
+    setIsUploadingImage(true);
+
+    try {
+      const res = await uploadCategoryImageFile(file);
+      if (!res.success || !res.url) {
+        setImageUploadError(res.error || 'Failed to upload category image.');
+        return;
+      }
+      setFormData((prev) => ({ ...prev, imageUrl: res.url! }));
+    } catch (err: unknown) {
+      setImageUploadError(
+        err instanceof Error ? err.message : 'An error occurred during category image upload.'
+      );
+    } finally {
+      setIsUploadingImage(false);
+      if (e.target) {
+        e.target.value = '';
+      }
+    }
+  }
+
 
   async function handleNameChange(name: string) {
     setFormData((prev) => ({
@@ -427,17 +483,148 @@ export function CategoriesManager({ initialCategories }: CategoriesManagerProps)
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-neutral-300 mb-1">
-                  Banner / Image URL (Optional)
+              {/* Category Image Section */}
+              <div className="space-y-2">
+                <label className="block text-xs font-medium text-neutral-300">
+                  Category Image / Cover (Optional)
                 </label>
-                <Input
-                  value={formData.imageUrl}
-                  onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
-                  placeholder="https://... or uploaded image URL"
-                  className="bg-luxury-surface border-neutral-700 text-white text-sm"
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  className="hidden"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleImageFileChange}
                 />
+
+                {formData.imageUrl ? (
+                  <div className="relative rounded-md border border-neutral-700 bg-neutral-900 overflow-hidden group">
+                    <div className="relative aspect-[16/9] w-full max-h-48 flex items-center justify-center bg-black/40">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={formData.imageUrl}
+                        alt="Category preview"
+                        className="w-full h-full object-cover"
+                      />
+                      {isUploadingImage && (
+                        <div className="absolute inset-0 bg-black/75 flex flex-col items-center justify-center gap-2 text-white">
+                          <Loader2 className="h-6 w-6 animate-spin text-luxury-gold" />
+                          <span className="text-xs font-medium">Uploading replacement image...</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="p-2.5 bg-luxury-surface/90 flex items-center justify-between gap-2 border-t border-neutral-800">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isUploadingImage || isPending}
+                        className="text-xs h-8"
+                      >
+                        <Upload className="h-3.5 w-3.5 mr-1.5" />
+                        Replace Image
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setFormData((prev) => ({ ...prev, imageUrl: '' }))}
+                        disabled={isUploadingImage || isPending}
+                        className="text-xs h-8 text-rose-400 hover:text-rose-300 hover:bg-rose-950/40"
+                      >
+                        <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                        Remove Image
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <div
+                      onClick={() => !isUploadingImage && fileInputRef.current?.click()}
+                      className={`border-2 border-dashed rounded-md p-6 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${
+                        isUploadingImage
+                          ? 'border-luxury-gold/50 bg-luxury-surface/40 cursor-wait'
+                          : 'border-neutral-700 hover:border-luxury-gold/60 bg-luxury-surface/20 hover:bg-luxury-surface/40'
+                      }`}
+                    >
+                      {isUploadingImage ? (
+                        <>
+                          <Loader2 className="h-8 w-8 animate-spin text-luxury-gold" />
+                          <span className="text-xs font-medium text-neutral-300">
+                            Uploading image directly to storage...
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <div className="p-3 rounded-full bg-neutral-800/80 text-luxury-gold">
+                            <Upload className="h-5 w-5" />
+                          </div>
+                          <div className="text-center">
+                            <span className="text-sm font-medium text-white block">
+                              Click to choose an image
+                            </span>
+                            <span className="text-xs text-neutral-400 block mt-0.5">
+                              JPEG, PNG, or WebP up to 5MB
+                            </span>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              fileInputRef.current?.click();
+                            }}
+                            className="mt-1 text-xs border-luxury-gold/40 text-luxury-gold hover:bg-luxury-gold/10"
+                          >
+                            <ImageIcon className="h-3.5 w-3.5 mr-1.5" />
+                            Choose Image
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {imageUploadError && (
+                  <div className="flex items-center gap-2 p-2.5 bg-rose-950/30 border border-rose-800/40 rounded-sm text-xs text-rose-300">
+                    <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+                    <span>{imageUploadError}</span>
+                  </div>
+                )}
+
+                {/* Optional manual URL accordion disclosure */}
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowManualUrl(!showManualUrl)}
+                    className="text-[11px] text-neutral-400 hover:text-neutral-200 flex items-center gap-1 transition-colors"
+                  >
+                    {showManualUrl ? (
+                      <ChevronUp className="h-3 w-3" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3" />
+                    )}
+                    <span>Advanced: Manual image URL</span>
+                  </button>
+
+                  {showManualUrl && (
+                    <div className="mt-2 pl-2 border-l border-neutral-700 space-y-1">
+                      <Input
+                        value={formData.imageUrl}
+                        onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
+                        placeholder="https://... or uploaded image URL"
+                        className="bg-luxury-surface border-neutral-700 text-white text-xs h-8 font-mono"
+                      />
+                      <span className="text-[10px] text-neutral-500 block">
+                        Direct public URL to category image.
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
+
 
               <div className="pt-3 flex items-center justify-end gap-3 border-t border-luxury-border">
                 <Button

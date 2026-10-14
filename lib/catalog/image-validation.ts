@@ -70,3 +70,13 @@ export function generateCatalogStoragePath(mimeType: string): string {
   const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   return `catalog/${uniqueSuffix}.${ext}`;
 }
+
+/**
+ * Generates a collision-resistant category storage path for Supabase Storage 'products' bucket.
+ * e.g. categories/1791987654321-abc1234.jpg
+ */
+export function generateCategoryStoragePath(mimeType: string): string {
+  const ext = getImageExtension(mimeType);
+  const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  return `categories/${uniqueSuffix}.${ext}`;
+}

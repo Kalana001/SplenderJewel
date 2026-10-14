@@ -27,6 +27,7 @@ import { useCart } from '@/lib/cart/cart-context';
 import { checkVariantAvailabilityAction } from '@/lib/cart/actions';
 import { addToWishlist, removeProductFromWishlist } from '@/lib/wishlist/actions';
 import type { ProductPublic, ProductVariantPublic, ProductImage } from '@/types/product';
+import { ProductImageGallery } from '@/components/store/product-image-gallery';
 
 interface ProductDetailViewerProps {
   product: ProductPublic;
@@ -303,61 +304,16 @@ export function ProductDetailViewer({
       {/* Main Product Showcase (2 Columns) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-14">
         {/* LEFT COLUMN: IMAGE GALLERY */}
-        <div className="space-y-4">
-          {/* Main Large Image Container */}
-          <div className="relative aspect-square w-full bg-neutral-900 border border-luxury-border rounded-sm overflow-hidden shadow-2xl">
-            {activeImage ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={activeImage.url}
-                alt={activeImage.altText || product.name}
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <div className="w-full h-full flex flex-col items-center justify-center bg-luxury-surface text-neutral-600">
-                <Package className="h-16 w-16 text-luxury-gold/30 mb-2" />
-                <span className="text-xs uppercase tracking-widest text-neutral-500 font-mono">
-                  Splender Jewel
-                </span>
-              </div>
-            )}
+        <ProductImageGallery
+          images={product.images}
+          productName={product.name}
+          selectedVariantId={selectedVariant?.id}
+          hasDiscount={hasDiscount}
+          discountPercent={discountPercent}
+          isNewArrival={product.isNewArrival}
+          onActiveImageChange={(img) => setActiveImage(img)}
+        />
 
-            {/* Badges Overlay */}
-            <div className="absolute top-3 left-3 flex flex-col gap-1.5 z-10">
-              {hasDiscount && (
-                <span className="bg-luxury-ruby text-white text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-sm shadow-md shadow-luxury-ruby/20 border border-luxury-ruby-light/30">
-                  -{discountPercent}% OFF
-                </span>
-              )}
-              {product.isNewArrival && (
-                <span className="bg-luxury-black/90 text-luxury-gold border border-luxury-gold/40 text-xs font-semibold uppercase tracking-wider px-2.5 py-1 rounded-sm backdrop-blur-sm">
-                  New Arrival
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Thumbnails Row */}
-          {product.images.length > 1 && (
-            <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none">
-              {product.images.map((img) => (
-                <button
-                  key={img.id}
-                  type="button"
-                  onClick={() => setActiveImage(img)}
-                  className={`relative aspect-square w-20 rounded-sm overflow-hidden border-2 transition-all shrink-0 ${
-                    activeImage?.id === img.id
-                      ? 'border-luxury-gold ring-1 ring-luxury-gold scale-105'
-                      : 'border-neutral-800 hover:border-neutral-600 opacity-70 hover:opacity-100'
-                  }`}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={img.url} alt={img.altText || 'Thumbnail'} className="w-full h-full object-cover" />
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
 
         {/* RIGHT COLUMN: PRODUCT DETAILS & PURCHASE ACTIONS */}
         <div className="space-y-6 flex flex-col justify-start">

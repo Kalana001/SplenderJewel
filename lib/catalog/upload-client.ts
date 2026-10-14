@@ -1,7 +1,10 @@
 import { createClient } from '@/lib/supabase/client';
 import {
   createProductImageUploadUrlAction,
+  createCategoryImageUploadUrlAction,
   type UploadImageResult,
+  type CreateSignedUploadUrlInput,
+  type CreateSignedUploadUrlResult,
 } from '@/lib/catalog/storage';
 import {
   MAX_IMAGE_FILE_SIZE,
@@ -12,20 +15,15 @@ import {
 export { MAX_IMAGE_FILE_SIZE, ALLOWED_IMAGE_MIME_TYPES, validateImageFile };
 
 /**
- * Robust client-side product image uploader using authenticated signed direct uploads.
- *
- * Architecture:
- * 1. Immediate client-side validation for file size (<= 5MB) and MIME type (JPEG, PNG, WebP).
- * 2. Authenticated Signed Direct-Upload to Supabase Storage:
- *    - Requests a single-use signed upload URL bound to an isolated catalog path from the server.
- *    - Uploads the image binary directly to Supabase Storage from the browser.
- *    - Completely bypasses Vercel Serverless Function payload limits (4.5MB).
- *    - Completely bypasses Next.js Server Action body parsing bottlenecks.
- *    - Service-role key remains strictly on the server; client authenticates using the scoped signed token.
- * 3. Fail-closed: If signing or direct upload fails, reports a clear error immediately to allow retry.
- *    No silent fallback to multipart Server Actions.
+ * Shared client-side direct-to-storage signed uploader.
+ * Validates file on client, calls server action to obtain signed upload token/URL,
+ * and performs binary upload directly to Supabase Storage.
  */
-export async function uploadProductImageFile(file: File): Promise<UploadImageResult> {
+async function uploadFileUsingSignedAction(
+  file: File,
+  entityLabel: string,
+  createSignedUrlFn: (input: CreateSignedUploadUrlInput) => Promise<CreateSignedUploadUrlResult>
+): Promise<UploadImageResult> {
   // 1. Client-side validation
   const validation = validateImageFile(file);
   if (!validation.valid) {
@@ -33,9 +31,9 @@ export async function uploadProductImageFile(file: File): Promise<UploadImageRes
   }
 
   // 2. Request authenticated signed upload URL from server
-  let signRes;
+  let signRes: CreateSignedUploadUrlResult;
   try {
-    signRes = await createProductImageUploadUrlAction({
+    signRes = await createSignedUrlFn({
       filename: file.name,
       contentType: file.type,
       fileSize: file.size,
@@ -45,7 +43,7 @@ export async function uploadProductImageFile(file: File): Promise<UploadImageRes
     const isMaskedRenderError = rawMsg.includes('Server Components render') || rawMsg.includes('Failed to find Server Action');
     const displayMsg = isMaskedRenderError
       ? 'Authorization request failed (session may be stale). Please refresh the page and verify your administrator login.'
-      : (rawMsg || 'Failed to authorize image upload. Please ensure you are logged in as an administrator.');
+      : (rawMsg || `Failed to authorize ${entityLabel} image upload. Please ensure you are logged in as an administrator.`);
 
     return {
       success: false,
@@ -66,7 +64,7 @@ export async function uploadProductImageFile(file: File): Promise<UploadImageRes
       return {
         success: false,
         code: 'FORBIDDEN',
-        error: 'Access denied: Active administrative privileges are required to upload product images.',
+        error: `Access denied: Active administrative privileges are required to upload ${entityLabel} images.`,
       };
     }
     if (signRes.code === 'CONFIGURATION_ERROR') {
@@ -79,7 +77,7 @@ export async function uploadProductImageFile(file: File): Promise<UploadImageRes
     return {
       success: false,
       code: signRes.code || 'UPLOAD_FAILED',
-      error: signRes.error || 'Failed to authorize image upload with storage.',
+      error: signRes.error || `Failed to authorize ${entityLabel} image upload with storage.`,
     };
   }
 
@@ -140,4 +138,18 @@ export async function uploadProductImageFile(file: File): Promise<UploadImageRes
           : 'Direct storage upload encountered an unexpected network error. Please retry.',
     };
   }
+}
+
+/**
+ * Robust client-side product image uploader using authenticated signed direct uploads.
+ */
+export async function uploadProductImageFile(file: File): Promise<UploadImageResult> {
+  return uploadFileUsingSignedAction(file, 'product', createProductImageUploadUrlAction);
+}
+
+/**
+ * Robust client-side category image uploader using authenticated signed direct uploads.
+ */
+export async function uploadCategoryImageFile(file: File): Promise<UploadImageResult> {
+  return uploadFileUsingSignedAction(file, 'category', createCategoryImageUploadUrlAction);
 }

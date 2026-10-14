@@ -9,6 +9,7 @@ import type { ProductImage } from '@/types/product';
 import {
   validateImageFile,
   generateCatalogStoragePath,
+  generateCategoryStoragePath,
 } from '@/lib/catalog/image-validation';
 
 const BUCKET_NAME = 'products';
@@ -135,6 +136,93 @@ export async function createProductImageUploadUrlAction(
       success: false,
       code: 'UPLOAD_FAILED',
       error: 'An unexpected error occurred while preparing image upload. Please retry.',
+    };
+  }
+}
+
+/**
+ * Generates an authenticated signed upload URL for category images in the 'products' storage bucket.
+ * Uses the isolated 'categories/' prefix.
+ * Allows client browser to directly upload category images up to 5MB, bypassing Vercel serverless function payload limits.
+ * Differentiates UNAUTHENTICATED, FORBIDDEN, CONFIGURATION_ERROR, STORAGE_ERROR, and UPLOAD_FAILED.
+ */
+export async function createCategoryImageUploadUrlAction(
+  input: CreateSignedUploadUrlInput
+): Promise<CreateSignedUploadUrlResult> {
+  try {
+    // 1. Admin Authentication & Role Verification (UNAUTHENTICATED / FORBIDDEN)
+    try {
+      await requireAdminAuth();
+    } catch (authErr: unknown) {
+      const isAuthError = authErr instanceof Error && authErr.name === 'AdminAuthError';
+      const code = (isAuthError && (authErr as any).code === 'FORBIDDEN') ? 'FORBIDDEN' : 'UNAUTHENTICATED';
+      const message = authErr instanceof Error
+        ? authErr.message
+        : 'Authentication required. Please sign in as an administrator.';
+      return { success: false, code, error: message };
+    }
+
+    // 2. Server Environment & Client Initialization (CONFIGURATION_ERROR)
+    let adminClient;
+    try {
+      adminClient = createAdminClient();
+    } catch (configErr: unknown) {
+      console.error('[Storage Action] Server configuration error:', configErr instanceof Error ? configErr.message : 'Missing configuration');
+      return {
+        success: false,
+        code: 'CONFIGURATION_ERROR',
+        error: 'Storage service configuration error on server.',
+      };
+    }
+
+    // 3. Payload Validation (UPLOAD_FAILED)
+    const validation = validateImageFile({
+      name: input?.filename,
+      size: input?.fileSize,
+      type: input?.contentType,
+    });
+    if (!validation.valid) {
+      return {
+        success: false,
+        code: 'UPLOAD_FAILED',
+        error: validation.error || 'Invalid image file provided.',
+      };
+    }
+
+    // 4. Generate Storage Path under categories/
+    const storagePath = generateCategoryStoragePath(input.contentType);
+
+    // 5. Create Signed Upload URL in Supabase Storage (STORAGE_ERROR)
+    const { data, error } = await adminClient.storage
+      .from(BUCKET_NAME)
+      .createSignedUploadUrl(storagePath);
+
+    if (error || !data) {
+      console.error('[Storage Action] createSignedUploadUrl failed for path:', storagePath, 'Error:', error?.message);
+      return {
+        success: false,
+        code: 'STORAGE_ERROR',
+        error: `Storage service error: ${error?.message || 'Failed to create signed upload token.'}`,
+      };
+    }
+
+    const { data: urlData } = adminClient.storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(storagePath);
+
+    return {
+      success: true,
+      signedUrl: data.signedUrl,
+      path: storagePath,
+      token: data.token,
+      publicUrl: urlData.publicUrl,
+    };
+  } catch (err: unknown) {
+    console.error('[Storage Action] Unexpected error:', err instanceof Error ? err.message : 'Unknown error');
+    return {
+      success: false,
+      code: 'UPLOAD_FAILED',
+      error: 'An unexpected error occurred while preparing category image upload. Please retry.',
     };
   }
 }
@@ -443,11 +531,14 @@ export async function deleteProductImageAction(
  * Strictly verifies:
  * 1. String length and absence of null bytes (%00, \0), path traversal (..), or backslashes (\).
  * 2. Origin matches the configured NEXT_PUBLIC_SUPABASE_URL (rejects arbitrary hostnames).
- * 3. Exact expected public Storage URL structure: /storage/v1/object/public/products/catalog/
+ * 3. Exact expected public Storage URL structure: /storage/v1/object/public/products/<dir>/<filename>
  * 4. Rejects repeated slashes (//) and malformed percent-encoding.
- * 5. Rejects paths outside catalog/ and filenames not conforming to supported naming convention.
+ * 5. Rejects paths outside allowed directories and filenames not conforming to supported naming convention.
  */
-function extractAndValidateCatalogPath(imageUrl: string): string | null {
+function extractAndValidateStoragePath(
+  imageUrl: string,
+  allowedDirs: ('catalog' | 'categories')[] = ['catalog', 'categories']
+): string | null {
   if (!imageUrl || typeof imageUrl !== 'string') return null;
 
   const raw = imageUrl.trim();
@@ -497,15 +588,22 @@ function extractAndValidateCatalogPath(imageUrl: string): string | null {
     return null;
   }
 
-  // Require exact expected public Storage URL structure for the 'products' bucket and 'catalog/' directory
-  const expectedPrefix = `/storage/v1/object/public/${BUCKET_NAME}/catalog/`;
-  if (!decodedPathname.startsWith(expectedPrefix)) {
+  // Require exact expected public Storage URL structure for the 'products' bucket
+  const baseBucketPrefix = `/storage/v1/object/public/${BUCKET_NAME}/`;
+  if (!decodedPathname.startsWith(baseBucketPrefix)) {
     return null;
   }
 
-  const filename = decodedPathname.slice(expectedPrefix.length);
-  // Filename must not contain any slashes (no subdirectories permitted inside catalog/)
-  if (!filename || filename.includes('/')) return null;
+  const relative = decodedPathname.slice(baseBucketPrefix.length);
+  const parts = relative.split('/');
+  if (parts.length !== 2) {
+    return null;
+  }
+
+  const [dir, filename] = parts;
+  if (!allowedDirs.includes(dir as any)) {
+    return null;
+  }
 
   // Supported naming convention: accommodates upload generator (timestamp-suffix.ext)
   // as well as standard catalog alphanumeric/hyphen/underscore legacy filenames
@@ -514,8 +612,13 @@ function extractAndValidateCatalogPath(imageUrl: string): string | null {
     return null;
   }
 
-  return `catalog/${filename}`;
+  return `${dir}/${filename}`;
 }
+
+function extractAndValidateCatalogPath(imageUrl: string): string | null {
+  return extractAndValidateStoragePath(imageUrl, ['catalog']);
+}
+
 
 /**
  * Checks whether an object path is referenced anywhere across all confirmed image-bearing tables:
@@ -702,3 +805,51 @@ export async function deleteUnattachedProductImageAction(
   }
 }
 
+/**
+ * Safely cleans up an uploaded category image that has NOT yet been attached or referenced in the catalog.
+ */
+export async function deleteUnattachedCategoryImageAction(
+  imageUrl: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await requireAdminAuth();
+    const adminClient = createAdminClient();
+
+    if (!imageUrl?.trim()) {
+      return { success: false, error: 'Image URL is required.' };
+    }
+
+    const storagePath = extractAndValidateStoragePath(imageUrl, ['categories']);
+    if (!storagePath) {
+      return { success: false, error: 'Malformed, unrecognized, or unauthorized storage object URL/path.' };
+    }
+
+    // STRICT SAFETY CHECK: Ensure NO database record references this image across any table
+    const { referenced, error: checkError } = await isStorageObjectReferenced(adminClient, storagePath);
+    if (checkError) {
+      return { success: false, error: checkError };
+    }
+
+    if (referenced) {
+      return {
+        success: false,
+        error: 'Cannot delete: this image is referenced by an existing product, category, order, or banner record in the catalog.',
+      };
+    }
+
+    const { error: removeError } = await adminClient.storage
+      .from(BUCKET_NAME)
+      .remove([storagePath]);
+
+    if (removeError) {
+      return { success: false, error: removeError.message };
+    }
+
+    return { success: true };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to delete unattached category image.',
+    };
+  }
+}
