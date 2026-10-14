@@ -1,11 +1,15 @@
 import 'server-only';
+import { cache } from 'react';
+import { redirect } from 'next/navigation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import type { UserProfile, AdminUser } from '@/types/auth';
 
 /**
  * Returns the currently authenticated Supabase Auth user, or null if unauthenticated.
+ * Uses request-scoped deduplication via React.cache so repeated calls within
+ * a single request/render cycle do not re-fetch from Supabase Auth.
  */
-export async function getCurrentUser() {
+export const getCurrentUser = cache(async function getCurrentUser() {
   const supabase = await createServerSupabaseClient();
   if (!supabase) return null;
 
@@ -19,12 +23,13 @@ export async function getCurrentUser() {
   }
 
   return user;
-}
+});
 
 /**
  * Returns the customer profile for the currently authenticated user.
+ * Uses request-scoped deduplication via React.cache.
  */
-export async function getCurrentProfile(): Promise<UserProfile | null> {
+export const getCurrentProfile = cache(async function getCurrentProfile(): Promise<UserProfile | null> {
   const user = await getCurrentUser();
   if (!user) return null;
 
@@ -64,13 +69,14 @@ export async function getCurrentProfile(): Promise<UserProfile | null> {
     createdAt: profile.created_at,
     updatedAt: profile.updated_at,
   };
-}
+});
 
 /**
  * Verifies if the currently authenticated user is an authorized active admin.
  * Evaluates the `public.admin_users` table server-side.
+ * Uses request-scoped deduplication via React.cache to eliminate repeated DB queries.
  */
-export async function getAdminUser(): Promise<AdminUser | null> {
+export const getAdminUser = cache(async function getAdminUser(): Promise<AdminUser | null> {
   const user = await getCurrentUser();
   if (!user) return null;
 
@@ -107,9 +113,7 @@ export async function getAdminUser(): Promise<AdminUser | null> {
     createdAt: adminRecord.created_at,
     updatedAt: adminRecord.updated_at,
   };
-}
-
-import { redirect } from 'next/navigation';
+});
 
 /**
  * Structured Admin Authorization Error distinguishing unauthenticated vs forbidden access.
@@ -142,6 +146,7 @@ export async function requireCustomerAuth(): Promise<UserProfile> {
  * Throws a clean AdminAuthError if caller is not an authorized administrator.
  * Distinguishes unauthenticated from forbidden (inactive or non-admin customer).
  * Used by privileged server actions and mutations.
+ * Leverages cached request-scoped auth functions.
  */
 export async function requireAdminAuth(): Promise<AdminUser> {
   const user = await getCurrentUser();
@@ -162,6 +167,7 @@ export async function requireAdminAuth(): Promise<AdminUser> {
  * Evaluates `public.admin_users` table server-side.
  * Redirects unauthenticated users cleanly to `/admin/login`, and ordinary customers to `/admin/login?error=unauthorized`.
  * Prevents rendering of any protected admin UI or data.
+ * Leverages cached request-scoped auth functions.
  */
 export async function requireAdminPageAuth(): Promise<AdminUser> {
   const user = await getCurrentUser();

@@ -17,6 +17,7 @@ import {
   Save,
   Check,
   Send,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +32,7 @@ import {
 import {
   updateOrderStatusAction,
   updatePaymentStatusAction,
+  confirmCodPaymentAction,
   updateAdminNotesAction,
   updateTrackingNumberAction,
 } from '@/lib/orders/admin-actions';
@@ -119,6 +121,51 @@ export function OrderFulfillmentManager({ order: initialOrder }: OrderFulfillmen
     }
   }
 
+  // COD Settlement Modal State
+  const [showCodModal, setShowCodModal] = useState(false);
+  const [courierName, setCourierName] = useState('');
+  const [settlementRef, setSettlementRef] = useState(order.tracking_number || '');
+  const [receiptDate, setReceiptDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [settlementNotes, setSettlementNotes] = useState('');
+  const [confirmCheckbox, setConfirmCheckbox] = useState(false);
+  const [isSubmittingCod, setIsSubmittingCod] = useState(false);
+  const [codError, setCodError] = useState<string | null>(null);
+
+  async function handleConfirmCodSettlement() {
+    if (!confirmCheckbox) return;
+    if (order.order_status !== 'delivered') {
+      setCodError('Order must be marked as delivered before COD payment can be confirmed.');
+      return;
+    }
+
+    setIsSubmittingCod(true);
+    setCodError(null);
+    try {
+      const res = await confirmCodPaymentAction({
+        orderId: order.id,
+        courierName: courierName.trim() || undefined,
+        settlementReference: settlementRef.trim() || undefined,
+        receiptDate: receiptDate.trim() || undefined,
+        notes: settlementNotes.trim() || undefined,
+        confirmedByUser: true,
+      });
+
+      if (res.success) {
+        setOrder((prev: any) => ({
+          ...prev,
+          payment_status: PAYMENT_STATUSES.VERIFIED,
+        }));
+        setShowCodModal(false);
+      } else {
+        setCodError(res.error || 'Failed to confirm COD settlement.');
+      }
+    } catch (err: unknown) {
+      setCodError('An unexpected error occurred.');
+    } finally {
+      setIsSubmittingCod(false);
+    }
+  }
+
   // Save internal admin notes
   async function handleSaveAdminNotes() {
     setIsSavingNotes(true);
@@ -171,7 +218,9 @@ export function OrderFulfillmentManager({ order: initialOrder }: OrderFulfillmen
   const whatsAppCustomerUrl = `https://wa.me/${whatsAppPhone}?text=${whatsAppStatusMessage}`;
 
   const isBankTransfer = order.payment_method === 'bank_transfer';
+  const isCod = order.payment_method === 'cod';
   const isPaymentPending = order.payment_status === 'pending';
+  const isDelivered = order.order_status === 'delivered';
 
   return (
     <div className="space-y-8">
@@ -307,6 +356,74 @@ export function OrderFulfillmentManager({ order: initialOrder }: OrderFulfillmen
           ) : (
             <Badge variant="outline" className="border-emerald-600 bg-emerald-950 text-emerald-400 font-bold uppercase text-xs">
               ✓ Verified & Paid
+            </Badge>
+          )}
+        </div>
+      )}
+
+      {/* COD Payment Settlement Alert Box */}
+      {isCod && (
+        <div
+          className={`p-5 rounded-lg border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${
+            isPaymentPending
+              ? isDelivered
+                ? 'bg-amber-950/50 border-amber-500/80 text-amber-200'
+                : 'bg-neutral-900 border-neutral-800 text-neutral-200'
+              : 'bg-emerald-950/40 border-emerald-800/80 text-emerald-200'
+          }`}
+        >
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Truck className="h-4 w-4 text-luxury-gold" />
+              <strong className="font-semibold text-sm">
+                Payment Method: Cash on Delivery (COD)
+              </strong>
+            </div>
+            <p className="text-xs text-neutral-300">
+              {isPaymentPending ? (
+                isDelivered ? (
+                  <span className="text-amber-300 font-medium">
+                    ⚠️ Parcel is Delivered, but COD Payment is NOT Yet Settled. Delivered does NOT mean Paid.
+                    Confirm receipt of courier funds once remitted to mark as paid.
+                  </span>
+                ) : (
+                  'Courier will collect funds upon delivery. Splender Jewel must explicitly confirm receipt of the COD funds from the courier before marking as paid.'
+                )
+              ) : (
+                'COD payment settlement confirmed and funds received by Splender Jewel.'
+              )}
+            </p>
+          </div>
+
+          {isPaymentPending ? (
+            isDelivered ? (
+              <Button
+                variant="gold"
+                size="sm"
+                disabled={isUpdatingPayment}
+                onClick={() => {
+                  setConfirmCheckbox(false);
+                  setCodError(null);
+                  setShowCodModal(true);
+                }}
+                className="font-semibold text-xs whitespace-nowrap"
+              >
+                Confirm Payment Received
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled
+                className="text-xs font-normal text-neutral-500 border-neutral-800 bg-neutral-950/50 cursor-not-allowed whitespace-nowrap"
+                title="Order must be delivered before COD payment can be confirmed"
+              >
+                Awaiting Delivery
+              </Button>
+            )
+          ) : (
+            <Badge variant="outline" className="border-emerald-600 bg-emerald-950 text-emerald-400 font-bold uppercase text-xs">
+              ✓ Settled & Paid
             </Badge>
           )}
         </div>
@@ -576,6 +693,174 @@ export function OrderFulfillmentManager({ order: initialOrder }: OrderFulfillmen
           </div>
         </div>
       </div>
+
+      {/* COD SETTLEMENT CONFIRMATION MODAL */}
+      {showCodModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-lg max-w-lg w-full p-6 space-y-5 shadow-2xl">
+            {/* Header */}
+            <div className="flex items-start justify-between border-b border-neutral-800 pb-4">
+              <div>
+                <h3 className="text-lg font-serif font-bold text-white flex items-center gap-2">
+                  <Truck className="h-5 w-5 text-luxury-gold" />
+                  <span>Confirm COD Settlement Received</span>
+                </h3>
+                <p className="text-xs text-neutral-400 mt-1">
+                  Order <strong className="text-white font-mono">{order.order_number}</strong> • Customer: {order.customer_name}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowCodModal(false)}
+                className="text-neutral-400 hover:text-white transition-colors p-1"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Warning Callout */}
+            <div className="bg-amber-950/40 border border-amber-800/80 rounded p-3 text-xs text-amber-200 space-y-1">
+              <strong>CRITICAL BUSINESS RULE: Delivered does NOT mean Paid.</strong>
+              <p className="text-[11px] text-amber-300/90 leading-relaxed">
+                Only confirm this order after Splender Jewel has physically received the cash remittance from the courier partner.
+              </p>
+            </div>
+
+            {/* Financial Summary Card */}
+            <div className="grid grid-cols-2 gap-3 text-xs bg-neutral-950 p-3.5 rounded border border-neutral-800">
+              <div>
+                <span className="text-neutral-400 block">Expected COD Amount:</span>
+                <span className="text-base font-bold text-luxury-gold font-mono">
+                  {formatCurrency(order.total_amount)}
+                </span>
+              </div>
+              <div>
+                <span className="text-neutral-400 block">Current Delivery Status:</span>
+                <span className="font-semibold text-white capitalize">{order.order_status}</span>
+              </div>
+            </div>
+
+            {/* Input Form Fields */}
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="text-neutral-300 font-semibold block mb-1">
+                  Courier Partner Name (Optional):
+                </label>
+                <Input
+                  type="text"
+                  placeholder="e.g. PromptX, Pronto, Domex, Koombiyo, Certis Lanka..."
+                  value={courierName}
+                  onChange={(e) => setCourierName(e.target.value)}
+                  className="bg-neutral-950 border-neutral-700 text-white text-xs h-9"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-neutral-300 font-semibold block mb-1">
+                    Settlement / Voucher Ref:
+                  </label>
+                  <Input
+                    type="text"
+                    placeholder="e.g. REM-89412 or Cheque #"
+                    value={settlementRef}
+                    onChange={(e) => setSettlementRef(e.target.value)}
+                    className="bg-neutral-950 border-neutral-700 text-white text-xs h-9 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-neutral-300 font-semibold block mb-1">
+                    Funds Receipt Date:
+                  </label>
+                  <Input
+                    type="date"
+                    value={receiptDate}
+                    onChange={(e) => setReceiptDate(e.target.value)}
+                    className="bg-neutral-950 border-neutral-700 text-white text-xs h-9"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-neutral-300 font-semibold block mb-1">
+                  Administrative Notes (Optional):
+                </label>
+                <Input
+                  type="text"
+                  placeholder="e.g. Courier batch reconciled with bank deposit"
+                  value={settlementNotes}
+                  onChange={(e) => setSettlementNotes(e.target.value)}
+                  className="bg-neutral-950 border-neutral-700 text-white text-xs h-9"
+                />
+              </div>
+
+              {/* Delivery Prerequisite Non-Overridable Notice */}
+              {order.order_status !== 'delivered' && (
+                <div className="bg-amber-950/60 border border-amber-700/80 rounded p-3 text-xs space-y-1 text-amber-200">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-amber-400" />
+                    <div>
+                      <strong className="block text-amber-100">Delivery Confirmation Required</strong>
+                      <span className="text-[11px] leading-relaxed text-amber-300/90">
+                        This order is currently marked as <strong className="uppercase text-amber-100">{order.order_status}</strong>. COD remittance cannot be confirmed until the parcel has been delivered to the customer.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Mandatory Confirmation Checkbox */}
+              <div className="pt-1">
+                <label className="flex items-start gap-2.5 p-3 rounded bg-neutral-950 border border-neutral-800 cursor-pointer hover:border-neutral-700">
+                  <input
+                    type="checkbox"
+                    checked={confirmCheckbox}
+                    onChange={(e) => setConfirmCheckbox(e.target.checked)}
+                    disabled={order.order_status !== 'delivered'}
+                    className="h-4 w-4 mt-0.5 rounded border-neutral-700 text-luxury-gold focus:ring-luxury-gold bg-black disabled:opacity-50"
+                  />
+                  <span className="text-[11px] text-neutral-300 leading-snug">
+                    I confirm that Splender Jewel has physically received the funds ({formatCurrency(order.total_amount)}) from the courier service for this order.
+                  </span>
+                </label>
+              </div>
+
+              {codError && (
+                <div className="p-2.5 rounded bg-rose-950/60 border border-rose-800 text-rose-300 text-xs flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>{codError}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-neutral-800">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowCodModal(false)}
+                disabled={isSubmittingCod}
+                className="text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="gold"
+                size="sm"
+                onClick={handleConfirmCodSettlement}
+                disabled={
+                  !confirmCheckbox ||
+                  order.order_status !== 'delivered' ||
+                  isSubmittingCod
+                }
+                className="text-xs font-semibold"
+              >
+                {isSubmittingCod ? 'Recording Settlement...' : 'Confirm Payment Received'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

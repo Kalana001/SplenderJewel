@@ -4,28 +4,39 @@ import { Button } from '@/components/ui/button';
 import { getStoreConfig, getWhatsAppLink, getInstagramLink } from '@/lib/config/store';
 import { InstagramIcon } from '@/components/icons/instagram';
 import { MessageCircle, Shield, Truck, Clock } from 'lucide-react';
+import { getPublicContentPage } from '@/lib/cms/public';
+import { ContentPageViewer } from '@/components/store/content-page-viewer';
 
-export default function ContactPage() {
+export const revalidate = 60;
+
+export const metadata = {
+  title: 'Contact Us | Splender Jewel Concierge',
+  description: 'Connect with Splender Jewel concierge for personal care, custom orders, and islandwide delivery assistance.',
+};
+
+export default async function ContactPage() {
   const config = getStoreConfig();
+  const page = await getPublicContentPage('contact');
 
   return (
-    <div className="py-12 sm:py-16">
+    <div className="space-y-12 pb-16 sm:pb-20">
+      {/* CMS Managed Content Section */}
+      {page && <ContentPageViewer page={page} />}
+
+      {/* Primary Contact Channels & Direct Concierge CTA */}
       <Container size="lg">
-        {/* Header */}
-        <div className="text-center max-w-2xl mx-auto mb-12">
+        <div className="text-center max-w-2xl mx-auto mb-10">
           <span className="text-xs uppercase tracking-[0.25em] text-luxury-gold font-semibold">
-            Customer Care & Inquiries
+            Direct Concierge Channels
           </span>
-          <h1 className="font-serif text-3xl sm:text-4xl font-bold text-white mt-2 uppercase tracking-wide">
-            Contact Splender Jewel
-          </h1>
-          <p className="text-sm text-neutral-400 mt-3 leading-relaxed">
-            Have a question about our jewelry pieces, sizing, custom orders, or delivery?
-            Connect directly with our concierge team through our official channels.
+          <h2 className="font-serif text-2xl sm:text-3xl font-bold text-white mt-2 uppercase tracking-wide">
+            Instant Client Assistance
+          </h2>
+          <p className="text-xs sm:text-sm text-neutral-400 mt-2 leading-relaxed">
+            Connect directly with our master stylists for immediate sizing advice, high-resolution videos of pieces, and Bank Transfer verifications.
           </p>
         </div>
 
-        {/* Primary Contact Channels */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
           {/* WhatsApp Card */}
           <div className="p-6 sm:p-8 rounded-sm border border-neutral-800 bg-neutral-900/60 flex flex-col justify-between hover:border-luxury-gold/50 transition-colors">
@@ -33,9 +44,9 @@ export default function ContactPage() {
               <div className="h-12 w-12 rounded-full bg-luxury-gold/10 border border-luxury-gold/30 flex items-center justify-center text-luxury-gold">
                 <MessageCircle className="h-6 w-6" />
               </div>
-              <h2 className="font-serif text-xl font-semibold text-white">
+              <h3 className="font-serif text-xl font-semibold text-white">
                 WhatsApp Concierge
-              </h2>
+              </h3>
               <p className="text-xs text-neutral-400 leading-relaxed">
                 Connect directly for instant stock inquiries, high-resolution photos/videos of pieces, custom orders, and Bank Transfer payment confirmations.
               </p>
@@ -63,9 +74,9 @@ export default function ContactPage() {
               <div className="h-12 w-12 rounded-full bg-luxury-gold/10 border border-luxury-gold/30 flex items-center justify-center text-luxury-gold">
                 <InstagramIcon className="h-6 w-6" />
               </div>
-              <h2 className="font-serif text-xl font-semibold text-white">
+              <h3 className="font-serif text-xl font-semibold text-white">
                 Official Instagram
-              </h2>
+              </h3>
               <p className="text-xs text-neutral-400 leading-relaxed">
                 Follow our official page for new arrivals, jewelry styling inspiration, customer showcases, and direct messaging (DM).
               </p>
@@ -92,18 +103,18 @@ export default function ContactPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-6 border-t border-neutral-800/80 text-center">
           <div className="p-5 rounded-sm border border-neutral-850 bg-neutral-950/40">
             <Clock className="h-5 w-5 text-luxury-gold mx-auto mb-2" />
-            <h3 className="text-xs uppercase tracking-wider text-white font-semibold">Service Hours</h3>
+            <h4 className="text-xs uppercase tracking-wider text-white font-semibold">Service Hours</h4>
             <p className="text-xs text-neutral-400 mt-1">Monday – Sunday: 9:00 AM – 9:00 PM</p>
           </div>
           <div className="p-5 rounded-sm border border-neutral-850 bg-neutral-950/40">
             <Truck className="h-5 w-5 text-luxury-gold mx-auto mb-2" />
-            <h3 className="text-xs uppercase tracking-wider text-white font-semibold">Delivery Coverage</h3>
-            <p className="text-xs text-neutral-400 mt-1">Islandwide to all 25 Sri Lankan Districts</p>
+            <h4 className="text-xs uppercase tracking-wider text-white font-semibold">Delivery Coverage</h4>
+            <p className="text-xs text-neutral-400 mt-1">All 25 Administrative Districts</p>
           </div>
           <div className="p-5 rounded-sm border border-neutral-850 bg-neutral-950/40">
             <Shield className="h-5 w-5 text-luxury-gold mx-auto mb-2" />
-            <h3 className="text-xs uppercase tracking-wider text-white font-semibold">Payment Methods</h3>
-            <p className="text-xs text-neutral-400 mt-1">Cash on Delivery & Direct Bank Transfer</p>
+            <h4 className="text-xs uppercase tracking-wider text-white font-semibold">Guaranteed Security</h4>
+            <p className="text-xs text-neutral-400 mt-1">Insured Packaging & Delivery</p>
           </div>
         </div>
       </Container>

@@ -6,8 +6,66 @@ interface ContentPageViewerProps {
   page: ContentPage;
 }
 
+/**
+ * Validates that a hyperlink URL uses safe, authorized protocols.
+ * Prevents javascript:, data:, and relative protocol injections.
+ */
+function isSafeUrl(url: string): boolean {
+  const trimmed = url.trim().toLowerCase();
+  return (
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('mailto:') ||
+    trimmed.startsWith('tel:') ||
+    (trimmed.startsWith('/') && !trimmed.startsWith('//'))
+  );
+}
+
+/**
+ * Parses inline formatting for bold (**text**) and Markdown hyperlinks ([text](url)).
+ */
+function renderInlineContent(text: string): React.ReactNode[] {
+  // Tokenize Markdown links [text](url) and bold **text**
+  const tokens = text.split(/(\[[^\]]+\]\([^\)]+\)|\*\*[^*]+\*\*)/g);
+
+  return tokens.map((token, idx) => {
+    // 1. Link matching: [label](url)
+    const linkMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if (linkMatch) {
+      const [, label, url] = linkMatch;
+      if (isSafeUrl(url)) {
+        const isExternal = url.startsWith('http://') || url.startsWith('https://');
+        return (
+          <a
+            key={idx}
+            href={url}
+            target={isExternal ? '_blank' : undefined}
+            rel={isExternal ? 'noopener noreferrer' : undefined}
+            className="text-luxury-gold underline hover:text-luxury-gold-light transition-colors font-medium"
+          >
+            {label}
+          </a>
+        );
+      }
+      return label;
+    }
+
+    // 2. Bold matching: **text**
+    if (token.startsWith('**') && token.endsWith('**') && token.length >= 4) {
+      return (
+        <strong key={idx} className="font-semibold text-white">
+          {token.slice(2, -2)}
+        </strong>
+      );
+    }
+
+    // 3. Regular text
+    return token;
+  });
+}
+
 export function ContentPageViewer({ page }: ContentPageViewerProps) {
-  // Simple, safe markdown parser that avoids unsafe HTML injection
+  // Safe, clean markdown parser handling headings (#, ##, ###), lists (-), and inline formatting
   const renderFormattedContent = (rawText: string) => {
     const lines = rawText.split('\n');
 
@@ -18,6 +76,7 @@ export function ContentPageViewer({ page }: ContentPageViewerProps) {
         return <div key={idx} className="h-3" />;
       }
 
+      // Heading 1 (# )
       if (trimmed.startsWith('# ')) {
         return (
           <h1 key={idx} className="font-serif font-bold text-2xl sm:text-3xl text-white tracking-wide pt-4 pb-2 border-b border-neutral-800">
@@ -26,37 +85,37 @@ export function ContentPageViewer({ page }: ContentPageViewerProps) {
         );
       }
 
+      // Heading 2 (## )
+      if (trimmed.startsWith('## ')) {
+        return (
+          <h2 key={idx} className="font-serif font-bold text-xl sm:text-2xl text-white tracking-wide pt-4 pb-1 border-b border-neutral-850">
+            {renderInlineContent(trimmed.replace('## ', ''))}
+          </h2>
+        );
+      }
+
+      // Heading 3 (### )
       if (trimmed.startsWith('### ')) {
         return (
           <h3 key={idx} className="font-serif font-bold text-lg text-luxury-gold pt-3 pb-1">
-            {trimmed.replace('### ', '')}
+            {renderInlineContent(trimmed.replace('### ', ''))}
           </h3>
         );
       }
 
+      // Bullet lists (- )
       if (trimmed.startsWith('- ')) {
         return (
           <li key={idx} className="text-xs sm:text-sm text-neutral-300 ml-5 list-disc leading-relaxed">
-            {trimmed.replace('- ', '')}
+            {renderInlineContent(trimmed.replace('- ', ''))}
           </li>
         );
       }
 
-      // Format bold (**text**)
-      const parts = trimmed.split(/(\*\*.*?\*\*)/g);
-
+      // Paragraph
       return (
         <p key={idx} className="text-xs sm:text-sm text-neutral-300 leading-relaxed font-light">
-          {parts.map((part, pIdx) => {
-            if (part.startsWith('**') && part.endsWith('**')) {
-              return (
-                <strong key={pIdx} className="font-semibold text-white">
-                  {part.slice(2, -2)}
-                </strong>
-              );
-            }
-            return part;
-          })}
+          {renderInlineContent(trimmed)}
         </p>
       );
     });

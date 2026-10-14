@@ -4,8 +4,21 @@ import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAdminAuth } from '@/lib/auth/server';
+import { deleteUnattachedProductImageAction } from '@/lib/catalog/storage';
 import type { ProductAdmin, ProductImage, ProductVariantAdmin } from '@/types/product';
-import { computeStockStatus } from './utils';
+
+export interface CreateProductVariantInput {
+  title: string;
+  sku: string;
+  price: number;
+  discountPrice?: number | null;
+  purchaseCost?: number;
+  stockQuantity?: number;
+  lowStockThreshold?: number;
+  attributes?: Record<string, string>;
+  imageUrls?: string[];
+  isActive?: boolean;
+}
 
 export interface CreateProductInput {
   name: string;
@@ -23,8 +36,8 @@ export interface CreateProductInput {
   metaTitle?: string | null;
   metaDescription?: string | null;
 
-  // Initial primary variant
-  initialVariant: {
+  // Initial primary variant (backward-compatible)
+  initialVariant?: {
     title: string;
     sku: string;
     price: number;
@@ -35,7 +48,10 @@ export interface CreateProductInput {
     attributes?: Record<string, string>;
   };
 
-  // Uploaded image URLs
+  // Multiple variations support
+  variants?: CreateProductVariantInput[];
+
+  // Uploaded product-level gallery image URLs
   imageUrls?: string[];
 }
 
@@ -89,15 +105,22 @@ export async function generateProductSlug(text: string): Promise<string> {
     .replace(/^-+|-+$/g, '');
 }
 
-/**
- * Admin Action: Fetch products with search, category filtering, status, and sorting.
- */
-export async function getAdminProducts(filters?: {
+export interface GetAdminProductsFilters {
   search?: string;
   categoryId?: string;
   isActive?: boolean;
   sort?: string;
-}): Promise<{ success: boolean; products: AdminProductListItem[]; error?: string }> {
+  page?: number;
+  limit?: number;
+}
+
+/**
+ * Admin Action: Fetch products with search, category filtering, status, and sorting.
+ * Pushes search and pagination down to the database for optimal transfer speed.
+ */
+export async function getAdminProducts(
+  filters?: GetAdminProductsFilters
+): Promise<{ success: boolean; products: AdminProductListItem[]; error?: string }> {
   try {
     await requireAdminAuth();
     const adminClient = createAdminClient();
@@ -128,12 +151,26 @@ export async function getAdminProducts(filters?: {
       query = query.eq('is_active', filters.isActive);
     }
 
+    if (filters?.search?.trim()) {
+      const q = filters.search.trim();
+      // Efficient database-side filter to avoid downloading unmatching records
+      query = query.or(`name.ilike.%${q}%,slug.ilike.%${q}%,product_code.ilike.%${q}%`);
+    }
+
     if (filters?.sort === 'name-asc') {
       query = query.order('name', { ascending: true });
     } else if (filters?.sort === 'name-desc') {
       query = query.order('name', { ascending: false });
     } else {
       query = query.order('created_at', { ascending: false });
+    }
+
+    if (filters?.limit && filters.limit > 0) {
+      const page = Math.max(1, filters.page || 1);
+      const limit = Math.min(100, filters.limit);
+      const from = (page - 1) * limit;
+      const to = from + limit - 1;
+      query = query.range(from, to);
     }
 
     const { data: rawProducts, error } = await query;
@@ -352,125 +389,231 @@ export async function createProductAction(
       return { success: false, error: `The slug "${slug}" is already in use by another product.` };
     }
 
-    // Validate initial variant
-    const variantTitle = input.initialVariant.title?.trim() || 'Default';
-    const variantSku = input.initialVariant.sku?.trim().toUpperCase();
-    if (!variantSku) {
-      return { success: false, error: 'A primary variant SKU is required (e.g. SJ-RNG-001).' };
+    // Determine variations to create (support both variants array and initialVariant)
+    const rawVariants: CreateProductVariantInput[] =
+      Array.isArray(input.variants) && input.variants.length > 0
+        ? input.variants
+        : input.initialVariant
+        ? [
+            {
+              title: input.initialVariant.title,
+              sku: input.initialVariant.sku,
+              price: input.initialVariant.price,
+              discountPrice: input.initialVariant.discountPrice,
+              purchaseCost: input.initialVariant.purchaseCost,
+              stockQuantity: input.initialVariant.stockQuantity,
+              lowStockThreshold: input.initialVariant.lowStockThreshold,
+              attributes: input.initialVariant.attributes,
+            },
+          ]
+        : [];
+
+    if (rawVariants.length === 0) {
+      return { success: false, error: 'At least one product variation is required.' };
     }
 
-    if (typeof input.initialVariant.price !== 'number' || input.initialVariant.price < 0) {
-      return { success: false, error: 'Initial variant selling price must be a non-negative amount.' };
-    }
+    // Validate each variant and verify in-payload SKU uniqueness
+    const normalizedVariants: Array<CreateProductVariantInput & { sku: string; title: string }> = [];
+    const seenSkus = new Set<string>();
 
-    if (
-      input.initialVariant.discountPrice != null &&
-      (input.initialVariant.discountPrice < 0 || input.initialVariant.discountPrice >= input.initialVariant.price)
-    ) {
-      return { success: false, error: 'Discount price must be less than regular price.' };
-    }
+    for (let i = 0; i < rawVariants.length; i++) {
+      const v = rawVariants[i];
+      const title = v.title?.trim() || `Variant ${i + 1}`;
+      const sku = v.sku?.trim().toUpperCase();
 
-    // Check variant SKU uniqueness
-    const { data: existingSku } = await (adminClient.from('product_variants') as any)
-      .select('id')
-      .eq('sku', variantSku)
-      .maybeSingle();
+      if (!sku) {
+        return { success: false, error: `SKU is required for variation #${i + 1} (${title}).` };
+      }
 
-    if (existingSku) {
-      return { success: false, error: `SKU "${variantSku}" is already assigned to another product.` };
-    }
+      if (seenSkus.has(sku)) {
+        return { success: false, error: `Duplicate SKU "${sku}" found within the variation list.` };
+      }
+      seenSkus.add(sku);
 
-    // 1. Insert product record
-    const { data: productRow, error: productError } = await (adminClient.from('products') as any)
-      .insert({
-        name,
-        slug,
-        product_code: input.productCode?.trim() || variantSku,
-        short_description: input.shortDescription?.trim() || null,
-        description: input.description?.trim() || null,
-        material: input.material?.trim() || null,
-        gender: input.gender || 'women',
-        category_id: input.categoryId || null,
-        is_featured: Boolean(input.isFeatured),
-        is_new_arrival: Boolean(input.isNewArrival),
-        is_best_seller: Boolean(input.isBestSeller),
-        is_active: input.isActive !== undefined ? Boolean(input.isActive) : true,
-        meta_title: input.metaTitle?.trim() || null,
-        meta_description: input.metaDescription?.trim() || null,
-      })
-      .select('id, slug')
-      .single();
+      if (typeof v.price !== 'number' || v.price < 0) {
+        return { success: false, error: `Selling price for variant "${sku}" must be a non-negative amount.` };
+      }
 
-    if (productError || !productRow) {
-      return { success: false, error: `Failed to create product: ${productError?.message || 'Database error'}` };
-    }
+      if (v.discountPrice != null && (v.discountPrice < 0 || v.discountPrice >= v.price)) {
+        return { success: false, error: `Discount price for variant "${sku}" must be less than regular price.` };
+      }
 
-    const productId = productRow.id;
-
-    // 2. Insert primary variant
-    const stockQty = typeof input.initialVariant.stockQuantity === 'number' ? Math.max(0, input.initialVariant.stockQuantity) : 0;
-    const lowStockThreshold = typeof input.initialVariant.lowStockThreshold === 'number' ? Math.max(0, input.initialVariant.lowStockThreshold) : 5;
-    const purchaseCost = typeof input.initialVariant.purchaseCost === 'number' ? Math.max(0, input.initialVariant.purchaseCost) : 0;
-    const stockStatus = computeStockStatus(stockQty, lowStockThreshold);
-
-    const { data: variantRow, error: variantError } = await (adminClient.from('product_variants') as any)
-      .insert({
-        product_id: productId,
-        title: variantTitle,
-        sku: variantSku,
-        price: input.initialVariant.price,
-        discount_price: input.initialVariant.discountPrice != null ? input.initialVariant.discountPrice : null,
-        purchase_cost: purchaseCost,
-        stock_quantity: stockQty,
-        low_stock_threshold: lowStockThreshold,
-        stock_status: stockStatus,
-        attributes: input.initialVariant.attributes || {},
-        is_active: true,
-      })
-      .select('id')
-      .single();
-
-    if (variantError) {
-      // Rollback product insert if variant failed
-      await (adminClient.from('products') as any).delete().eq('id', productId);
-      return { success: false, error: `Failed to create primary variant: ${variantError.message}` };
-    }
-
-    // Record initial inventory movement
-    if (stockQty > 0 && variantRow) {
-      await (adminClient.from('inventory_movements') as any).insert({
-        variant_id: variantRow.id,
-        quantity_change: stockQty,
-        previous_quantity: 0,
-        new_quantity: stockQty,
-        reason: 'stock_added',
-        reference_id: 'INITIAL_PRODUCT_SETUP',
-        created_by: admin.id,
+      normalizedVariants.push({
+        ...v,
+        title,
+        sku,
+        price: v.price,
+        discountPrice: v.discountPrice != null ? v.discountPrice : null,
+        purchaseCost: typeof v.purchaseCost === 'number' && v.purchaseCost >= 0 ? v.purchaseCost : 0,
+        stockQuantity: typeof v.stockQuantity === 'number' && v.stockQuantity >= 0 ? Math.floor(v.stockQuantity) : 0,
+        lowStockThreshold:
+          typeof v.lowStockThreshold === 'number' && v.lowStockThreshold >= 0 ? Math.floor(v.lowStockThreshold) : 5,
+        attributes: v.attributes || {},
+        isActive: v.isActive !== undefined ? Boolean(v.isActive) : true,
       });
     }
 
-    // 3. Attach gallery images if provided
-    if (input.imageUrls && input.imageUrls.length > 0) {
-      const imagesPayload = input.imageUrls.map((url, idx) => ({
-        product_id: productId,
-        variant_id: null,
-        url,
-        alt_text: name,
-        display_order: idx,
-        is_primary: idx === 0,
-      }));
+    // Check variant SKU uniqueness across database
+    const skusToCheck = normalizedVariants.map((v) => v.sku);
+    const { data: existingSkus } = await (adminClient.from('product_variants') as any)
+      .select('sku')
+      .in('sku', skusToCheck);
 
-      await (adminClient.from('product_images') as any).insert(imagesPayload);
+    if (existingSkus && existingSkus.length > 0) {
+      return { success: false, error: `SKU "${existingSkus[0].sku}" is already assigned to another product.` };
     }
 
-    revalidatePath('/admin/products');
-    revalidatePath('/shop');
-
-    return {
-      success: true,
-      productId,
-      slug: productRow.slug,
+    // Prepare structured payloads for transactional RPC and hardened fallback
+    const targetIsActive = input.isActive !== undefined ? Boolean(input.isActive) : true;
+    const baseSku = normalizedVariants[0].sku;
+    const productPayload = {
+      name,
+      slug,
+      product_code: input.productCode?.trim() || baseSku,
+      short_description: input.shortDescription?.trim() || null,
+      description: input.description?.trim() || null,
+      material: input.material?.trim() || null,
+      gender: input.gender || 'women',
+      category_id: input.categoryId || null,
+      is_featured: Boolean(input.isFeatured),
+      is_new_arrival: Boolean(input.isNewArrival),
+      is_best_seller: Boolean(input.isBestSeller),
+      is_active: targetIsActive,
+      meta_title: input.metaTitle?.trim() || null,
+      meta_description: input.metaDescription?.trim() || null,
     };
+
+    const variantsPayload = normalizedVariants.map((v) => ({
+      sku: v.sku,
+      title: v.title,
+      price: v.price,
+      discount_price: v.discountPrice,
+      purchase_cost: v.purchaseCost,
+      stock_quantity: v.stockQuantity,
+      low_stock_threshold: v.lowStockThreshold,
+      attributes: v.attributes,
+      is_active: v.isActive,
+    }));
+
+    const imagesPayload: Array<{
+      url: string;
+      variant_sku: string | null;
+      alt_text: string;
+      display_order: number;
+      is_primary: boolean;
+    }> = [];
+
+    let displayOrderCounter = 0;
+    if (input.imageUrls && input.imageUrls.length > 0) {
+      for (const url of input.imageUrls) {
+        imagesPayload.push({
+          url,
+          variant_sku: null,
+          alt_text: name,
+          display_order: displayOrderCounter,
+          is_primary: displayOrderCounter === 0,
+        });
+        displayOrderCounter++;
+      }
+    }
+
+    for (const v of normalizedVariants) {
+      if (v.imageUrls && v.imageUrls.length > 0) {
+        for (const url of v.imageUrls) {
+          imagesPayload.push({
+            url,
+            variant_sku: v.sku,
+            alt_text: `${name} - ${v.title}`,
+            display_order: displayOrderCounter,
+            is_primary: displayOrderCounter === 0,
+          });
+          displayOrderCounter++;
+        }
+      }
+    }
+
+/**
+ * Strictly identifies if an RPC error is due to the function being absent in the database
+ * (migration not yet applied), as opposed to execution failures, constraint violations,
+ * authorization errors, network timeouts, or schema errors.
+ */
+function isRpcMissingError(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '').trim().toUpperCase();
+  const message = String(error.message || '').toLowerCase();
+
+  // PostgREST specific missing RPC code
+  if (code === 'PGRST202') return true;
+
+  // PostgreSQL undefined_function error code
+  if (code === '42883') return true;
+
+  // Explicit function not found signatures
+  if (
+    message.includes('could not find the function') ||
+    (message.includes('create_product_with_variations') && message.includes('does not exist'))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+    // Strictly invoke Atomic PostgreSQL Transactional RPC (Migration 00007)
+    // The database RPC is the SOLE write path. Zero non-atomic multi-step write fallbacks.
+    try {
+      const { data: rpcData, error: rpcError } = await (adminClient.rpc as any)(
+        'create_product_with_variations',
+        {
+          p_product: productPayload,
+          p_variants: variantsPayload,
+          p_images: imagesPayload,
+          p_admin_id: admin.id,
+        }
+      );
+
+      if (rpcError) {
+        console.error('[createProductAction] Database RPC error:', rpcError);
+        const errMsg = rpcError.message || 'Product creation transaction failed.';
+        return {
+          success: false,
+          error: isRpcMissingError(rpcError)
+            ? 'Database product creation procedure is unavailable. Please ensure database migration 00007 is applied.'
+            : errMsg,
+        };
+      }
+
+      if (!rpcData?.success) {
+        return {
+          success: false,
+          error: rpcData?.error || 'Product creation failed.',
+        };
+      }
+
+      revalidatePath('/admin/products');
+      revalidatePath('/shop');
+      if (rpcData.slug) {
+        revalidatePath(`/products/${rpcData.slug}`);
+      }
+
+      return {
+        success: true,
+        productId: rpcData.product_id,
+        slug: rpcData.slug,
+      };
+    } catch (rpcCallErr: unknown) {
+      console.error('[createProductAction] Unexpected RPC execution error:', rpcCallErr);
+      if (isRpcMissingError(rpcCallErr)) {
+        return {
+          success: false,
+          error: 'Database product creation procedure is unavailable. Please ensure database migration 00007 is applied.',
+        };
+      }
+      return {
+        success: false,
+        error: rpcCallErr instanceof Error ? rpcCallErr.message : 'Network or server error during product creation.',
+      };
+    }
   } catch (err: unknown) {
     return {
       success: false,
@@ -595,7 +738,7 @@ export async function deleteProductAction(
     await requireAdminAuth();
     const adminClient = createAdminClient();
 
-    // Check if any variant of this product was purchased in orders
+    // 1. Check if any variant of this product was purchased in orders
     const { count: orderCount } = await (adminClient.from('order_items') as any)
       .select('id', { count: 'exact', head: true })
       .eq('product_id', productId);
@@ -607,11 +750,37 @@ export async function deleteProductAction(
       };
     }
 
+    // 2. Check if any variant has recorded inventory movements (preserves ON DELETE RESTRICT audit ledger)
+    const { data: variants } = await (adminClient.from('product_variants') as any)
+      .select('id')
+      .eq('product_id', productId);
+
+    const variantIds = (variants || []).map((v: any) => v.id);
+
+    if (variantIds.length > 0) {
+      const { count: movementCount } = await (adminClient.from('inventory_movements') as any)
+        .select('id', { count: 'exact', head: true })
+        .in('variant_id', variantIds);
+
+      if (movementCount && movementCount > 0) {
+        return {
+          success: false,
+          error: `Cannot delete this product because ${movementCount} historical inventory audit record(s) exist for its variations. Unpublish/deactivate the product instead to preserve inventory audit integrity.`,
+        };
+      }
+    }
+
     const { error: deleteError } = await (adminClient.from('products') as any)
       .delete()
       .eq('id', productId);
 
     if (deleteError) {
+      if ((deleteError as any).code === '23503' || (deleteError as any).code === '23001') {
+        return {
+          success: false,
+          error: 'Cannot delete this product because historical audit records (orders or inventory movements) still reference it. Deactivate the product instead.',
+        };
+      }
       return { success: false, error: deleteError.message };
     }
 

@@ -113,11 +113,11 @@ export async function getAdminSalesReport(timeRange: ReportTimeRange = '30d'): P
       totalOrders++;
       totalRevenue += orderTotal;
 
-      // Payment verification / collected calculations
+      // Payment verification / collected calculations (CRITICAL: Delivered does NOT mean Paid)
       const isVerified =
-        order.payment_status === PAYMENT_STATUSES.VERIFIED ||
-        (order.payment_method === PAYMENT_METHODS.COD &&
-          order.order_status === ORDER_STATUSES.DELIVERED);
+        order.payment_status === PAYMENT_STATUSES.VERIFIED &&
+        order.order_status !== ORDER_STATUSES.CANCELLED &&
+        order.order_status !== ORDER_STATUSES.REFUNDED;
 
       if (isVerified) {
         totalCollected += orderTotal;

@@ -79,6 +79,7 @@ export function InventoryManager({
   const [isPending, startTransition] = useTransition();
 
   const searchDebounceTimer = useRef<NodeJS.Timeout | null>(null);
+  const searchSeqRef = useRef<number>(0);
 
   // Active selected product and variant references
   const selectedProduct = products.find((p) => p.id === selectedProductId) || null;
@@ -125,8 +126,9 @@ export function InventoryManager({
     }
   }, [selectedVariantId, fetchMovements]);
 
-  // Server-side debounced search function
+  // Server-side debounced search function with sequence guard against race conditions
   const executeSearch = useCallback(async (query: string, page: number) => {
+    const seq = ++searchSeqRef.current;
     setIsSearching(true);
     setLoadError(null);
     try {
@@ -135,6 +137,11 @@ export function InventoryManager({
         page,
         limit: 10,
       });
+
+      // Discard stale out-of-order response
+      if (seq !== searchSeqRef.current) {
+        return;
+      }
 
       if (res.success) {
         setProducts(res.products);
@@ -163,6 +170,7 @@ export function InventoryManager({
         setSelectedVariantId(null);
       }
     } catch (err: unknown) {
+      if (seq !== searchSeqRef.current) return;
       const msg = err instanceof Error ? err.message : 'An unexpected error occurred.';
       setLoadError(msg);
       setErrorMessage(msg);
@@ -171,7 +179,9 @@ export function InventoryManager({
       setSelectedProductId(null);
       setSelectedVariantId(null);
     } finally {
-      setIsSearching(false);
+      if (seq === searchSeqRef.current) {
+        setIsSearching(false);
+      }
     }
   }, [selectedProductId]);
 
@@ -428,7 +438,11 @@ export function InventoryManager({
           </div>
 
           {/* Compact Product Results List */}
-          <div className="bg-luxury-card border border-luxury-border rounded-md divide-y divide-luxury-border overflow-hidden">
+          <div
+            className={`bg-luxury-card border border-luxury-border rounded-md divide-y divide-luxury-border overflow-hidden transition-opacity duration-200 ${
+              isSearching ? 'opacity-70' : 'opacity-100'
+            }`}
+          >
             {loadError ? (
               <div className="p-8 text-center space-y-3 bg-rose-950/20">
                 <div className="flex items-center justify-center gap-2 text-rose-400 text-sm font-medium">

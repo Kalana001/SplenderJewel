@@ -579,17 +579,17 @@ export async function searchAdminInventoryProductsAction(
     // 1. If query is provided, find product IDs matching variant SKU, product name, or product SKU
     let matchingProductIds: string[] | null = null;
     if (query) {
-      const { data: matchedVariants } = await (adminClient.from('product_variants') as any)
-        .select('product_id')
-        .ilike('sku', `%${query}%`);
+      const [matchedVariantsRes, matchedProdsRes] = await Promise.all([
+        (adminClient.from('product_variants') as any)
+          .select('product_id')
+          .ilike('sku', `%${query}%`),
+        (adminClient.from('products') as any)
+          .select('id')
+          .or(`name.ilike.%${query}%,product_code.ilike.%${query}%`),
+      ]);
 
-      const variantProductIds = (matchedVariants || []).map((v: any) => v.product_id);
-
-      const { data: matchedProds } = await (adminClient.from('products') as any)
-        .select('id')
-        .or(`name.ilike.%${query}%,product_code.ilike.%${query}%`);
-
-      const prodIds = (matchedProds || []).map((p: any) => p.id);
+      const variantProductIds = (matchedVariantsRes.data || []).map((v: any) => v.product_id);
+      const prodIds = (matchedProdsRes.data || []).map((p: any) => p.id);
 
       matchingProductIds = Array.from(new Set([...variantProductIds, ...prodIds]));
       if (matchingProductIds.length === 0) {

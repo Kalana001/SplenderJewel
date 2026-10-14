@@ -107,7 +107,7 @@ export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps)
         </div>
 
         <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4 space-y-1">
-          <span className="text-xs text-neutral-400">Total Sales Volume</span>
+          <span className="text-xs text-neutral-400">Total Revenue (Verified)</span>
           <p className="text-xl sm:text-2xl font-bold text-luxury-gold font-mono">{formatCurrency(metrics.totalRevenue)}</p>
         </div>
 

@@ -21,6 +21,7 @@ import {
   History,
   Store,
   Printer,
+  CreditCard,
   X,
 } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -45,6 +46,7 @@ export function AdminSidebar({ mobileOpen, onCloseMobile }: AdminSidebarProps) {
       group: 'Sales & Catalog',
       items: [
         { label: 'Orders', href: '/admin/orders', icon: ShoppingBag },
+        { label: 'Payments & Settlement', href: '/admin/payments', icon: CreditCard },
         { label: 'Products', href: '/admin/products', icon: Package },
         { label: 'Categories', href: '/admin/categories', icon: Layers },
         { label: 'Inventory', href: '/admin/inventory', icon: Archive },
