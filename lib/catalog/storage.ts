@@ -7,17 +7,22 @@ import { requireAdminAuth } from '@/lib/auth/server';
 import type { ProductImage } from '@/types/product';
 
 import {
-  MAX_IMAGE_FILE_SIZE,
-  ALLOWED_IMAGE_MIME_TYPES,
   validateImageFile,
   generateCatalogStoragePath,
 } from '@/lib/catalog/image-validation';
 
 const BUCKET_NAME = 'products';
-export { MAX_IMAGE_FILE_SIZE, ALLOWED_IMAGE_MIME_TYPES };
+
+export type UploadErrorCode =
+  | 'UNAUTHENTICATED'
+  | 'FORBIDDEN'
+  | 'STORAGE_ERROR'
+  | 'CONFIGURATION_ERROR'
+  | 'UPLOAD_FAILED';
 
 export interface UploadImageResult {
   success: boolean;
+  code?: UploadErrorCode;
   url?: string;
   path?: string;
   error?: string;
@@ -31,6 +36,7 @@ export interface CreateSignedUploadUrlInput {
 
 export interface CreateSignedUploadUrlResult {
   success: boolean;
+  code?: UploadErrorCode;
   signedUrl?: string;
   path?: string;
   token?: string;
@@ -50,34 +56,65 @@ export interface AttachImageInput {
 /**
  * Generates an authenticated signed upload URL for the 'products' storage bucket.
  * Allows client browser to directly upload images up to 5MB, bypassing Vercel serverless function payload limits.
- * Validates admin credentials, file size (<= 5MB), and allowed image types.
+ * Differentiates UNAUTHENTICATED, FORBIDDEN, CONFIGURATION_ERROR, STORAGE_ERROR, and UPLOAD_FAILED.
  */
 export async function createProductImageUploadUrlAction(
   input: CreateSignedUploadUrlInput
 ): Promise<CreateSignedUploadUrlResult> {
   try {
-    await requireAdminAuth();
-    const adminClient = createAdminClient();
-
-    const validation = validateImageFile({
-      name: input.filename,
-      size: input.fileSize,
-      type: input.contentType,
-    });
-    if (!validation.valid) {
-      return { success: false, error: validation.error };
+    // 1. Admin Authentication & Role Verification (UNAUTHENTICATED / FORBIDDEN)
+    try {
+      await requireAdminAuth();
+    } catch (authErr: unknown) {
+      const isAuthError = authErr instanceof Error && authErr.name === 'AdminAuthError';
+      const code = (isAuthError && (authErr as any).code === 'FORBIDDEN') ? 'FORBIDDEN' : 'UNAUTHENTICATED';
+      const message = authErr instanceof Error
+        ? authErr.message
+        : 'Authentication required. Please sign in as an administrator.';
+      return { success: false, code, error: message };
     }
 
+    // 2. Server Environment & Client Initialization (CONFIGURATION_ERROR)
+    let adminClient;
+    try {
+      adminClient = createAdminClient();
+    } catch (configErr: unknown) {
+      console.error('[Storage Action] Server configuration error:', configErr instanceof Error ? configErr.message : 'Missing configuration');
+      return {
+        success: false,
+        code: 'CONFIGURATION_ERROR',
+        error: 'Storage service configuration error on server.',
+      };
+    }
+
+    // 3. Payload Validation (UPLOAD_FAILED)
+    const validation = validateImageFile({
+      name: input?.filename,
+      size: input?.fileSize,
+      type: input?.contentType,
+    });
+    if (!validation.valid) {
+      return {
+        success: false,
+        code: 'UPLOAD_FAILED',
+        error: validation.error || 'Invalid image file provided.',
+      };
+    }
+
+    // 4. Generate Storage Path
     const storagePath = generateCatalogStoragePath(input.contentType);
 
+    // 5. Create Signed Upload URL in Supabase Storage (STORAGE_ERROR)
     const { data, error } = await adminClient.storage
       .from(BUCKET_NAME)
       .createSignedUploadUrl(storagePath);
 
     if (error || !data) {
+      console.error('[Storage Action] createSignedUploadUrl failed for path:', storagePath, 'Error:', error?.message);
       return {
         success: false,
-        error: `Failed to create signed upload URL: ${error?.message || 'Storage service error.'}`,
+        code: 'STORAGE_ERROR',
+        error: `Storage service error: ${error?.message || 'Failed to create signed upload token.'}`,
       };
     }
 
@@ -93,9 +130,11 @@ export async function createProductImageUploadUrlAction(
       publicUrl: urlData.publicUrl,
     };
   } catch (err: unknown) {
+    console.error('[Storage Action] Unexpected error:', err instanceof Error ? err.message : 'Unknown error');
     return {
       success: false,
-      error: err instanceof Error ? err.message : 'Failed to generate signed upload URL.',
+      code: 'UPLOAD_FAILED',
+      error: 'An unexpected error occurred while preparing image upload. Please retry.',
     };
   }
 }

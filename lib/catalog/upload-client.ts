@@ -41,18 +41,44 @@ export async function uploadProductImageFile(file: File): Promise<UploadImageRes
       fileSize: file.size,
     });
   } catch (signErr: unknown) {
+    const rawMsg = signErr instanceof Error ? signErr.message : '';
+    const isMaskedRenderError = rawMsg.includes('Server Components render') || rawMsg.includes('Failed to find Server Action');
+    const displayMsg = isMaskedRenderError
+      ? 'Authorization request failed (session may be stale). Please refresh the page and verify your administrator login.'
+      : (rawMsg || 'Failed to authorize image upload. Please ensure you are logged in as an administrator.');
+
     return {
       success: false,
-      error:
-        signErr instanceof Error
-          ? `Authorization failed: ${signErr.message}`
-          : 'Failed to authorize image upload. Please ensure you are logged in as an administrator.',
+      code: 'UNAUTHENTICATED',
+      error: displayMsg,
     };
   }
 
   if (!signRes.success || !signRes.path || !signRes.token || !signRes.publicUrl) {
+    if (signRes.code === 'UNAUTHENTICATED') {
+      return {
+        success: false,
+        code: 'UNAUTHENTICATED',
+        error: 'Your administrator session has expired. Please refresh the page or log in again to upload images.',
+      };
+    }
+    if (signRes.code === 'FORBIDDEN') {
+      return {
+        success: false,
+        code: 'FORBIDDEN',
+        error: 'Access denied: Active administrative privileges are required to upload product images.',
+      };
+    }
+    if (signRes.code === 'CONFIGURATION_ERROR') {
+      return {
+        success: false,
+        code: 'CONFIGURATION_ERROR',
+        error: 'Storage service configuration error on server. Please notify the technical administrator.',
+      };
+    }
     return {
       success: false,
+      code: signRes.code || 'UPLOAD_FAILED',
       error: signRes.error || 'Failed to authorize image upload with storage.',
     };
   }

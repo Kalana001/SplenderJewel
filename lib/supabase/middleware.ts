@@ -76,7 +76,18 @@ export async function updateSession(request: NextRequest) {
 
   // 2. Admin Protected Routes: /admin/* (excluding /admin/login)
   if (isAdminProtected) {
+    const isServerAction = request.headers.has('next-action');
+
     if (!user) {
+      if (isServerAction) {
+        // Do NOT redirect Server Actions to /admin/login via 307!
+        // Returning a 307 redirect on a Server Action causes the browser to POST the Server Action
+        // to /admin/login, which fails with HTTP 500 (action not found on login route).
+        // Allowing the request to pass through enables requireAdminAuth() to return a structured
+        // UNAUTHENTICATED error safely.
+        return supabaseResponse;
+      }
+
       const redirectUrl = new URL('/admin/login', request.url);
       return NextResponse.redirect(redirectUrl);
     }
@@ -90,6 +101,11 @@ export async function updateSession(request: NextRequest) {
       .maybeSingle();
 
     if (!adminRecord) {
+      if (isServerAction) {
+        // Let requireAdminAuth() handle unauthorized Server Action and return structured FORBIDDEN
+        return supabaseResponse;
+      }
+
       // Authenticated user is NOT an admin — redirect away from admin panel
       const redirectUrl = new URL('/admin/login', request.url);
       redirectUrl.searchParams.set('error', 'unauthorized');
