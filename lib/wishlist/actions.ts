@@ -252,15 +252,24 @@ export async function clearWishlist(): Promise<{
       return { success: false, error: 'Database service is currently unavailable.' };
     }
 
-    const { data: wishlist } = await (supabase.from('wishlists') as any)
+    const { data: wishlist, error: wishlistError } = await (supabase.from('wishlists') as any)
       .select('id')
       .eq('user_id', profile.id)
       .maybeSingle();
 
+    // Never report success unless the server actually confirmed the deletion.
+    if (wishlistError) {
+      return { success: false, error: 'Failed to clear wishlist.' };
+    }
+
     if (wishlist) {
-      await (supabase.from('wishlist_items') as any)
+      const { error: deleteError } = await (supabase.from('wishlist_items') as any)
         .delete()
         .eq('wishlist_id', wishlist.id);
+
+      if (deleteError) {
+        return { success: false, error: 'Failed to clear wishlist.' };
+      }
     }
 
     return { success: true };
