@@ -212,24 +212,27 @@ export async function validateCartStockAction(
   }
 }
 
+export interface GetCartActionResult {
+  success: boolean;
+  items: CartItem[] | null;
+  authenticated?: boolean;
+  error?: string;
+}
+
 /**
  * SERVER ACTION: Retrieve authenticated customer's persisted cart from Supabase.
  * Enforces customer session validation via getCurrentUser() and RLS.
  */
-export async function getAuthenticatedCartAction(): Promise<{
-  success: boolean;
-  items: CartItem[] | null;
-  error?: string;
-}> {
+export async function getAuthenticatedCartAction(): Promise<GetCartActionResult> {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return { success: true, items: null };
+      return { success: true, items: null, authenticated: false };
     }
 
     const supabase = await createServerSupabaseClient();
     if (!supabase) {
-      return { success: false, items: null, error: 'Database service unavailable.' };
+      return { success: false, items: null, authenticated: true, error: 'Database service unavailable.' };
     }
 
     // 1. Fetch user's cart
@@ -239,7 +242,7 @@ export async function getAuthenticatedCartAction(): Promise<{
       .maybeSingle();
 
     if (cartError || !cart) {
-      return { success: true, items: [] };
+      return { success: true, items: [], authenticated: true };
     }
 
     // 2. Fetch cart items with live product and variant details
@@ -314,7 +317,7 @@ export async function getAuthenticatedCartAction(): Promise<{
       });
     }
 
-    return { success: true, items: cartItems };
+    return { success: true, items: cartItems, authenticated: true };
   } catch (err: any) {
     console.error('[GetAuthenticatedCartAction] Error:', err);
     return { success: false, items: null, error: err?.message || 'Failed to fetch cart.' };

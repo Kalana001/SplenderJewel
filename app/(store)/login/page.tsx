@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { signInCustomer } from '@/lib/auth/actions';
 import { getSafeRedirectUrl } from '@/lib/auth/redirect';
+import { useOptionalCart } from '@/lib/cart/cart-context';
 import { Eye, EyeOff, Lock, Mail, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
 
 function LoginForm() {
@@ -19,6 +20,7 @@ function LoginForm() {
   const errorParam = searchParams.get('error');
   const messageParam = searchParams.get('message');
 
+  const cart = useOptionalCart();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -60,9 +62,19 @@ function LoginForm() {
         return;
       }
 
-      // Successful sign in
+      // Successful sign in: synchronize remote cart and merge any pending guest items
+      if (cart?.refreshCart) {
+        try {
+          await cart.refreshCart();
+        } catch (syncErr) {
+          console.warn('[Login] Cart sync error on sign in:', syncErr);
+        }
+      }
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('splender:auth-signed-in'));
+      }
       router.push(safeTargetUrl);
-      router.refresh();
     } catch (err: any) {
       setErrorMessage(err?.message || 'An unexpected error occurred during sign in.');
       setLoading(false);

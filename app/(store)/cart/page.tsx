@@ -33,6 +33,7 @@ export default function CartPage() {
     subtotal,
     syncError,
     retrySync,
+    refreshCart,
     updateQuantity,
     removeItem,
     syncCartStock,
@@ -52,8 +53,8 @@ export default function CartPage() {
   }, [items]);
 
   // Synchronize cart with authoritative server inventory
-  const runCartRevalidation = useCallback(async () => {
-    const currentItems = itemsRef.current;
+  const runCartRevalidation = useCallback(async (overrideItems?: typeof itemsRef.current) => {
+    const currentItems = overrideItems || itemsRef.current;
     if (currentItems.length === 0) {
       return { success: true, adjusted: false };
     }
@@ -122,25 +123,34 @@ export default function CartPage() {
     }
   }, [syncCartStock]);
 
+  // Complete cross-device & inventory sync: Refreshes remote cart items from Supabase, then verifies stock
+  const syncPageWithServer = useCallback(async () => {
+    try {
+      const fresh = await refreshCart();
+      return await runCartRevalidation(fresh);
+    } catch {
+      return await runCartRevalidation();
+    }
+  }, [refreshCart, runCartRevalidation]);
+
   // Trigger 1: Mount hydration
   useEffect(() => {
-    if (!isLoaded || items.length === 0) return;
-    runCartRevalidation();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoaded]);
+    if (!isLoaded) return;
+    syncPageWithServer();
+  }, [isLoaded, syncPageWithServer]);
 
   // Trigger 2: Route activation (when visiting or returning to /cart)
   useEffect(() => {
-    if (isLoaded && pathname === '/cart' && itemsRef.current.length > 0) {
-      runCartRevalidation();
+    if (isLoaded && pathname === '/cart') {
+      syncPageWithServer();
     }
-  }, [pathname, isLoaded, runCartRevalidation]);
+  }, [pathname, isLoaded, syncPageWithServer]);
 
   // Trigger 3: Browser tab focus and document visibility change
   useEffect(() => {
     function handleVisibilityOrFocus() {
-      if (document.visibilityState === 'visible' && itemsRef.current.length > 0) {
-        runCartRevalidation();
+      if (document.visibilityState === 'visible') {
+        syncPageWithServer();
       }
     }
 
@@ -151,7 +161,7 @@ export default function CartPage() {
       window.removeEventListener('focus', handleVisibilityOrFocus);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
-  }, [runCartRevalidation]);
+  }, [syncPageWithServer]);
 
   // Trigger 4: Preflight checkout verification before navigation
   async function handleProceedToCheckout() {
@@ -261,7 +271,7 @@ export default function CartPage() {
           <div className="flex items-center gap-4">
             <button
               type="button"
-              onClick={() => runCartRevalidation()}
+              onClick={() => syncPageWithServer()}
               disabled={isValidating}
               className="inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-white transition-colors"
               title="Refresh live inventory availability"
@@ -305,7 +315,7 @@ export default function CartPage() {
             </div>
             <button
               type="button"
-              onClick={() => runCartRevalidation()}
+              onClick={() => syncPageWithServer()}
               className="text-xs underline hover:text-white shrink-0 font-medium"
             >
               Retry Check

@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { signUpCustomer } from '@/lib/auth/actions';
 import { getSafeRedirectUrl } from '@/lib/auth/redirect';
+import { useOptionalCart } from '@/lib/cart/cart-context';
 import { Eye, EyeOff, Lock, Mail, User, Phone, AlertCircle, CheckCircle2, ArrowRight, Gem } from 'lucide-react';
 
 function RegisterForm() {
@@ -15,6 +16,7 @@ function RegisterForm() {
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get('redirectTo');
   const safeTargetUrl = getSafeRedirectUrl(redirectTo, '/account');
+  const cart = useOptionalCart();
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -71,8 +73,18 @@ function RegisterForm() {
       if (result.message && result.message.toLowerCase().includes('check your email')) {
         setRegisteredEmail(email.trim());
       } else {
+        if (cart?.refreshCart) {
+          try {
+            await cart.refreshCart();
+          } catch (syncErr) {
+            console.warn('[Register] Cart sync error on sign in:', syncErr);
+          }
+        }
+
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('splender:auth-signed-in'));
+        }
         router.push(safeTargetUrl);
-        router.refresh();
       }
     } catch (err: any) {
       setErrorMessage(err?.message || 'An unexpected error occurred during account creation.');
