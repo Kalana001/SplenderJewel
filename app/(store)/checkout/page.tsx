@@ -123,8 +123,8 @@ export default function CheckoutPage() {
     if (isSubmitting) return;
     setErrorMessage(null);
 
-    // Testing Mode Client Block
-    if (!isLiveCheckout) {
+    // Testing Mode Client Block — allow authorized testers to submit controlled test orders
+    if (!isLiveCheckout && !testerState?.isTester) {
       setErrorMessage(
         'Online checkout is currently in development testing mode. Live order submission is disabled. For priority orders, please reach out via WhatsApp (+94 76 468 9907).'
       );

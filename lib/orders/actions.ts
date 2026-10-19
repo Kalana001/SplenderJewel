@@ -254,7 +254,7 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
         address_line: input.addressLine.trim(),
         city: input.city?.trim() || null,
         district: input.district,
-        province: input.province?.trim() || null,
+        province: input.province?.trim() || districtData?.province || null,
         postal_code: input.postalCode?.trim() || null,
         delivery_notes: input.deliveryNotes?.trim() || null,
         delivery_fee: deliveryFee,
