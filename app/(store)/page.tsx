@@ -60,11 +60,22 @@ export default async function HomePage() {
   const pillarsSection = sectionsMap.get('pillars');
   const reviewsSection = sectionsMap.get('reviews');
 
-  // Pure logic helpers for section resolution & real image sourcing
-  const heroData = resolveHeroData(banners, heroSection, featuredResult.products, categories, storeConfig.whatsAppNumber);
   const collageItems = buildCollageItems(featuredResult.products, categories);
   const { visibleCategories, title: categoryTitle, subtitle: categorySubtitle } =
     resolveVisibleCategories(categories, categorySection);
+  const isCategoriesAvailable =
+    (categorySection ? categorySection.isEnabled : true) && visibleCategories.length > 0;
+
+  // Pure logic helpers for section resolution & real image sourcing
+  const heroData = resolveHeroData(
+    banners,
+    heroSection,
+    featuredResult.products,
+    categories,
+    storeConfig.whatsAppNumber,
+    categorySection,
+    isCategoriesAvailable
+  );
   const { visibleProducts: visibleFeaturedProducts, title: featuredTitle, subtitle: featuredSubtitle } =
     resolveVisibleFeaturedProducts(featuredResult.products, featuredSection);
 
@@ -92,6 +103,8 @@ export default async function HomePage() {
                 banners={banners}
                 heroSection={heroSection}
                 featuredImageUrl={heroData.featuredImageUrl}
+                whatsAppNumber={storeConfig.whatsAppNumber}
+                categoriesAvailable={isCategoriesAvailable}
               />
             );
 
@@ -107,7 +120,12 @@ export default async function HomePage() {
           case 'categories':
             if (visibleCategories.length === 0) return null;
             return (
-              <section key="categories" aria-label="Collections by Category">
+              <section
+                key="categories"
+                id="categories"
+                className="scroll-mt-20 sm:scroll-mt-24 lg:scroll-mt-28"
+                aria-label="Collections by Category"
+              >
                 <Container size="xl">
                   <div className="text-center mb-8 sm:mb-10">
                     <span className="text-[10px] sm:text-xs uppercase tracking-[0.25em] text-luxury-gold font-semibold">

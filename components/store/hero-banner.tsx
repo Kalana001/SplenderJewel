@@ -15,6 +15,7 @@ interface HeroBannerProps {
   featuredImageUrl?: string | null;
   featuredImageAlt?: string;
   whatsAppNumber?: string;
+  categoriesAvailable?: boolean;
 }
 
 export function HeroBanner({
@@ -23,13 +24,51 @@ export function HeroBanner({
   featuredImageUrl,
   featuredImageAlt,
   whatsAppNumber,
+  categoriesAvailable = true,
 }: HeroBannerProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
 
-  const heroData = resolveHeroData(banners, heroSection, undefined, undefined, whatsAppNumber);
+  const heroData = resolveHeroData(
+    banners,
+    heroSection,
+    undefined,
+    undefined,
+    whatsAppNumber,
+    undefined,
+    categoriesAvailable
+  );
   const activeBanners = heroData.banners;
   const bannerCount = activeBanners.length;
+
+  // Handle direct hash navigation to #categories on initial page load / after content renders
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.hash === '#categories') {
+      const timer = setTimeout(() => {
+        const el = document.getElementById('categories');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
+  const handleSecondaryClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (
+      heroData.secondaryCtaLink === '#categories' ||
+      heroData.secondaryCtaLink === '/#categories'
+    ) {
+      const el = document.getElementById('categories');
+      if (el) {
+        e.preventDefault();
+        if (window.location.hash !== '#categories') {
+          window.history.pushState(null, '', '/#categories');
+        }
+        el.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
+  };
 
   const nextSlide = useCallback(() => {
     if (bannerCount <= 1) return;
@@ -101,7 +140,11 @@ export function HeroBanner({
                   </Button>
                 </Link>
 
-                <Link href={heroData.secondaryCtaLink} className="w-full sm:w-auto">
+                <Link
+                  href={heroData.secondaryCtaLink}
+                  onClick={handleSecondaryClick}
+                  className="w-full sm:w-auto"
+                >
                   <Button
                     variant="primary"
                     size="md"

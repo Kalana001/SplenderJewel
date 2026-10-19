@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   resolveHeroData,
   buildCollageItems,
@@ -820,5 +822,104 @@ test('Stage 4: HeroBanner preserves active banners mode when banners exist', () 
   assert.equal(heroData.mode, 'banners', 'Must preserve banners carousel mode when active banners exist');
   assert.equal(heroData.banners.length, 1);
   assert.equal(heroData.banners[0].title, 'Festive Luxury Drops');
+});
+
+// -----------------------------------------------------------------------------
+// 14. Hotfix: Explore Categories Anchor Navigation & Fallback Contracts
+// -----------------------------------------------------------------------------
+
+test('Hotfix: Secondary CTA points to /#categories by default when categories are available', () => {
+  const categories = [createMockCategory('c1', 'Rings', 'rings')];
+  const heroData = resolveHeroData([], null, [], categories);
+  assert.equal(
+    heroData.secondaryCtaLink,
+    '/#categories',
+    'CTA secondary link must point to /#categories when categories exist'
+  );
+  assert.equal(heroData.secondaryCtaText, 'Explore Categories');
+});
+
+test('Hotfix: Secondary CTA safely falls back to /shop when categories section is disabled in CMS', () => {
+  const categories = [createMockCategory('c1', 'Rings', 'rings')];
+  const disabledCategorySection: HomepageSection = {
+    id: 's-cat-disabled',
+    sectionKey: 'categories',
+    title: 'Categories',
+    subtitle: null,
+    displayOrder: 2,
+    isEnabled: false,
+    configData: {},
+    updatedAt: '2026-01-01T00:00:00Z',
+  };
+
+  const heroData = resolveHeroData([], null, [], categories, undefined, disabledCategorySection);
+  assert.equal(
+    heroData.secondaryCtaLink,
+    '/shop',
+    'When Categories section is disabled in CMS, secondary CTA must gracefully fall back to /shop'
+  );
+});
+
+test('Hotfix: Secondary CTA safely falls back to /shop when categories are empty', () => {
+  const heroData = resolveHeroData([], null, [], [], undefined, undefined, false);
+  assert.equal(
+    heroData.secondaryCtaLink,
+    '/shop',
+    'When no categories are available, secondary CTA must gracefully fall back to /shop'
+  );
+});
+
+test('Hotfix: Secondary CTA respects explicit custom CMS override even when categories exist', () => {
+  const cmsHero: HomepageSection = {
+    id: 'cms-hero-custom',
+    sectionKey: 'hero',
+    title: 'Custom Hero',
+    subtitle: null,
+    displayOrder: 1,
+    isEnabled: true,
+    configData: {
+      secondaryCtaLink: '/category/bracelets',
+      secondaryCtaText: 'View Bracelets',
+    },
+    updatedAt: '2026-01-01T00:00:00Z',
+  };
+
+  const categories = [createMockCategory('c1', 'Bracelets', 'bracelets')];
+  const heroData = resolveHeroData([], cmsHero, [], categories);
+  assert.equal(heroData.secondaryCtaLink, '/category/bracelets', 'Must preserve administrator custom link override');
+  assert.equal(heroData.secondaryCtaText, 'View Bracelets');
+});
+
+test('Hotfix: Target Categories section in page.tsx has id="categories" and responsive scroll offset', () => {
+  const pagePath = path.resolve(process.cwd(), 'app/(store)/page.tsx');
+  const pageContent = fs.readFileSync(pagePath, 'utf8');
+
+  // Verify id="categories" exists on the section
+  assert.ok(
+    pageContent.includes('id="categories"'),
+    'app/(store)/page.tsx must define id="categories" on the Categories section'
+  );
+
+  // Verify no duplicate id="categories" exists
+  const matches = pageContent.match(/id=["']categories["']/g);
+  assert.equal(matches?.length, 1, 'id="categories" must be completely unique and appear exactly once');
+
+  // Verify scroll-mt classes exist for sticky header avoidance
+  assert.ok(
+    pageContent.includes('scroll-mt-'),
+    'Categories section must include scroll-mt offset to prevent sticky header occlusion'
+  );
+});
+
+test('Hotfix: Existing navigation links remain completely intact', () => {
+  const categories = [createMockCategory('c1', 'Rings', 'rings')];
+  const heroData = resolveHeroData([], null, [], categories);
+
+  // Primary CTA intact
+  assert.equal(heroData.primaryCtaLink, '/shop');
+  assert.equal(heroData.primaryCtaText, 'Shop the Collection');
+
+  // WhatsApp CTA intact
+  assert.ok(heroData.whatsAppHref !== null && heroData.whatsAppHref.startsWith('https://wa.me/'));
 });
 

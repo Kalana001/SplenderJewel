@@ -37,7 +37,7 @@ export const HERO_FALLBACK_DEFAULTS = {
   primaryCtaText: 'Shop the Collection',
   primaryCtaLink: '/shop',
   secondaryCtaText: 'Explore Categories',
-  secondaryCtaLink: '#categories',
+  secondaryCtaLink: '/#categories',
   whatsAppMessage:
     'Hello Splender Jewel, I would like to enquire about your jewellery collection.',
 } as const;
@@ -47,10 +47,24 @@ export function resolveHeroData(
   heroSection?: HomepageSection | null,
   featuredProducts?: ProductPublic[],
   categories?: Category[],
-  whatsAppNumber?: string
+  whatsAppNumber?: string,
+  categoriesSection?: HomepageSection | null,
+  categoriesAvailable?: boolean
 ): HeroEditorialData {
   const activeBanners = (banners || []).filter((b) => b.isActive);
   const mode: 'banners' | 'editorial' = activeBanners.length > 0 ? 'banners' : 'editorial';
+
+  // Determine if categories section and items are active and available
+  let isCategoriesAvailable = true;
+  if (categoriesAvailable !== undefined) {
+    isCategoriesAvailable = categoriesAvailable;
+  } else if (categoriesSection !== undefined && categoriesSection !== null) {
+    isCategoriesAvailable =
+      Boolean(categoriesSection.isEnabled) &&
+      (categories !== undefined ? categories.length > 0 : true);
+  } else if (categories !== undefined) {
+    isCategoriesAvailable = categories.length > 0;
+  }
 
   // Eyebrow: CMS subtitle -> default
   const eyebrow =
@@ -77,9 +91,22 @@ export function resolveHeroData(
   const secondaryCtaText =
     (heroSection?.configData?.secondaryCtaText as string)?.trim() ||
     HERO_FALLBACK_DEFAULTS.secondaryCtaText;
-  const secondaryCtaLink =
-    (heroSection?.configData?.secondaryCtaLink as string)?.trim() ||
-    HERO_FALLBACK_DEFAULTS.secondaryCtaLink;
+  const configuredSecondaryLink =
+    (heroSection?.configData?.secondaryCtaLink as string)?.trim();
+
+  let secondaryCtaLink =
+    configuredSecondaryLink || HERO_FALLBACK_DEFAULTS.secondaryCtaLink;
+
+  // If pointing to categories anchor ('#categories' or '/#categories') but categories are unavailable,
+  // provide a working fallback to the shop catalog.
+  const isCategoriesAnchor =
+    secondaryCtaLink === '#categories' ||
+    secondaryCtaLink === '/#categories' ||
+    secondaryCtaLink.endsWith('#categories');
+
+  if (isCategoriesAnchor && !isCategoriesAvailable) {
+    secondaryCtaLink = '/shop';
+  }
 
   // WhatsApp Link Resolution:
   const phoneToUse = whatsAppNumber !== undefined ? whatsAppNumber : DEFAULT_DEV_STORE_CONFIG.whatsAppNumber;
