@@ -1,42 +1,29 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-
-export interface CartItem {
-  variantId: string;
-  productId: string;
-  productName: string;
-  variantTitle: string;
-  sku: string;
-  price: number;
-  discountPrice?: number | null;
-  imageUrl?: string | null;
-  slug: string;
-  quantity: number;
-  maxStock?: number;
-}
-
-export type AddToCartInput = Omit<CartItem, 'quantity'>;
-
-export interface AddToCartResult {
-  success: boolean;
-  addedQuantity: number;
-  totalQuantity: number;
-  error?: string;
-}
-
-export interface UpdateQuantityResult {
-  success: boolean;
-  updatedQuantity: number;
-  error?: string;
-}
-
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import type {
+  CartItem,
+  AddToCartInput,
+  AddToCartResult,
+  UpdateQuantityResult,
+} from '@/types/cart';
+import { createClient } from '@/lib/supabase/client';
+import {
+  getAuthenticatedCartAction,
+  saveAuthenticatedCartAction,
+  mergeGuestCartAction,
+  syncCartItemAction,
+  removeCartItemAction,
+  deductPurchasedCartItemsAction,
+  removePurchasedCartItemsAction,
+  clearCartAction,
+} from './actions';
 import {
   calculateStockAdjustments,
   type SyncCartStockAdjustment,
 } from './validation';
 
-export type { SyncCartStockAdjustment };
+export type { CartItem, AddToCartInput, AddToCartResult, UpdateQuantityResult, SyncCartStockAdjustment };
 export { calculateStockAdjustments };
 
 export interface SyncCartStockResult {
@@ -48,29 +35,146 @@ interface CartContextType {
   isLoaded: boolean;
   totalCount: number;
   subtotal: number;
+  syncError: string | null;
+  isSyncing: boolean;
+  retrySync: () => Promise<void>;
   addItem: (item: AddToCartInput, quantity?: number) => AddToCartResult;
   removeItem: (variantId: string) => void;
   updateQuantity: (variantId: string, quantity: number) => UpdateQuantityResult;
   updateItemStock: (variantId: string, maxStock: number) => void;
   syncCartStock: (stockMap: Record<string, number>) => SyncCartStockResult;
   clearCart: () => void;
+  clearPurchasedItems: (
+    purchasedItems: ({ variantId: string; quantity: number } | string)[],
+    orderNumber?: string
+  ) => void;
 }
 
 const CART_STORAGE_KEY = 'splender_cart_v1';
+const GUEST_CART_FLAG = 'splender_guest_cart_active';
+const GUEST_MERGE_TOKEN = 'splender_guest_merge_token';
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
-  const itemsRef = React.useRef<CartItem[]>(items);
+  const itemsRef = useRef<CartItem[]>(items);
+
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const isAuthenticatedRef = useRef(false);
+
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const mutationQueueRef = useRef<Promise<any>>(Promise.resolve());
 
   // Keep itemsRef synchronized with current items state
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
 
-  // Hydrate from localStorage on client mount
+  useEffect(() => {
+    isAuthenticatedRef.current = isAuthenticated;
+  }, [isAuthenticated]);
+
+  // Enqueue server mutations to guarantee strict sequential FIFO execution (no out-of-order writes)
+  const queueMutation = useCallback((mutationFn: () => Promise<{ success: boolean; error?: string }>) => {
+    if (!isAuthenticatedRef.current) return;
+    setIsSyncing(true);
+    mutationQueueRef.current = mutationQueueRef.current
+      .then(async () => {
+        let attempts = 0;
+        while (attempts < 2) {
+          try {
+            const res = await mutationFn();
+            if (res.success) {
+              setSyncError(null);
+              return;
+            }
+            attempts++;
+            if (attempts >= 2) {
+              setSyncError(res.error || 'Failed to sync bag changes to your account. Your items are saved locally.');
+            } else {
+              await new Promise((r) => setTimeout(r, 500));
+            }
+          } catch (err: any) {
+            attempts++;
+            if (attempts >= 2) {
+              setSyncError('Network connection issue. Your bag items are saved locally.');
+            } else {
+              await new Promise((r) => setTimeout(r, 500));
+            }
+          }
+        }
+      })
+      .finally(() => {
+        setIsSyncing(false);
+      });
+  }, []);
+
+  // Explicit retry of cart state to server
+  const retrySync = useCallback(async () => {
+    if (!isAuthenticatedRef.current) return;
+    setSyncError(null);
+    setIsSyncing(true);
+    try {
+      const hasActiveGuestBag = typeof window !== 'undefined' && localStorage.getItem(GUEST_CART_FLAG) === 'true';
+      if (hasActiveGuestBag && itemsRef.current.length > 0) {
+        // Retry pending guest merge using persistent token
+        let mergeToken = localStorage.getItem(GUEST_MERGE_TOKEN);
+        if (!mergeToken) {
+          mergeToken = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `merge_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+          localStorage.setItem(GUEST_MERGE_TOKEN, mergeToken);
+        }
+        const res = await mergeGuestCartAction(itemsRef.current, { mergeToken });
+        if (res.success && res.items) {
+          localStorage.removeItem(GUEST_CART_FLAG);
+          localStorage.removeItem(GUEST_MERGE_TOKEN);
+          setSyncError(null);
+          itemsRef.current = res.items;
+          setItems(res.items);
+          localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(res.items));
+          window.dispatchEvent(new Event('splender:cart-updated'));
+          return;
+        } else {
+          setSyncError(res.error || 'Failed to merge your guest shopping bag with your account. Your items are saved locally.');
+          return;
+        }
+      }
+
+      // Standard sync retry
+      const res = await saveAuthenticatedCartAction(itemsRef.current);
+      if (res.success) {
+        setSyncError(null);
+      } else {
+        setSyncError(res.error || 'Unable to sync shopping bag with your account.');
+      }
+    } catch {
+      setSyncError('Network connection issue. Your items are saved locally.');
+    } finally {
+      setIsSyncing(false);
+    }
+  }, []);
+
+  // Atomically persist cart to React state and localStorage
+  const persistItems = useCallback(
+    (newItems: CartItem[]) => {
+      itemsRef.current = newItems;
+      setItems(newItems);
+      try {
+        localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(newItems));
+        if (!isAuthenticatedRef.current && newItems.length > 0) {
+          localStorage.setItem(GUEST_CART_FLAG, 'true');
+        }
+        window.dispatchEvent(new Event('splender:cart-updated'));
+      } catch (e) {
+        console.warn('[Cart] Failed to persist cart to localStorage:', e);
+      }
+    },
+    []
+  );
+
+  // Hydrate from localStorage on client mount, then initialize authenticated state
   useEffect(() => {
     try {
       const stored = localStorage.getItem(CART_STORAGE_KEY);
@@ -96,7 +200,146 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Multi-tab synchronization
+  // Cross-device & authentication synchronization
+  useEffect(() => {
+    const supabase = createClient();
+    if (!supabase) return;
+
+    let isMounted = true;
+
+    const handleAuthenticatedSession = async () => {
+      isAuthenticatedRef.current = true;
+      setIsAuthenticated(true);
+      try {
+        const local = itemsRef.current;
+        const hasActiveGuestBag = typeof window !== 'undefined' && localStorage.getItem(GUEST_CART_FLAG) === 'true';
+
+        if (hasActiveGuestBag && local && local.length > 0) {
+          // Attempt guest merge: persist unique mergeToken across retries until confirmed success
+          let mergeToken = localStorage.getItem(GUEST_MERGE_TOKEN);
+          if (!mergeToken) {
+            mergeToken = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `merge_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+            localStorage.setItem(GUEST_MERGE_TOKEN, mergeToken);
+          }
+          const res = await mergeGuestCartAction(local, { mergeToken });
+          if (isMounted && res.success && res.items) {
+            localStorage.removeItem(GUEST_CART_FLAG);
+            localStorage.removeItem(GUEST_MERGE_TOKEN);
+            setSyncError(null);
+            itemsRef.current = res.items;
+            setItems(res.items);
+            localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(res.items));
+            window.dispatchEvent(new Event('splender:cart-updated'));
+          } else if (isMounted) {
+            // Preservation on merge failure: keep GUEST_CART_FLAG and local items intact; display actionable error
+            setSyncError(res.error || 'Failed to merge your guest shopping bag with your account. Your items are saved locally.');
+          }
+        } else {
+          // Normal hydration / already logged in: load authoritative server cart directly (never duplicate quantities)
+          const res = await getAuthenticatedCartAction();
+          if (isMounted && res.success && res.items) {
+            itemsRef.current = res.items;
+            setItems(res.items);
+            localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(res.items));
+            window.dispatchEvent(new Event('splender:cart-updated'));
+          }
+        }
+      } catch (err) {
+        console.warn('[Cart] Failed to initialize authenticated cart:', err);
+        if (isMounted) {
+          setSyncError('Network connection issue while syncing shopping bag. Your items are saved locally.');
+        }
+      }
+    };
+
+    const handleUnauthenticatedSession = () => {
+      isAuthenticatedRef.current = false;
+      setIsAuthenticated(false);
+    };
+
+    // 1. Check existing session on mount
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!isMounted) return;
+      if (session?.user) {
+        handleAuthenticatedSession();
+      } else {
+        handleUnauthenticatedSession();
+      }
+    });
+
+    // 2. Listen for auth changes (SIGNED_IN, SIGNED_OUT, etc.)
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!isMounted) return;
+      if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+        if (session?.user) {
+          await handleAuthenticatedSession();
+        }
+      } else if (event === 'SIGNED_OUT') {
+        handleUnauthenticatedSession();
+        // On logout: cancel queue, wipe in-memory state and localStorage to prevent cross-account leak
+        mutationQueueRef.current = Promise.resolve();
+        itemsRef.current = [];
+        setItems([]);
+        setSyncError(null);
+        try {
+          localStorage.removeItem(CART_STORAGE_KEY);
+          localStorage.removeItem(GUEST_CART_FLAG);
+          localStorage.removeItem(GUEST_MERGE_TOKEN);
+          window.dispatchEvent(new Event('splender:cart-updated'));
+        } catch {}
+      }
+    });
+
+    // 3. Listen for custom sign-out event from SignOutButton
+    const handleCustomSignOut = () => {
+      handleUnauthenticatedSession();
+      mutationQueueRef.current = Promise.resolve();
+      itemsRef.current = [];
+      setItems([]);
+      setSyncError(null);
+      try {
+        localStorage.removeItem(CART_STORAGE_KEY);
+        localStorage.removeItem(GUEST_CART_FLAG);
+        localStorage.removeItem(GUEST_MERGE_TOKEN);
+        window.dispatchEvent(new Event('splender:cart-updated'));
+      } catch {}
+    };
+    window.addEventListener('splender:auth-signed-out', handleCustomSignOut);
+
+    return () => {
+      isMounted = false;
+      subscription?.unsubscribe();
+      window.removeEventListener('splender:auth-signed-out', handleCustomSignOut);
+    };
+  }, []);
+
+  // Cross-device synchronization on already-open tabs/windows (visibilitychange & focus)
+  useEffect(() => {
+    const handleTabFocus = async () => {
+      if (document.visibilityState === 'visible' && isAuthenticatedRef.current) {
+        try {
+          const res = await getAuthenticatedCartAction();
+          if (res.success && res.items) {
+            itemsRef.current = res.items;
+            setItems(res.items);
+            localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(res.items));
+          }
+        } catch {}
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleTabFocus);
+    window.addEventListener('focus', handleTabFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleTabFocus);
+      window.removeEventListener('focus', handleTabFocus);
+    };
+  }, []);
+
+  // Multi-tab synchronization on same device (localStorage storage event)
   useEffect(() => {
     function handleStorage(e: StorageEvent) {
       if (e.key === CART_STORAGE_KEY && e.newValue) {
@@ -118,18 +361,6 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
-  }, []);
-
-  // Atomically persist cart to React state and localStorage
-  const persistItems = useCallback((newItems: CartItem[]) => {
-    itemsRef.current = newItems;
-    setItems(newItems);
-    try {
-      localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(newItems));
-      window.dispatchEvent(new Event('splender:cart-updated'));
-    } catch (e) {
-      console.warn('[Cart] Failed to persist cart to localStorage:', e);
-    }
   }, []);
 
   // Add item to bag with stock bounds & duplicate accumulation validation
@@ -235,9 +466,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       }
 
       persistItems(updated);
+      queueMutation(() => syncCartItemAction(item.variantId, opResult.totalQuantity));
       return opResult;
     },
-    [persistItems]
+    [persistItems, queueMutation]
   );
 
   // Remove item from bag
@@ -245,8 +477,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     (variantId: string) => {
       const updated = itemsRef.current.filter((i) => i.variantId !== variantId);
       persistItems(updated);
+      queueMutation(() => removeCartItemAction(variantId));
     },
-    [persistItems]
+    [persistItems, queueMutation]
   );
 
   // Update item quantity (0 removes the item) with bounds checking
@@ -299,13 +532,14 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         item.variantId === variantId ? { ...item, quantity: rawQty } : item
       );
       persistItems(updated);
+      queueMutation(() => syncCartItemAction(variantId, rawQty));
 
       return {
         success: true,
         updatedQuantity: rawQty,
       };
     },
-    [removeItem, persistItems]
+    [removeItem, persistItems, queueMutation]
   );
 
   // Update item known stock ceiling
@@ -337,17 +571,79 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     [persistItems]
   );
 
-  // Clear entire cart (e.g., after order checkout completes)
+  // Clear entire cart (e.g., when customer explicitly empties shopping bag)
   const clearCart = useCallback(() => {
     itemsRef.current = [];
     setItems([]);
     try {
       localStorage.removeItem(CART_STORAGE_KEY);
+      localStorage.removeItem(GUEST_CART_FLAG);
       window.dispatchEvent(new Event('splender:cart-updated'));
     } catch (e) {
       console.warn('[Cart] Failed to clear localStorage cart:', e);
     }
-  }, []);
+    queueMutation(() => clearCartAction());
+  }, [queueMutation]);
+
+  // Deduct purchased items upon checkout success (protects newly added items of same or different variants from other devices)
+  const lastDeductedOrderRef = useRef<string | null>(null);
+
+  const clearPurchasedItems = useCallback(
+    (purchasedInput: ({ variantId: string; quantity: number } | string)[], orderNumber?: string) => {
+      if (!purchasedInput || purchasedInput.length === 0) return;
+
+      // Idempotency: skip if already deducted for this orderNumber on this client
+      if (orderNumber && lastDeductedOrderRef.current === orderNumber) {
+        return;
+      }
+      if (orderNumber) {
+        lastDeductedOrderRef.current = orderNumber;
+      }
+
+      // Normalize input
+      const normalizedItems: { variantId: string; quantity: number }[] = purchasedInput.map((p) => {
+        if (typeof p === 'string') {
+          return { variantId: p, quantity: 999999 };
+        }
+        return { variantId: p.variantId, quantity: Number(p.quantity) || 1 };
+      });
+
+      const purchasedMap = new Map<string, number>();
+      for (const item of normalizedItems) {
+        const cur = purchasedMap.get(item.variantId) || 0;
+        purchasedMap.set(item.variantId, cur + item.quantity);
+      }
+
+      // Locally deduct purchased quantities, preserving any surplus/newer quantities (e.g. from Device B)
+      const remaining: CartItem[] = [];
+      for (const item of itemsRef.current) {
+        const pQty = purchasedMap.get(item.variantId) || 0;
+        if (pQty === 0) {
+          remaining.push(item);
+        } else if (item.quantity > pQty) {
+          remaining.push({
+            ...item,
+            quantity: item.quantity - pQty,
+          });
+        }
+      }
+
+      itemsRef.current = remaining;
+      setItems(remaining);
+      try {
+        localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(remaining));
+        if (remaining.length === 0) {
+          localStorage.removeItem(GUEST_CART_FLAG);
+        }
+        window.dispatchEvent(new Event('splender:cart-updated'));
+      } catch (e) {
+        console.warn('[Cart] Failed to update localStorage cart:', e);
+      }
+
+      queueMutation(() => deductPurchasedCartItemsAction(normalizedItems, orderNumber));
+    },
+    [queueMutation]
+  );
 
   // Calculate metrics
   const totalCount = useMemo(() => {
@@ -370,14 +666,33 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       isLoaded,
       totalCount,
       subtotal,
+      syncError,
+      isSyncing,
+      retrySync,
       addItem,
       removeItem,
       updateQuantity,
       updateItemStock,
       syncCartStock,
       clearCart,
+      clearPurchasedItems,
     }),
-    [items, isLoaded, totalCount, subtotal, addItem, removeItem, updateQuantity, updateItemStock, syncCartStock, clearCart]
+    [
+      items,
+      isLoaded,
+      totalCount,
+      subtotal,
+      syncError,
+      isSyncing,
+      retrySync,
+      addItem,
+      removeItem,
+      updateQuantity,
+      updateItemStock,
+      syncCartStock,
+      clearCart,
+      clearPurchasedItems,
+    ]
   );
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

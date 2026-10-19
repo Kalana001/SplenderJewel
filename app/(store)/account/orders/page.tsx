@@ -7,7 +7,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatCurrency } from '@/lib/config/store';
-import { Package, ArrowLeft, Clock, Eye, Truck, Gem, ArrowRight } from 'lucide-react';
+import { Package, ArrowLeft, Clock, Truck, Gem, ArrowRight } from 'lucide-react';
 
 export const metadata = {
   title: 'Order History | Splender Jewel',
@@ -112,57 +112,61 @@ export default async function AccountOrdersPage() {
               const total = Number(order.total_amount ?? order.total ?? 0);
 
               return (
-                <Card
+                <Link
                   key={order.id}
-                  className="border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-luxury-surface hover:border-luxury-gold/50 transition-colors"
+                  href={`/account/orders/${order.id}`}
+                  className="group block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-luxury-gold focus-visible:ring-offset-2 transition-all duration-200"
                 >
-                  <CardContent className="p-5 sm:p-6">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-neutral-100 dark:border-neutral-850">
-                      <div>
-                        <div className="flex items-center space-x-3">
-                          <span className="font-mono text-sm font-bold text-foreground">
-                            Order #{order.order_number}
-                          </span>
-                          <Badge variant={getStatusBadgeVariant(status)}>
-                            {status.toUpperCase()}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center space-x-2 text-xs text-neutral-500 mt-1">
-                          <Clock className="h-3.5 w-3.5" />
-                          <span>Placed on {orderDate}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center space-x-4 sm:text-right">
+                  <Card className="border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-luxury-surface group-hover:border-luxury-gold/60 group-hover:shadow-md transition-all">
+                    <CardContent className="p-5 sm:p-6">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-neutral-100 dark:border-neutral-850">
                         <div>
-                          <div className="text-xs text-neutral-500">Total Amount</div>
-                          <div className="font-semibold text-base sm:text-lg text-foreground">
-                            {formatCurrency(total)}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-xs sm:text-sm font-bold text-foreground break-all">
+                              Order #{order.order_number}
+                            </span>
+                            <Badge variant={getStatusBadgeVariant(status)} className="shrink-0 text-[10px] sm:text-xs">
+                              {status.toUpperCase()}
+                            </Badge>
+                            <Badge variant="outline" className="shrink-0 text-[10px] sm:text-xs uppercase border-neutral-300 dark:border-neutral-700">
+                              {order.payment_method === 'bank_transfer' ? 'Bank Transfer' : 'Cash on Delivery'}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center space-x-2 text-xs text-neutral-500 mt-1">
+                            <Clock className="h-3.5 w-3.5 shrink-0" />
+                            <span>Placed on {orderDate}</span>
                           </div>
                         </div>
 
-                        <Button asChild variant="outline" size="sm" className="text-xs shrink-0">
-                          <Link href={`/account/orders/${order.id}`}>
-                            <Eye className="h-3.5 w-3.5 mr-1.5" />
-                            View Details
-                          </Link>
-                        </Button>
-                      </div>
-                    </div>
+                        <div className="flex items-center justify-between sm:justify-end space-x-4 sm:text-right">
+                          <div>
+                            <div className="text-xs text-neutral-500">Total Amount</div>
+                            <div className="font-semibold text-base sm:text-lg text-foreground">
+                              {formatCurrency(total)}
+                            </div>
+                          </div>
 
-                    <div className="pt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs text-neutral-600 dark:text-neutral-400">
-                      <div>
-                        <span className="font-medium text-foreground">Recipient: </span>
-                        {order.customer_name} ({order.phone1})
+                          <div className="inline-flex items-center gap-1.5 text-xs font-medium text-luxury-gold group-hover:text-luxury-gold-dark transition-colors shrink-0">
+                            <span>View Details</span>
+                            <ArrowRight className="h-4 w-4 transform group-hover:translate-x-1 transition-transform" />
+                          </div>
+                        </div>
                       </div>
-                      <div className="sm:col-span-1 lg:col-span-2">
-                        <span className="font-medium text-foreground">Delivery To: </span>
-                        {order.address_line}, {order.district}
-                        {order.city ? `, ${order.city}` : ''}
+
+                      <div className="pt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs text-neutral-600 dark:text-neutral-400">
+                        <div>
+                          <span className="font-medium text-foreground">Recipient: </span>
+                          {order.customer_name} ({order.phone1})
+                        </div>
+                        <div className="sm:col-span-1 lg:col-span-2">
+                          <span className="font-medium text-foreground">Delivery To: </span>
+                          {order.address_line}, {order.district}
+                          {order.city ? `, ${order.city}` : ''}
+                        </div>
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
+                </Link>
               );
             })}
           </div>

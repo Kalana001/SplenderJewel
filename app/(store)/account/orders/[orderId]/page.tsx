@@ -5,9 +5,8 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { Container } from '@/components/ui/container';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { formatCurrency } from '@/lib/config/store';
-import { ArrowLeft, Clock, MapPin, PackageCheck, Receipt, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Clock, MapPin, MessageCircle, PackageCheck, Receipt, ShieldCheck } from 'lucide-react';
 
 interface AccountOrderDetailPageProps {
   params: Promise<{ orderId: string }>;
@@ -121,16 +120,19 @@ export default async function AccountOrderDetailPage({ params }: AccountOrderDet
         {/* Order Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-6 border-b border-neutral-200 dark:border-neutral-800 gap-4 mb-8">
           <div>
-            <div className="flex items-center space-x-3">
-              <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              <h1 className="font-serif text-xl sm:text-3xl font-bold tracking-tight text-foreground break-all">
                 Order #{order.order_number}
               </h1>
-              <Badge variant={getStatusBadgeVariant(currentStatus)}>
+              <Badge variant={getStatusBadgeVariant(currentStatus)} className="shrink-0 text-xs">
                 {currentStatus.toUpperCase()}
               </Badge>
+              <Badge variant="outline" className="shrink-0 text-xs uppercase border-neutral-300 dark:border-neutral-700">
+                {order.payment_method === 'bank_transfer' ? 'Bank Transfer' : 'Cash on Delivery'}
+              </Badge>
             </div>
-            <div className="flex items-center space-x-2 text-xs text-neutral-500 mt-1">
-              <Clock className="h-3.5 w-3.5" />
+            <div className="flex items-center space-x-2 text-xs text-neutral-500 mt-1.5">
+              <Clock className="h-3.5 w-3.5 shrink-0" />
               <span>Placed on {orderDate}</span>
             </div>
           </div>
@@ -251,9 +253,17 @@ export default async function AccountOrderDetailPage({ params }: AccountOrderDet
                       {order.payment_method || 'Cash on Delivery'}
                     </span>
                   </div>
-                  <Button asChild variant="outline" size="sm" className="w-full text-xs">
-                    <Link href="/contact">Need help with this order?</Link>
-                  </Button>
+                  <a
+                    href={`https://wa.me/94764689907?text=${encodeURIComponent(
+                      `Hello Splender Jewel, I need help with my order ${order.order_number}.`
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center w-full gap-2 px-4 py-2.5 rounded-sm border border-luxury-gold/40 bg-neutral-900/60 hover:bg-luxury-gold hover:text-luxury-black text-luxury-gold text-xs font-semibold uppercase tracking-wider transition-all duration-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-luxury-gold"
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                    <span>Need Help With This Order?</span>
+                  </a>
                 </div>
               </CardContent>
             </Card>

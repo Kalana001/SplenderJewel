@@ -24,6 +24,7 @@ export function SignOutButton({
     setLoading(true);
     try {
       await signOutCustomer();
+      window.dispatchEvent(new Event('splender:auth-signed-out'));
       router.push('/login');
       router.refresh();
     } catch (err) {

@@ -29,7 +29,7 @@ import { validateCouponAction } from '@/lib/coupons/actions';
 
 export default function CheckoutPage() {
   const router = useRouter();
-  const { items, isLoaded, totalCount, subtotal, clearCart } = useCart();
+  const { items, isLoaded, totalCount, subtotal, clearCart, clearPurchasedItems } = useCart();
   const isLiveCheckout = process.env.NEXT_PUBLIC_ENABLE_LIVE_CHECKOUT === 'true';
 
   // Tester Authorization State
@@ -223,10 +223,14 @@ export default function CheckoutPage() {
         return;
       }
 
-      // Order created successfully: reset idempotency state, clear client bag, and navigate to confirmation
+      // Order created successfully: reset idempotency state, clear purchased items from cart, and navigate to confirmation
       clientRequestIdRef.current = null;
       clientRequestPayloadRef.current = null;
-      clearCart();
+      const purchasedItems = items.map((i) => ({
+        variantId: i.variantId,
+        quantity: i.quantity,
+      }));
+      clearPurchasedItems(purchasedItems, res.orderNumber);
       const confirmationUrl = res.orderToken
         ? `/order-confirmation/${res.orderNumber}?token=${encodeURIComponent(res.orderToken)}`
         : `/order-confirmation/${res.orderNumber}`;

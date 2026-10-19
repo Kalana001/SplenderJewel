@@ -31,6 +31,8 @@ export default function CartPage() {
     isLoaded,
     totalCount,
     subtotal,
+    syncError,
+    retrySync,
     updateQuantity,
     removeItem,
     syncCartStock,
@@ -276,6 +278,23 @@ export default function CartPage() {
             </Link>
           </div>
         </div>
+
+        {/* Sync Failure Alert Banner */}
+        {syncError && (
+          <div className="flex items-center justify-between gap-3 bg-amber-950/80 border border-amber-800/70 text-amber-200 px-4 py-3 rounded-lg text-xs sm:text-sm shadow-md animate-fadeIn">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-400" />
+              <span>{syncError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => retrySync()}
+              className="text-xs underline hover:text-white shrink-0 font-medium"
+            >
+              Retry Sync
+            </button>
+          </div>
+        )}
 
         {/* Verification Failure Alert Banner */}
         {verificationError && (
