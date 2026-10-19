@@ -36,9 +36,11 @@ export function isValidDistrict(district: string): district is SriLankaDistrict 
   return SRI_LANKA_DISTRICTS.includes(district as SriLankaDistrict);
 }
 
+export { calculateShippingFee, getShippingBreakdown } from './shipping.ts';
+
 /**
- * Returns canonical estimated delivery fee by district (LKR).
- * Defaulting to 350 for Western Province (Colombo, Gampaha, Kalutara) and 450 islandwide.
+ * @deprecated District-based delivery fees are superseded by payment method and item quantity tiers in `@/lib/config/shipping`.
+ * Retained strictly for legacy backward compatibility.
  */
 export function getEstimatedDeliveryFee(district?: string | null): number {
   if (!district) return 350;

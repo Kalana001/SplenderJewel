@@ -144,18 +144,17 @@ export function DeliverySettingsManager({
 
   return (
     <div className="space-y-8">
-      {/* Policy & Discrepancy Notice */}
+      {/* Policy & Tier Pricing Notice */}
       <div className="bg-amber-950/30 border border-amber-800/60 rounded-lg p-5 text-amber-200 space-y-2">
         <div className="flex items-center gap-2 font-serif font-bold text-amber-400">
           <AlertTriangle className="h-5 w-5 shrink-0" />
-          <span>Delivery Pricing Matrix & Policy Architecture</span>
+          <span>Payment-Method & Item-Quantity Tiered Shipping System</span>
         </div>
         <p className="text-xs leading-relaxed text-amber-200/90">
-          <strong>Business Notice:</strong> The storefront currently uses a 2-tier client estimate: 
-          <strong> Rs. 350 for Western Province</strong> and <strong>Rs. 450 Islandwide</strong>.
-          The canonical database matrix seeds Northern & Eastern provinces at <strong>Rs. 500</strong>.
-          When customer orders are processed by the secure server action (<code className="bg-amber-900/60 px-1 py-0.5 rounded font-mono text-[11px]">createOrderAction</code>),
-          the exact rates saved below in the <code className="bg-amber-900/60 px-1 py-0.5 rounded font-mono text-[11px]">delivery_districts</code> table are authoritatively applied.
+          <strong>Active Store Policy:</strong> Delivery charges apply uniformly across all 25 Sri Lankan districts based on payment method and aggregate cart item quantity:
+          <br />• <strong>Bank Transfer (Sri Lanka Post Speed Post):</strong> 1–3 items: LKR 200 | 4–7 items: LKR 250 | 8+ items: LKR 350.
+          <br />• <strong>Cash on Delivery (Sri Lanka Post COD):</strong> 1–3 items: LKR 350 | 4–10 items: LKR 400 | 11+ items: LKR 500.
+          <br />The <code className="bg-amber-900/60 px-1 py-0.5 rounded font-mono text-[11px]">delivery_districts</code> table below governs district operational availability (<code className="bg-amber-900/60 px-1 py-0.5 rounded font-mono text-[11px]">is_active</code>) and provincial routing.
         </p>
       </div>
 

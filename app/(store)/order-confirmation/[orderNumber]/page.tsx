@@ -257,7 +257,7 @@ export default async function OrderConfirmationPage({
               <span className="font-semibold text-white">{formatCurrency(order.subtotal)}</span>
             </div>
             <div className="flex justify-between text-neutral-300">
-              <span>Delivery Charge ({order.district})</span>
+              <span>Delivery Charge ({order.payment_method === 'bank_transfer' ? 'Sri Lanka Post Speed Post' : 'Sri Lanka Post COD'})</span>
               <span className="font-semibold text-white">{formatCurrency(order.delivery_fee)}</span>
             </div>
             {order.discount_amount > 0 && (

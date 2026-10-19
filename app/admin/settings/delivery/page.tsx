@@ -25,7 +25,7 @@ export default async function AdminDeliverySettingsPage() {
             Delivery Matrix & Shipping Rates
           </h1>
           <p className="text-xs sm:text-sm text-neutral-400 mt-1">
-            Configure courier delivery charges, free shipping thresholds, and active status for all 25 Sri Lankan districts.
+            Review payment-method and quantity delivery tier rules, free shipping thresholds, and operational status for all 25 Sri Lankan districts.
           </p>
         </div>
       </div>

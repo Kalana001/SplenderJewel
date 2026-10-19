@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -21,15 +21,31 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useCart } from '@/lib/cart/cart-context';
 import { formatCurrency, getWhatsAppLink } from '@/lib/config/store';
-import { SRI_LANKA_DISTRICTS, getEstimatedDeliveryFee, type SriLankaDistrict } from '@/lib/config/districts';
+import { SRI_LANKA_DISTRICTS, type SriLankaDistrict } from '@/lib/config/districts';
+import { getShippingBreakdown } from '@/lib/config/shipping';
 import { PAYMENT_METHODS, type PaymentMethod } from '@/lib/config/constants';
-import { createOrderAction } from '@/lib/orders/actions';
+import { createOrderAction, checkTesterAccessAction } from '@/lib/orders/actions';
 import { validateCouponAction } from '@/lib/coupons/actions';
 
 export default function CheckoutPage() {
   const router = useRouter();
   const { items, isLoaded, totalCount, subtotal, clearCart } = useCart();
   const isLiveCheckout = process.env.NEXT_PUBLIC_ENABLE_LIVE_CHECKOUT === 'true';
+
+  // Tester Authorization State
+  const [testerState, setTesterState] = useState<{ isTester: boolean; isLiveCheckout: boolean; email?: string } | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    checkTesterAccessAction()
+      .then((res) => {
+        if (isMounted) setTesterState(res);
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Form Fields
   const [customerName, setCustomerName] = useState('');
@@ -55,8 +71,13 @@ export default function CheckoutPage() {
   const clientRequestIdRef = useRef<string | null>(null);
   const clientRequestPayloadRef = useRef<string | null>(null);
 
-  // Delivery fee dynamically calculated by selected district
-  const deliveryFee = getEstimatedDeliveryFee(district);
+  // Delivery fee dynamically calculated by payment method and total item quantity
+  const totalItemQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
+  const shippingBreakdown = getShippingBreakdown({
+    paymentMethod,
+    totalQuantity: Math.max(1, totalItemQuantity),
+  });
+  const deliveryFee = totalItemQuantity > 0 ? shippingBreakdown.fee : 0;
   const discountAmount = appliedCoupon?.calculatedDiscount || 0;
   const grandTotal = Math.max(0, subtotal - discountAmount) + deliveryFee;
 
@@ -418,7 +439,7 @@ export default function CheckoutPage() {
                     >
                       {SRI_LANKA_DISTRICTS.map((d) => (
                         <option key={d} value={d} className="bg-neutral-950 text-white">
-                          {d} ({getEstimatedDeliveryFee(d) === 350 ? 'Rs. 350' : 'Rs. 450'})
+                          {d}
                         </option>
                       ))}
                     </select>
@@ -640,7 +661,7 @@ export default function CheckoutPage() {
                   )}
 
                   <div className="flex justify-between text-neutral-300">
-                    <span>Delivery ({district})</span>
+                    <span>Delivery ({shippingBreakdown.courierService})</span>
                     <span className="font-semibold text-white">{formatCurrency(deliveryFee)}</span>
                   </div>
 
@@ -652,29 +673,41 @@ export default function CheckoutPage() {
 
                 {/* Storefront Preview / Testing Mode Notice */}
                 {!isLiveCheckout && (
-                  <div className="p-4 bg-amber-950/40 border border-amber-800/60 rounded-lg text-amber-200 text-xs space-y-2.5">
-                    <div className="flex items-center gap-2">
-                      <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
-                      <strong className="font-semibold text-amber-300">Storefront Testing Mode</strong>
+                  testerState?.isTester ? (
+                    <div className="p-4 bg-emerald-950/40 border border-emerald-800/60 rounded-lg text-emerald-200 text-xs space-y-2">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                        <strong className="font-semibold text-emerald-300">Authorized Tester Mode Active</strong>
+                      </div>
+                      <p className="text-[11px] text-emerald-200/90 leading-relaxed">
+                        Authenticated session verified ({testerState.email || 'Authorized Tester ID'}). Controlled test order submission is enabled for your session only.
+                      </p>
                     </div>
-                    <p className="text-[11px] text-amber-200/90 leading-relaxed">
-                      Online automated checkout is currently in development testing mode. Live orders and payments are not being processed through this form.
-                    </p>
-                    <a
-                      href="https://wa.me/94764689907?text=Hello%20Splender%20Jewel%2C%20I%20would%20like%20to%20place%20an%20order."
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-xs text-luxury-gold hover:text-luxury-gold-light font-medium transition-colors pt-0.5"
-                    >
-                      <MessageCircle className="h-3.5 w-3.5" />
-                      <span>Order directly via WhatsApp Concierge (+94 76 468 9907)</span>
-                    </a>
-                  </div>
+                  ) : (
+                    <div className="p-4 bg-amber-950/40 border border-amber-800/60 rounded-lg text-amber-200 text-xs space-y-2.5">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
+                        <strong className="font-semibold text-amber-300">Storefront Testing Mode</strong>
+                      </div>
+                      <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                        Online automated checkout is currently in development testing mode. Live orders and payments are not being processed through this form.
+                      </p>
+                      <a
+                        href="https://wa.me/94764689907?text=Hello%20Splender%20Jewel%2C%20I%20would%20like%20to%20place%20an%20order."
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs text-luxury-gold hover:text-luxury-gold-light font-medium transition-colors pt-0.5"
+                      >
+                        <MessageCircle className="h-3.5 w-3.5" />
+                        <span>Order directly via WhatsApp Concierge (+94 76 468 9907)</span>
+                      </a>
+                    </div>
+                  )
                 )}
 
                 {/* Submit Action */}
                 <div className="space-y-3 pt-2">
-                  {isLiveCheckout ? (
+                  {isLiveCheckout || testerState?.isTester ? (
                     <Button
                       type="submit"
                       variant="gold"
@@ -688,7 +721,7 @@ export default function CheckoutPage() {
                           <span>Processing Order...</span>
                         </>
                       ) : (
-                        <span>Confirm & Place Order</span>
+                        <span>{isLiveCheckout ? 'Confirm & Place Order' : 'Confirm & Place Test Order (Authorized)'}</span>
                       )}
                     </Button>
                   ) : (
@@ -724,6 +757,8 @@ export default function CheckoutPage() {
                   <p className="text-[11px] text-neutral-400 text-center leading-relaxed">
                     {isLiveCheckout
                       ? 'By confirming, you agree to our islandwide delivery terms.'
+                      : testerState?.isTester
+                      ? 'Authorized testing mode. Test order will be safely processed for end-to-end verification.'
                       : 'Testing preview only. No charge or real delivery will be scheduled.'}
                   </p>
                 </div>

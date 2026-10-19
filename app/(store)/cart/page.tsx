@@ -481,7 +481,7 @@ export default function CartPage() {
 
                 <div className="flex justify-between text-neutral-400">
                   <span>Delivery Charges</span>
-                  <span className="text-xs text-neutral-400 italic">Calculated at checkout</span>
+                  <span className="text-xs text-neutral-400 italic">From Rs. 200 (Calculated at checkout)</span>
                 </div>
 
                 <div className="pt-3 border-t border-neutral-800 flex justify-between items-baseline">

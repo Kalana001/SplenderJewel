@@ -2,8 +2,9 @@
 
 import 'server-only';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { getCurrentUser } from '@/lib/auth/server';
+import { getCurrentUser, getAdminUser } from '@/lib/auth/server';
 import { isValidDistrict } from '@/lib/config/districts';
+import { calculateShippingFee } from '@/lib/config/shipping';
 import { PAYMENT_METHODS, ORDER_STATUSES, PAYMENT_STATUSES, type PaymentMethod } from '@/lib/config/constants';
 import { mapDbOrderToDomain, type Order, type OrderDbRow, type OrderItem } from '@/types/order';
 
@@ -38,8 +39,44 @@ export interface CreateOrderResult {
 }
 
 interface DistrictRow {
-  delivery_fee: number;
   is_active: boolean;
+  province: string;
+}
+
+import { AUTHORIZED_TESTER_USER_IDS, evaluateCheckoutPermission } from './authorization';
+export type { CheckoutPermissionParams, CheckoutPermissionResult } from './authorization';
+
+/**
+ * Checks whether the currently authenticated session is authorized to place test orders
+ * when the storefront is in development testing mode (NEXT_PUBLIC_ENABLE_LIVE_CHECKOUT != 'true').
+ */
+export async function checkTesterAccessAction(): Promise<{
+  isTester: boolean;
+  isLiveCheckout: boolean;
+  email?: string;
+}> {
+  const isLiveCheckout = process.env.NEXT_PUBLIC_ENABLE_LIVE_CHECKOUT === 'true';
+  if (isLiveCheckout) {
+    return { isTester: true, isLiveCheckout: true };
+  }
+
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    return { isTester: false, isLiveCheckout: false };
+  }
+
+  const adminUser = await getAdminUser();
+  const perm = evaluateCheckoutPermission({
+    isLiveCheckoutEnabled: false,
+    userId: currentUser.id,
+    adminUser: adminUser ? { id: adminUser.id, isActive: adminUser.isActive } : null,
+  });
+
+  return {
+    isTester: perm.allowed,
+    isLiveCheckout: false,
+    email: currentUser.email,
+  };
 }
 
 /**
@@ -58,11 +95,27 @@ interface DistrictRow {
 export async function createOrderAction(input: CreateOrderInput): Promise<CreateOrderResult> {
   try {
     // 0. Development & Testing Mode Guardrail
-    // Online order submission is safely blocked while checkout transactional database verification remains pending.
-    if (process.env.NEXT_PUBLIC_ENABLE_LIVE_CHECKOUT !== 'true') {
+    // Online public checkout remains strictly disabled until official launch.
+    // In preview mode, only verified authenticated active admins or designated tester user IDs can submit orders.
+    const isLiveCheckoutEnabled = process.env.NEXT_PUBLIC_ENABLE_LIVE_CHECKOUT === 'true';
+
+    // Identify customer context strictly via server-side Supabase Auth session (never from client JSON)
+    const currentUser = await getCurrentUser();
+    const userId = currentUser ? currentUser.id : null;
+    const adminUser = userId ? await getAdminUser() : null;
+
+    const permission = evaluateCheckoutPermission({
+      isLiveCheckoutEnabled,
+      userId,
+      adminUser: adminUser ? { id: adminUser.id, isActive: adminUser.isActive } : null,
+    });
+
+    if (!permission.allowed) {
       return {
         success: false,
-        error: 'The storefront is currently in development preview mode. Online checkout submission is temporarily disabled while transactional database verification is underway. For priority inquiries, please contact us on WhatsApp.',
+        error:
+          permission.reason ||
+          'The storefront is currently in development preview mode. Online checkout submission is temporarily disabled while transactional database verification is underway. For priority inquiries, please contact us on WhatsApp.',
       };
     }
 
@@ -106,10 +159,7 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
 
     const adminClient = createAdminClient();
 
-    // 2. Identify customer context strictly via server-side Supabase Auth session (never from client JSON)
-    const currentUser = await getCurrentUser();
-    const userId = currentUser ? currentUser.id : null;
-
+    // 2. Customer profile status verification for authenticated sessions
     if (userId) {
       const { data: profileData, error: profileError } = await (adminClient.from('profiles') as any)
         .select('id, account_status')
@@ -131,9 +181,9 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       }
     }
 
-    // 3. Fetch delivery fee for district from database
+    // 3. Verify district availability from database
     const { data: districtRaw, error: districtError } = await (adminClient.from('delivery_districts') as any)
-      .select('delivery_fee, is_active')
+      .select('is_active, province')
       .eq('name', input.district)
       .single();
 
@@ -143,9 +193,8 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       return { success: false, error: 'Delivery to the selected district is currently unavailable.' };
     }
 
-    const deliveryFee = Number(districtData.delivery_fee) || 0;
-
     // 4. Strictly validate raw item quantities BEFORE aggregating duplicate variants
+    let totalQuantity = 0;
     const aggregatedMap = new Map<string, number>();
     for (const item of input.items) {
       const variantId = item.variantId?.trim();
@@ -156,17 +205,36 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       if (!Number.isInteger(rawQty) || rawQty < 1 || rawQty > 999999) {
         return { success: false, error: 'Item quantity must be a positive integer of at least 1.' };
       }
+      totalQuantity += rawQty;
+      if (totalQuantity > 2147483647) {
+        return { success: false, error: 'Total order quantity exceeds permissible limit.' };
+      }
       const current = aggregatedMap.get(variantId) || 0;
       aggregatedMap.set(variantId, current + rawQty);
     }
 
-    if (aggregatedMap.size === 0) {
+    if (aggregatedMap.size === 0 || totalQuantity < 1) {
       return { success: false, error: 'Your order must contain at least one valid jewelry item.' };
     }
 
     const consolidatedItems: CreateOrderItemInput[] = Array.from(aggregatedMap.entries()).map(
       ([variantId, quantity]) => ({ variantId, quantity })
     );
+
+    // Ensure shipping quantity strictly equals the aggregate quantity used for inventory deduction
+    const inventoryDeductionQuantity = consolidatedItems.reduce((acc, i) => acc + i.quantity, 0);
+    if (inventoryDeductionQuantity !== totalQuantity) {
+      return {
+        success: false,
+        error: 'Internal integrity error: shipping quantity does not match inventory deduction quantity.',
+      };
+    }
+
+    // Calculate authoritative shipping fee based on payment method and verified total item quantity
+    const deliveryFee = calculateShippingFee({
+      paymentMethod: input.paymentMethod,
+      totalQuantity,
+    });
 
     // 5. Normalize coupon code if provided (authoritative validation & locking occur inside process_order_checkout)
     const appliedCouponCode: string | null = input.couponCode?.trim()
