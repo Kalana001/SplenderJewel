@@ -4,20 +4,32 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { Container } from '@/components/ui/container';
 import { Button } from '@/components/ui/button';
-import { Sparkles, MessageCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Sparkles, MessageCircle, ChevronLeft, ChevronRight, ArrowRight, ShieldCheck, Truck } from 'lucide-react';
 import { getWhatsAppLink } from '@/lib/config/store';
 import type { Banner, HomepageSection } from '@/types/cms';
+import { resolveHeroData } from '@/lib/cms/homepage-view';
 
 interface HeroBannerProps {
   banners: Banner[];
   heroSection?: HomepageSection | null;
+  featuredImageUrl?: string | null;
+  featuredImageAlt?: string;
+  whatsAppNumber?: string;
 }
 
-export function HeroBanner({ banners, heroSection }: HeroBannerProps) {
+export function HeroBanner({
+  banners,
+  heroSection,
+  featuredImageUrl,
+  featuredImageAlt,
+  whatsAppNumber,
+}: HeroBannerProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
 
-  const bannerCount = banners.length;
+  const heroData = resolveHeroData(banners, heroSection, undefined, undefined, whatsAppNumber);
+  const activeBanners = heroData.banners;
+  const bannerCount = activeBanners.length;
 
   const nextSlide = useCallback(() => {
     if (bannerCount <= 1) return;
@@ -38,81 +50,159 @@ export function HeroBanner({ banners, heroSection }: HeroBannerProps) {
     return () => clearInterval(interval);
   }, [bannerCount, isPaused, nextSlide]);
 
-  // 1. If NO active banners exist, render the refined default hero with CMS text
-  if (banners.length === 0) {
-    const title = heroSection?.title?.trim() || 'Timeless Elegance';
-    const subtitle = heroSection?.subtitle?.trim() || 'The Jewel Gallery — Sri Lanka';
-    const ctaText = (heroSection?.configData?.ctaText as string)?.trim() || 'Explore Catalog';
-    const ctaLink = (heroSection?.configData?.ctaLink as string)?.trim() || '/shop';
+  // ---------------------------------------------------------------------------
+  // 1. EDITORIAL 2-COLUMN HERO (Default when NO active banners exist)
+  // ---------------------------------------------------------------------------
+  if (bannerCount === 0) {
+    const heroImage = featuredImageUrl || heroData.featuredImageUrl;
+    const heroImageAlt = featuredImageAlt || heroData.featuredImageAlt;
 
     return (
-      <section className="relative overflow-hidden bg-gradient-to-b from-neutral-950 via-luxury-black to-neutral-950 py-12 sm:py-16 md:py-20 border-b border-neutral-850">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(212,175,55,0.05),_transparent_70%)] pointer-events-none" />
+      <section
+        aria-label="Welcome to Splender Jewel"
+        className="relative overflow-hidden bg-gradient-to-b from-neutral-950 via-luxury-black to-neutral-950 border-b border-neutral-850 py-10 sm:py-14 lg:py-20"
+      >
+        {/* Subtle radial luxury glow */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(212,175,55,0.06),_transparent_70%)] pointer-events-none"
+        />
 
-        <Container size="xl" className="relative text-center">
-          {/* Subtle brand kicker */}
-          <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-neutral-900/80 border border-luxury-gold/30 text-luxury-gold text-[10px] sm:text-xs uppercase tracking-[0.25em] mb-4 sm:mb-6">
-            <Sparkles className="h-3 w-3 text-luxury-gold" />
-            <span>{subtitle}</span>
-          </div>
+        <Container size="xl" className="relative">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
+            {/* Left Column: Brand Content & Action */}
+            <div className="lg:col-span-7 space-y-5 sm:space-y-6 text-center lg:text-left">
+              {/* Eyebrow badge */}
+              <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-neutral-900/90 border border-luxury-gold/30 text-luxury-gold text-[10px] sm:text-xs uppercase tracking-[0.22em] shadow-sm">
+                <Sparkles className="h-3 w-3 text-luxury-gold" />
+                <span>{heroData.eyebrow}</span>
+              </div>
 
-          {/* Headline */}
-          <h1 className="font-serif text-3xl sm:text-5xl md:text-6xl font-bold tracking-[0.05em] text-white uppercase max-w-4xl mx-auto leading-tight">
-            {title} <br />
-            <span className="text-luxury-gold font-serif font-light italic tracking-wide text-2xl sm:text-4xl md:text-5xl capitalize">
-              Refined Luxury
-            </span>
-          </h1>
+              {/* Headline */}
+              <h1 className="font-serif text-3xl sm:text-4xl md:text-5xl lg:text-5xl font-bold tracking-tight text-white leading-[1.15] max-w-2xl mx-auto lg:mx-0">
+                {heroData.headline}
+              </h1>
 
-          <p className="mt-4 sm:mt-6 text-xs sm:text-sm md:text-base text-neutral-300 max-w-2xl mx-auto leading-relaxed font-light">
-            Discover beautiful fashion jewellery and accessories bringing together elegance, modern trends, and timeless style for everyday wear and memorable occasions.
-          </p>
+              {/* Description */}
+              <p className="text-sm sm:text-base text-neutral-300 max-w-xl mx-auto lg:mx-0 leading-relaxed font-light">
+                {heroData.description}
+              </p>
 
-          {/* Actions */}
-          <div className="mt-8 sm:mt-10 flex flex-wrap items-center justify-center gap-3 sm:gap-4">
-            <Link href={ctaLink} className="w-full sm:w-auto">
-              <Button
-                variant="gold"
-                size="md"
-                className="w-full sm:w-auto min-w-[160px] sm:min-w-[175px] h-11 px-6 text-xs uppercase tracking-[0.18em] font-semibold shadow-md shadow-luxury-gold/10"
-              >
-                {ctaText}
-              </Button>
-            </Link>
+              {/* Action Buttons */}
+              <div className="pt-2 flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3 sm:gap-4">
+                <Link href={heroData.primaryCtaLink} className="w-full sm:w-auto">
+                  <Button
+                    variant="gold"
+                    size="md"
+                    className="w-full sm:w-auto min-w-[170px] h-11 px-6 text-xs uppercase tracking-[0.18em] font-semibold shadow-md shadow-luxury-gold/15 space-x-2"
+                  >
+                    <span>{heroData.primaryCtaText}</span>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Button>
+                </Link>
 
-            <Link href="/shop" className="w-full sm:w-auto">
-              <Button
-                variant="primary"
-                size="md"
-                className="w-full sm:w-auto min-w-[160px] sm:min-w-[175px] h-11 px-6 text-xs uppercase tracking-[0.18em] font-medium bg-neutral-900/90 hover:bg-neutral-850 text-neutral-200 hover:text-white border border-neutral-700 hover:border-luxury-gold/50"
-              >
-                Featured Pieces
-              </Button>
-            </Link>
+                <Link href={heroData.secondaryCtaLink} className="w-full sm:w-auto">
+                  <Button
+                    variant="primary"
+                    size="md"
+                    className="w-full sm:w-auto min-w-[160px] h-11 px-6 text-xs uppercase tracking-[0.18em] font-medium bg-neutral-900/90 hover:bg-neutral-850 text-neutral-200 hover:text-white border border-neutral-700 hover:border-luxury-gold/50"
+                  >
+                    {heroData.secondaryCtaText}
+                  </Button>
+                </Link>
 
-            <a
-              href={getWhatsAppLink('Hello Splender Jewel, I would like to enquire about your jewelry.')}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full sm:w-auto"
-            >
-              <Button
-                variant="outline"
-                size="md"
-                className="w-full sm:w-auto min-w-[160px] sm:min-w-[175px] h-11 px-6 text-xs uppercase tracking-[0.18em] font-medium space-x-2 border-neutral-800 hover:border-luxury-gold/50 text-neutral-300 hover:text-luxury-gold"
-              >
-                <MessageCircle className="h-4 w-4 text-luxury-gold" />
-                <span>WhatsApp Care</span>
-              </Button>
-            </a>
+                {heroData.whatsAppHref && (
+                  <a
+                    href={heroData.whatsAppHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full sm:w-auto"
+                  >
+                    <Button
+                      variant="outline"
+                      size="md"
+                      className="w-full sm:w-auto min-w-[160px] h-11 px-6 text-xs uppercase tracking-[0.18em] font-medium space-x-2 border-neutral-800 hover:border-luxury-gold/50 text-neutral-300 hover:text-luxury-gold"
+                    >
+                      <MessageCircle className="h-4 w-4 text-luxury-gold" />
+                      <span>WhatsApp Care</span>
+                    </Button>
+                  </a>
+                )}
+              </div>
+
+              {/* Micro Trust Indicators */}
+              <div className="pt-4 flex flex-wrap items-center justify-center lg:justify-start gap-4 sm:gap-6 text-xs text-neutral-400 border-t border-neutral-850/80">
+                <div className="flex items-center space-x-1.5">
+                  <Truck className="h-3.5 w-3.5 text-luxury-gold" />
+                  <span>Islandwide Delivery (Sri Lanka Post)</span>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <ShieldCheck className="h-3.5 w-3.5 text-luxury-gold" />
+                  <span>Cash on Delivery & Bank Transfer</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column: High-Quality Jewellery Photography Focal Point */}
+            <div className="lg:col-span-5 flex justify-center">
+              <div className="relative w-full max-w-md aspect-[4/5] rounded-sm overflow-hidden bg-neutral-950 border border-neutral-800 shadow-2xl shadow-black/80 group">
+                {heroImage ? (
+                  <>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={heroImage}
+                      alt={heroImageAlt}
+                      className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-700 ease-out"
+                      loading="eager"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent pointer-events-none" />
+
+                    {/* Subtle floating branding tag */}
+                    <div className="absolute bottom-4 left-4 right-4 p-3.5 rounded-sm bg-neutral-900/90 border border-luxury-gold/30 backdrop-blur-md flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] uppercase tracking-widest text-luxury-gold font-semibold block">
+                          Signature Collection
+                        </span>
+                        <span className="text-xs font-serif font-medium text-white line-clamp-1">
+                          {heroImageAlt}
+                        </span>
+                      </div>
+                      <Link
+                        href="/shop"
+                        className="text-[11px] uppercase tracking-wider text-luxury-gold hover:text-luxury-gold-light font-semibold shrink-0"
+                      >
+                        Explore &rarr;
+                      </Link>
+                    </div>
+                  </>
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center bg-gradient-to-br from-neutral-900 via-neutral-950 to-black">
+                    <div className="h-16 w-16 rounded-full bg-luxury-gold/10 border border-luxury-gold/30 flex items-center justify-center text-luxury-gold mb-4">
+                      <Sparkles className="h-8 w-8" />
+                    </div>
+                    <span className="font-serif text-lg font-bold text-white tracking-widest uppercase">
+                      Splender Jewel
+                    </span>
+                    <span className="text-xs uppercase tracking-[0.25em] text-luxury-gold mt-1">
+                      Fashion Jewellery
+                    </span>
+                    <p className="text-xs text-neutral-400 mt-3 max-w-xs leading-relaxed font-light">
+                      Handpicked jewelry and accessories crafted with passion in Sri Lanka.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </Container>
       </section>
     );
   }
 
-  // 2. Render Active CMS Banners Showcase
-  const currentBanner = banners[currentIndex];
+  // ---------------------------------------------------------------------------
+  // 2. ACTIVE CMS BANNERS SHOWCASE (When administrator configured active banners)
+  // ---------------------------------------------------------------------------
+  const currentBanner = activeBanners[currentIndex];
 
   return (
     <section
@@ -121,9 +211,9 @@ export function HeroBanner({ banners, heroSection }: HeroBannerProps) {
       onMouseLeave={() => setIsPaused(false)}
       aria-label="Promotional Banners"
     >
-      <div className="relative min-h-[420px] sm:min-h-[500px] md:min-h-[580px] w-full flex items-center justify-center">
+      <div className="relative min-h-[440px] sm:min-h-[500px] md:min-h-[560px] w-full flex items-center justify-center">
         {/* Banner Images (Desktop and Mobile) */}
-        {banners.map((banner, idx) => {
+        {activeBanners.map((banner, idx) => {
           const isActive = idx === currentIndex;
           const mobileSrc = banner.mobileImageUrl || banner.imageUrl;
 
@@ -149,7 +239,7 @@ export function HeroBanner({ banners, heroSection }: HeroBannerProps) {
               </picture>
 
               {/* Luxury dark gradient overlay for text legibility */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-black/30" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/55 to-black/35" />
             </div>
           );
         })}
@@ -231,7 +321,7 @@ export function HeroBanner({ banners, heroSection }: HeroBannerProps) {
 
             {/* Pagination Dots */}
             <div className="absolute bottom-4 z-30 flex items-center justify-center space-x-2">
-              {banners.map((_, idx) => (
+              {activeBanners.map((_, idx) => (
                 <button
                   key={idx}
                   type="button"

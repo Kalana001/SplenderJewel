@@ -138,7 +138,11 @@ export function formatCurrency(amount: number, config: StoreConfig = DEFAULT_DEV
  * Generates a clean WhatsApp direct link with an optional pre-filled message.
  */
 export function getWhatsAppLink(message?: string, config: StoreConfig = DEFAULT_DEV_STORE_CONFIG): string {
-  const cleanedNumber = config.whatsAppNumber.replace(/[^0-9]/g, '');
+  const rawNumber = config?.whatsAppNumber || '';
+  const cleanedNumber = rawNumber.replace(/[^0-9]/g, '');
+  if (!cleanedNumber) {
+    return '';
+  }
   const encodedMessage = message ? `?text=${encodeURIComponent(message)}` : '';
   return `https://wa.me/${cleanedNumber}${encodedMessage}`;
 }

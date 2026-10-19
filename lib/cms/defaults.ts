@@ -15,16 +15,12 @@ export const DEFAULT_HOMEPAGE_SECTIONS: Array<Omit<HomepageSection, 'id' | 'upda
     },
   },
   {
-    sectionKey: 'pillars',
-    title: 'The Splender Jewel Distinction',
-    subtitle: 'Why our patrons choose us',
+    sectionKey: 'collage',
+    title: 'The Editorial Edit',
+    subtitle: 'Curated Showcase',
     displayOrder: 2,
     isEnabled: true,
-    configData: {
-      pillar1: 'Curated Fashion Jewellery',
-      pillar2: 'Islandwide Delivery',
-      pillar3: 'Personal WhatsApp Care',
-    },
+    configData: {},
   },
   {
     sectionKey: 'categories',
@@ -45,10 +41,22 @@ export const DEFAULT_HOMEPAGE_SECTIONS: Array<Omit<HomepageSection, 'id' | 'upda
     },
   },
   {
+    sectionKey: 'pillars',
+    title: 'The Splender Jewel Distinction',
+    subtitle: 'Why our patrons choose us',
+    displayOrder: 5,
+    isEnabled: true,
+    configData: {
+      pillar1: 'Curated Fashion Jewellery',
+      pillar2: 'Islandwide Delivery',
+      pillar3: 'Personal WhatsApp Care',
+    },
+  },
+  {
     sectionKey: 'reviews',
     title: 'Patron Testimonials',
     subtitle: 'What our distinguished clients say',
-    displayOrder: 5,
+    displayOrder: 6,
     isEnabled: true,
     configData: {
       minRating: 4,

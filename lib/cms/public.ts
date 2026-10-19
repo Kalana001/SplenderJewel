@@ -1,6 +1,7 @@
 import { cache } from 'react';
 import { createPublicSupabaseClient } from '@/lib/supabase/server';
 import { DEFAULT_CONTENT_PAGES, DEFAULT_HOMEPAGE_SECTIONS } from '@/lib/cms/defaults';
+import { mergeHomepageSections } from '@/lib/cms/homepage-view';
 import type { ContentPage, HomepageSection, Banner } from '@/types/cms';
 
 /**
@@ -107,17 +108,6 @@ export const getPublicHomepageSection = cache(async function getPublicHomepageSe
 export const getPublicHomepageSections = cache(async function getPublicHomepageSections(
   client?: any
 ): Promise<HomepageSection[]> {
-  const mergedMap = new Map<string, HomepageSection>();
-
-  // Initialize with seeded defaults
-  DEFAULT_HOMEPAGE_SECTIONS.forEach((s, idx) => {
-    mergedMap.set(s.sectionKey, {
-      ...s,
-      id: `default-${s.sectionKey}-${idx}`,
-      updatedAt: new Date().toISOString(),
-    });
-  });
-
   try {
     const supabase = client !== undefined ? client : createPublicSupabaseClient();
     if (supabase) {
@@ -127,26 +117,15 @@ export const getPublicHomepageSections = cache(async function getPublicHomepageS
 
       if (error) {
         console.error('[CMS] Database error loading homepage sections:', error.message);
-      } else if (data && data.length > 0) {
-        for (const row of data) {
-          mergedMap.set(row.section_key, {
-            id: row.id,
-            sectionKey: row.section_key,
-            title: row.title,
-            subtitle: row.subtitle,
-            displayOrder: typeof row.display_order === 'number' ? row.display_order : 0,
-            isEnabled: Boolean(row.is_enabled),
-            configData: typeof row.config_data === 'object' && row.config_data !== null ? row.config_data : {},
-            updatedAt: row.updated_at,
-          });
-        }
+        return mergeHomepageSections([]);
       }
+      return mergeHomepageSections(data || []);
     }
   } catch (err) {
     console.error('[CMS] Unexpected error loading homepage sections:', err instanceof Error ? err.message : err);
   }
 
-  return Array.from(mergedMap.values()).sort((a, b) => a.displayOrder - b.displayOrder);
+  return mergeHomepageSections([]);
 });
 
 /**

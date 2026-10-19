@@ -14,6 +14,7 @@ import type {
 } from '@/types/cms';
 
 import { DEFAULT_HOMEPAGE_SECTIONS, DEFAULT_CONTENT_PAGES } from '@/lib/cms/defaults';
+import { mergeHomepageSections } from '@/lib/cms/homepage-view';
 
 // =============================================================================
 // 1. HOMEPAGE SECTIONS ACTIONS
@@ -36,29 +37,8 @@ export async function getAdminHomepageSections(): Promise<{
       return { success: false, sections: [], error: error.message };
     }
 
-    // If database table has rows, return them mapped
-    if (data && data.length > 0) {
-      const sections: HomepageSection[] = data.map((row: any) => ({
-        id: row.id,
-        sectionKey: row.section_key,
-        title: row.title,
-        subtitle: row.subtitle,
-        displayOrder: row.display_order,
-        isEnabled: Boolean(row.is_enabled),
-        configData: typeof row.config_data === 'object' && row.config_data !== null ? row.config_data : {},
-        updatedAt: row.updated_at,
-      }));
-      return { success: true, sections };
-    }
-
-    // Otherwise return default seeded sections
-    const defaultSections: HomepageSection[] = DEFAULT_HOMEPAGE_SECTIONS.map((s, index) => ({
-      ...s,
-      id: `default-${s.sectionKey}-${index}`,
-      updatedAt: new Date().toISOString(),
-    }));
-
-    return { success: true, sections: defaultSections };
+    const sections = mergeHomepageSections(data || []);
+    return { success: true, sections };
   } catch (err: any) {
     return { success: false, sections: [], error: err.message || 'Failed to fetch homepage sections.' };
   }
