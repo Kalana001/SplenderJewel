@@ -216,6 +216,7 @@ export interface GetCartActionResult {
   success: boolean;
   items: CartItem[] | null;
   authenticated?: boolean;
+  userId?: string;
   error?: string;
 }
 
@@ -241,8 +242,19 @@ export async function getAuthenticatedCartAction(): Promise<GetCartActionResult>
       .eq('user_id', user.id)
       .maybeSingle();
 
-    if (cartError || !cart) {
-      return { success: true, items: [], authenticated: true };
+    if (cartError) {
+      console.error('[GetAuthenticatedCartAction] Database error querying user cart:', cartError);
+      return {
+        success: false,
+        items: null,
+        authenticated: true,
+        error: cartError.message || 'Unable to retrieve shopping bag from server.',
+      };
+    }
+
+    if (!cart) {
+      // User is authenticated, query succeeded, but user has no cart row in database yet -> legitimate empty cart
+      return { success: true, items: [], authenticated: true, userId: user.id };
     }
 
     // 2. Fetch cart items with live product and variant details
@@ -278,7 +290,13 @@ export async function getAuthenticatedCartAction(): Promise<GetCartActionResult>
       .order('created_at', { ascending: true });
 
     if (itemsError) {
-      return { success: false, items: null, error: itemsError.message };
+      console.error('[GetAuthenticatedCartAction] Database error querying cart items:', itemsError);
+      return {
+        success: false,
+        items: null,
+        authenticated: true,
+        error: itemsError.message || 'Unable to retrieve shopping bag items.',
+      };
     }
 
     const cartItems: CartItem[] = [];
@@ -317,7 +335,7 @@ export async function getAuthenticatedCartAction(): Promise<GetCartActionResult>
       });
     }
 
-    return { success: true, items: cartItems, authenticated: true };
+    return { success: true, items: cartItems, authenticated: true, userId: user.id };
   } catch (err: any) {
     console.error('[GetAuthenticatedCartAction] Error:', err);
     return { success: false, items: null, error: err?.message || 'Failed to fetch cart.' };
@@ -335,8 +353,7 @@ export async function saveAuthenticatedCartAction(items: CartItem[]): Promise<{
   try {
     const user = await getCurrentUser();
     if (!user) {
-      // Unauthenticated callers should not trigger DB writes
-      return { success: true };
+      return { success: false, error: 'User is not authenticated.' };
     }
 
     const supabase = await createServerSupabaseClient();
@@ -362,15 +379,11 @@ export async function saveAuthenticatedCartAction(items: CartItem[]): Promise<{
       cart = newCart;
     }
 
-    // 2. If items is empty, remove all items from this user's cart
     if (!items || items.length === 0) {
-      await (supabase.from('cart_items') as any)
-        .delete()
-        .eq('cart_id', cart.id);
       return { success: true };
     }
 
-    // 3. Clean and sanitize input items (deduplicate variant IDs)
+    // Clean and sanitize input items (deduplicate variant IDs)
     const consolidatedMap = new Map<string, number>();
     for (const item of items) {
       const vid = item?.variantId?.trim();
@@ -381,25 +394,26 @@ export async function saveAuthenticatedCartAction(items: CartItem[]): Promise<{
       }
     }
 
-    // 4. Atomic sync of cart items: delete existing items for cart_id and insert current items
-    await (supabase.from('cart_items') as any)
-      .delete()
-      .eq('cart_id', cart.id);
-
+    // Non-destructive upsert: upsert items without deleting existing items for other variants
     if (consolidatedMap.size > 0) {
-      const rowsToInsert = Array.from(consolidatedMap.entries()).map(([variant_id, quantity]) => ({
+      const rowsToUpsert = Array.from(consolidatedMap.entries()).map(([variant_id, quantity]) => ({
         cart_id: cart.id,
         variant_id,
         quantity,
+        updated_at: new Date().toISOString(),
       }));
 
-      const { error: insertError } = await (supabase.from('cart_items') as any)
-        .insert(rowsToInsert);
+      const { error: upsertError } = await (supabase.from('cart_items') as any)
+        .upsert(rowsToUpsert, { onConflict: 'cart_id, variant_id' });
 
-      if (insertError) {
-        return { success: false, error: insertError.message };
+      if (upsertError) {
+        return { success: false, error: upsertError.message };
       }
     }
+
+    await (supabase.from('carts') as any)
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', cart.id);
 
     return { success: true };
   } catch (err: any) {
@@ -445,24 +459,48 @@ export async function saveAuthenticatedCartAction(items: CartItem[]): Promise<{
  * - Uses atomic PostgreSQL procedure `merge_guest_cart` and durable table `cart_idempotency_records`.
  * - Does NOT rely on process-local memory. Survives serverless restarts and multi-instance concurrency.
  */
-export async function mergeGuestCartAction(
-  guestItems: CartItem[],
-  options?: { mergeToken?: string }
-): Promise<{
+export interface MergeGuestCartResult {
   success: boolean;
   items: CartItem[];
   alreadyProcessed?: boolean;
+  unauthenticated?: boolean;
   error?: string;
-}> {
+  userId?: string;
+}
+
+export async function mergeGuestCartAction(
+  guestItems: CartItem[],
+  options?: { mergeToken?: string; expectedUserId?: string }
+): Promise<MergeGuestCartResult> {
   try {
     const user = await getCurrentUser();
     if (!user) {
-      return { success: true, items: guestItems };
+      return {
+        success: false,
+        items: guestItems,
+        unauthenticated: true,
+        error: 'Authentication required to merge shopping bag with your account.',
+      };
+    }
+
+    if (options?.expectedUserId && options.expectedUserId !== user.id) {
+      return {
+        success: false,
+        items: guestItems,
+        error: 'Authenticated session does not match the active user session.',
+      };
     }
 
     if (!guestItems || !Array.isArray(guestItems) || guestItems.length === 0) {
       const existing = await getAuthenticatedCartAction();
-      return { success: true, items: existing.items || [] };
+      if (!existing.success || !existing.items) {
+        return {
+          success: false,
+          items: [],
+          error: existing.error || 'Failed to retrieve shopping bag.',
+        };
+      }
+      return { success: true, items: existing.items, userId: user.id };
     }
 
     // Generate or normalize durable merge token
@@ -492,7 +530,14 @@ export async function mergeGuestCartAction(
 
     if (sanitizedGuestPayload.length === 0) {
       const existing = await getAuthenticatedCartAction();
-      return { success: true, items: existing.items || [] };
+      if (!existing.success || !existing.items) {
+        return {
+          success: false,
+          items: [],
+          error: existing.error || 'Failed to retrieve shopping bag.',
+        };
+      }
+      return { success: true, items: existing.items, userId: user.id };
     }
 
     const { data: rpcData, error: rpcError } = await (adminClient as any).rpc('merge_guest_cart', {
@@ -520,10 +565,22 @@ export async function mergeGuestCartAction(
     }
 
     const refreshed = await getAuthenticatedCartAction();
+    if (!refreshed.success || !refreshed.items) {
+      console.error('[MergeGuestCartAction] Post-merge cart fetch failed:', refreshed.error);
+      return {
+        success: false,
+        items: guestItems,
+        alreadyProcessed: Boolean(rpcData.already_processed),
+        userId: user.id,
+        error: refreshed.error || 'Shopping bag merged in cloud, but failed to load remote state. Your items are safe.',
+      };
+    }
+
     return {
       success: true,
-      items: refreshed.items || [],
+      items: refreshed.items,
       alreadyProcessed: Boolean(rpcData.already_processed),
+      userId: user.id,
     };
   } catch (err: any) {
     console.error('[MergeGuestCartAction] Unexpected error:', err);
@@ -547,7 +604,7 @@ export async function syncCartItemAction(
 ): Promise<{ success: boolean; error?: string; clampedQuantity?: number }> {
   try {
     const user = await getCurrentUser();
-    if (!user) return { success: true };
+    if (!user) return { success: false, error: 'User must be authenticated to sync items to account.' };
 
     const trimmedId = variantId?.trim();
     if (!trimmedId || !UUID_REGEX.test(trimmedId) || !Number.isInteger(quantity) || quantity <= 0) {
@@ -627,7 +684,7 @@ export async function removeCartItemAction(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const user = await getCurrentUser();
-    if (!user) return { success: true };
+    if (!user) return { success: false, error: 'User must be authenticated to remove items from account.' };
 
     const trimmedId = variantId?.trim();
     if (!trimmedId || !UUID_REGEX.test(trimmedId)) {
@@ -750,7 +807,7 @@ export async function removePurchasedCartItemsAction(
 export async function clearCartAction(): Promise<{ success: boolean; error?: string }> {
   try {
     const user = await getCurrentUser();
-    if (!user) return { success: true };
+    if (!user) return { success: false, error: 'User must be authenticated to clear account shopping bag.' };
 
     const supabase = await createServerSupabaseClient();
     if (!supabase) return { success: false, error: 'Database service unavailable.' };
