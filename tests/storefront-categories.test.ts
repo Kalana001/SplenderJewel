@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { DEFAULT_STORE_CATEGORIES } from '../lib/config/store.ts';
+
+const WORKSPACE_DIR = process.cwd();
 
 /**
  * Pure category query & mapping logic matching lib/catalog/public.ts
@@ -404,3 +408,44 @@ test('Storefront Resilience: layout and page error handling falls back to custom
     console.error = originalError;
   }
 });
+
+test('Storefront Header: Mobile hamburger menu conditionally renders Logout directly below My Account & Orders', () => {
+  const headerPath = join(WORKSPACE_DIR, 'components/store/header.tsx');
+  const headerContent = readFileSync(headerPath, 'utf-8');
+
+  // 1. Must import LogOut icon and auth actions
+  assert.match(headerContent, /import\s+.*LogOut.*from\s+['"]lucide-react['"]/, 'Must import LogOut icon from lucide-react');
+  assert.match(headerContent, /import\s+.*signOutCustomer.*from\s+['"]@\/lib\/auth\/actions['"]/, 'Must import signOutCustomer from auth actions');
+  assert.match(headerContent, /import\s+.*createClient.*from\s+['"]@\/lib\/supabase\/client['"]/, 'Must import createClient from supabase client');
+
+  // 2. Initial state is false (avoids flash during loading)
+  assert.match(headerContent, /const\s+\[isAuthenticated,\s*setIsAuthenticated\]\s*=\s*useState\(false\);/, 'Initial auth state must be false to avoid flashing during loading');
+
+  // 3. Logout button is conditionally rendered with isAuthenticated directly below /account link
+  assert.match(
+    headerContent,
+    /href="\/account"[\s\S]*?<span>My Account & Orders<\/span>[\s\S]*?\{isAuthenticated\s*&&\s*\([\s\S]*?<button[\s\S]*?onClick=\{handleLogout\}[\s\S]*?<LogOut[\s\S]*?<span>\{isLoggingOut\s*\?\s*['"]Logging Out\.\.\.['"]\s*:\s*['"]Log Out['"]\}<\/span>/,
+    'Logout button must be rendered directly below My Account & Orders when authenticated'
+  );
+
+  // 4. Logout handler calls signOutCustomer, handles failure, dispatches event, closes menu, and navigates
+  assert.match(headerContent, /await\s+signOutCustomer\(\);/, 'Must call signOutCustomer');
+  assert.match(headerContent, /setLogoutError/, 'Must set logout error when signOutCustomer returns failure');
+  assert.match(headerContent, /role="alert"/, 'Must render error alert if logout fails');
+  assert.match(headerContent, /min-h-\[44px\]/, 'Logout button must have at least 44px minimum touch target height');
+  assert.match(headerContent, /subscription\?\.unsubscribe\(\);/, 'Must clean up Supabase auth subscription on unmount');
+  assert.match(headerContent, /splender:auth-signed-out/, 'Must dispatch splender:auth-signed-out event for cart cleanup');
+  assert.match(headerContent, /setMobileMenuOpen\(false\);/, 'Must close mobile menu on logout');
+  assert.match(headerContent, /router\.push\(['"]\/['"]\);/, 'Must redirect to homepage on logout');
+
+  // 5. Must NOT add unauthorized menu sections (Dashboard, My Orders, Wishlist, My Profile)
+  assert.doesNotMatch(headerContent, /<span>Dashboard<\/span>/, 'Must not add Dashboard as menu section');
+  assert.doesNotMatch(headerContent, /<span>My Orders<\/span>/, 'Must not add My Orders as separate menu section');
+  assert.doesNotMatch(headerContent, /<span>My Profile<\/span>/, 'Must not add My Profile as menu section');
+
+  // 6. Existing account-page sign-out button remains preserved
+  const signOutBtnPath = join(WORKSPACE_DIR, 'components/store/sign-out-button.tsx');
+  const signOutBtnContent = readFileSync(signOutBtnPath, 'utf-8');
+  assert.match(signOutBtnContent, /export\s+function\s+SignOutButton/, 'Existing account-page SignOutButton must remain preserved');
+});
+

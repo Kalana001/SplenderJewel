@@ -1,14 +1,16 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { ShoppingBag, Search, User, Menu, X, Heart } from 'lucide-react';
+import { usePathname, useRouter } from 'next/navigation';
+import { ShoppingBag, Search, User, Menu, X, Heart, LogOut } from 'lucide-react';
 import { Container } from '@/components/ui/container';
 import { getStoreConfig, getInstagramLink } from '@/lib/config/store';
 import { InstagramIcon } from '@/components/icons/instagram';
 import { twMerge } from 'tailwind-merge';
 import { useCart } from '@/lib/cart/cart-context';
+import { createClient } from '@/lib/supabase/client';
+import { signOutCustomer } from '@/lib/auth/actions';
 import type { Category } from '@/types/product';
 
 interface HeaderProps {
@@ -18,9 +20,79 @@ interface HeaderProps {
 
 export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
   const pathname = usePathname();
+  const router = useRouter();
   const config = getStoreConfig();
   const { totalCount, isLoaded } = useCart();
+
+  useEffect(() => {
+    const supabase = createClient();
+    if (!supabase) return;
+
+    let isMounted = true;
+
+    // Check existing customer session on mount
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (isMounted) {
+        setIsAuthenticated(!!session?.user);
+      }
+    });
+
+    // Listen to Supabase auth events (sign in, sign out, token refresh)
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (isMounted) {
+        setIsAuthenticated(!!session?.user);
+      }
+    });
+
+    const handleCustomSignOut = () => {
+      if (isMounted) setIsAuthenticated(false);
+    };
+    const handleCustomSignIn = () => {
+      if (isMounted) setIsAuthenticated(true);
+    };
+
+    window.addEventListener('splender:auth-signed-out', handleCustomSignOut);
+    window.addEventListener('splender:auth-signed-in', handleCustomSignIn);
+
+    return () => {
+      isMounted = false;
+      subscription?.unsubscribe();
+      window.removeEventListener('splender:auth-signed-out', handleCustomSignOut);
+      window.removeEventListener('splender:auth-signed-in', handleCustomSignIn);
+    };
+  }, []);
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    setLogoutError(null);
+    try {
+      const result = await signOutCustomer();
+      if (result && !result.success) {
+        setLogoutError(result.error || 'Failed to log out. Please try again.');
+        return;
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('splender:auth-signed-out'));
+      }
+      setMobileMenuOpen(false);
+      if (pathname === '/') {
+        router.refresh();
+      } else {
+        router.push('/');
+      }
+    } catch (err: any) {
+      console.error('[Header] Logout error:', err);
+      setLogoutError(err?.message || 'Failed to log out. Please try again.');
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
 
   const dynamicCategoryLinks = React.useMemo(() => {
     const seenSlugs = new Set<string>();
@@ -200,6 +272,26 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
               <User className="h-4 w-4" />
               <span>My Account & Orders</span>
             </Link>
+
+            {isAuthenticated && (
+              <div className="flex flex-col space-y-1">
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  disabled={isLoggingOut}
+                  className="inline-flex items-center space-x-2 text-xs text-neutral-400 hover:text-luxury-gold transition-colors py-1.5 px-2 text-left disabled:opacity-50 min-h-[44px]"
+                  aria-label="Log Out"
+                >
+                  <LogOut className="h-4 w-4 shrink-0" />
+                  <span>{isLoggingOut ? 'Logging Out...' : 'Log Out'}</span>
+                </button>
+                {logoutError && (
+                  <p className="text-[11px] text-red-400 px-2" role="alert">
+                    {logoutError}
+                  </p>
+                )}
+              </div>
+            )}
 
             <a
               href={getInstagramLink(config)}
