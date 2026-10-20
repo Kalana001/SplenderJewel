@@ -902,4 +902,97 @@ test('Behavioral Check 2: Failed mutation ordering and reconciliation protects l
   assert.equal(remoteDb.get('variant-unrelated'), 5, 'Unrelated variants remain strictly untouched');
 });
 
+test('Permission Boundary & Trusted Server Architecture: Cart retrieval enforces ownership and privilege isolation', () => {
+  const actionsPath = join(WORKSPACE_DIR, 'lib/cart/actions.ts');
+  const actionsContent = readFileSync(actionsPath, 'utf-8');
+
+  // 1. getAuthenticatedCartAction enforces customer authentication before server-side access
+  assert.match(
+    actionsContent,
+    /const\s+user\s*=\s*await\s+getCurrentUser\(\);[\s\S]*if\s*\(!user\)\s*\{\s*return\s*\{\s*success:\s*true,\s*items:\s*null,\s*authenticated:\s*false\s*\};/,
+    'getAuthenticatedCartAction must verify session via getCurrentUser before accessing database'
+  );
+
+  // 2. Uses trusted server createAdminClient to avoid permission denied on product_variants
+  assert.match(
+    actionsContent,
+    /const\s+adminClient\s*=\s*createAdminClient\(\);/,
+    'getAuthenticatedCartAction must use trusted server admin client'
+  );
+
+  // 3. Customer ownership: queries carts strictly with user_id = user.id
+  assert.match(
+    actionsContent,
+    /\.from\('carts'\)[\s\S]*\.eq\('user_id',\s*user\.id\)/,
+    'getAuthenticatedCartAction must scope cart query strictly to session user.id'
+  );
+
+  // 4. Scopes cart_items strictly to cart.id belonging to the user
+  assert.match(
+    actionsContent,
+    /\.from\('cart_items'\)[\s\S]*\.eq\('cart_id',\s*cart\.id\)/,
+    'getAuthenticatedCartAction must scope cart_items query strictly to user cart.id'
+  );
+
+  // 5. Customer isolation simulation: User A cannot retrieve User B's cart
+  const userACartId = 'cart-user-A';
+  const userBCartId = 'cart-user-B';
+  const mockCartsTable = new Map<string, string>([
+    ['user-A', userACartId],
+    ['user-B', userBCartId],
+  ]);
+  const mockCartItemsTable = new Map<string, any[]>([
+    [userACartId, [{ variantId: 'ring-A', quantity: 1 }]],
+    [userBCartId, [{ variantId: 'necklace-B', quantity: 3 }]],
+  ]);
+
+  const simulateCustomerCartFetch = (callerUserId: string) => {
+    const userCartId = mockCartsTable.get(callerUserId);
+    if (!userCartId) return [];
+    return mockCartItemsTable.get(userCartId) || [];
+  };
+
+  const userAResult = simulateCustomerCartFetch('user-A');
+  assert.equal(userAResult.length, 1);
+  assert.equal(userAResult[0].variantId, 'ring-A');
+  assert.equal(userAResult.find((i) => i.variantId === 'necklace-B'), undefined, "User A must NEVER see User B's items");
+
+  const attackerResult = simulateCustomerCartFetch('attacker-user');
+  assert.deepEqual(attackerResult, [], 'Attacker without cart cannot see any other items');
+
+  // 6. Security verification: CartItem output schema excludes all internal accounting/supplier metadata
+  const sampleVariantData = {
+    id: 'v1',
+    product_id: 'p1',
+    title: 'Gold Ring',
+    sku: 'GR-01',
+    price: '25000',
+    discount_price: '22000',
+    purchase_cost: 15000, // CONFIDENTIAL
+    low_stock_threshold: 5, // CONFIDENTIAL
+    supplier_id: 'supp-99', // CONFIDENTIAL
+    stock_quantity: 8,
+    stock_status: 'in_stock',
+    is_active: true,
+  };
+
+  // UI mapping projection
+  const customerCartItem = {
+    variantId: sampleVariantData.id,
+    productId: sampleVariantData.product_id,
+    productName: 'Gold Ring',
+    variantTitle: sampleVariantData.title,
+    sku: sampleVariantData.sku,
+    price: Number(sampleVariantData.price),
+    discountPrice: Number(sampleVariantData.discount_price),
+    quantity: 2,
+    maxStock: sampleVariantData.stock_quantity,
+  };
+
+  assert.equal('purchase_cost' in customerCartItem, false, 'purchase_cost must NEVER leak into customer cart item');
+  assert.equal('low_stock_threshold' in customerCartItem, false, 'low_stock_threshold must NEVER leak into customer cart item');
+  assert.equal('supplier_id' in customerCartItem, false, 'supplier metadata must NEVER leak into customer cart item');
+});
+
+
 

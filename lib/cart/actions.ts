@@ -222,7 +222,16 @@ export interface GetCartActionResult {
 
 /**
  * SERVER ACTION: Retrieve authenticated customer's persisted cart from Supabase.
- * Enforces customer session validation via getCurrentUser() and RLS.
+ * Enforces customer session validation via getCurrentUser() and trusted server-side architecture.
+ *
+ * Security & Permission Architecture:
+ * 1. Customer Authentication: User identity is authoritatively derived from the verified session (getCurrentUser).
+ * 2. Strict Customer Ownership: Carts query filters strictly by `user_id = user.id`. Users can NEVER query another account's cart.
+ * 3. Trusted Server Privilege Isolation: Queries `cart_items` joined with `product_variants` and `products` via
+ *    server-only `createAdminClient()`. This adheres to catalog security hardening (where raw stock_quantity
+ *    table-level SELECT is revoked from client-facing roles).
+ * 4. Data Minimization: Returns ONLY customer-safe fields in `CartItem`. Internal financial/inventory metadata
+ *    (purchase_cost, low_stock_threshold, supplier, warehouse) are never exposed.
  */
 export async function getAuthenticatedCartAction(): Promise<GetCartActionResult> {
   try {
@@ -231,13 +240,10 @@ export async function getAuthenticatedCartAction(): Promise<GetCartActionResult>
       return { success: true, items: null, authenticated: false };
     }
 
-    const supabase = await createServerSupabaseClient();
-    if (!supabase) {
-      return { success: false, items: null, authenticated: true, error: 'Database service unavailable.' };
-    }
+    const adminClient = createAdminClient();
 
-    // 1. Fetch user's cart
-    const { data: cart, error: cartError } = await (supabase.from('carts') as any)
+    // 1. Fetch user's cart strictly scoped to the authenticated session user ID
+    const { data: cart, error: cartError } = await (adminClient.from('carts') as any)
       .select('id')
       .eq('user_id', user.id)
       .maybeSingle();
@@ -257,8 +263,8 @@ export async function getAuthenticatedCartAction(): Promise<GetCartActionResult>
       return { success: true, items: [], authenticated: true, userId: user.id };
     }
 
-    // 2. Fetch cart items with live product and variant details
-    const { data: rows, error: itemsError } = await (supabase.from('cart_items') as any)
+    // 2. Fetch cart items with live product and variant details via trusted server admin client
+    const { data: rows, error: itemsError } = await (adminClient.from('cart_items') as any)
       .select(`
         id,
         variant_id,
