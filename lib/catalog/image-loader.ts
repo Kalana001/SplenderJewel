@@ -1,0 +1,183 @@
+/**
+ * Free-Tier Product Image URL Resolver & Loader
+ *
+ * Resolves standard Supabase Storage (/storage/v1/object/public/) URLs for customer product images.
+ * Completely free of paid Edge Image Transformation dependencies (/storage/v1/render/image/public/)
+ * and free of Vercel Image Optimization quotas.
+ *
+ * Guarantees:
+ * 1. 100% Free Plan: Direct object access via Supabase CDN caching headers.
+ * 2. Deterministic Thumbnail Companion: Derives -thumb.webp from .webp master paths.
+ * 3. Legacy Image Safety: Legacy .png and .jpg URLs are preserved untouched (no 404s).
+ * 4. Origin Isolation: Only operates on trusted Supabase public Storage bucket assets.
+ * 5. Fallback Safety: Local assets (/images/...), external URLs, and SVGs are left untouched.
+ * 6. Clean URL Sanitization: Strips any legacy transformation query params to ensure pure CDN caching.
+ */
+
+export interface ImageOptimizationOptions {
+  width?: number;
+  height?: number;
+  quality?: number;
+  format?: 'webp' | 'avif' | 'origin';
+  resize?: 'cover' | 'contain' | 'fill';
+}
+
+const SUPABASE_ORIGIN_REGEX = /^https:\/\/[a-z0-9-]+\.supabase\.co/i;
+const STORAGE_OBJECT_PATH = '/storage/v1/object/public/';
+const STORAGE_RENDER_PATH = '/storage/v1/render/image/public/';
+
+/**
+ * Checks whether a given URL is a valid Supabase public storage asset.
+ */
+export function isSupabaseStorageUrl(url: string | null | undefined): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!SUPABASE_ORIGIN_REGEX.test(trimmed)) return false;
+  return trimmed.includes(STORAGE_OBJECT_PATH) || trimmed.includes(STORAGE_RENDER_PATH);
+}
+
+/**
+ * Returns the clean, direct Supabase Storage public URL for the master product image.
+ * Safely strips legacy transformation query parameters and converts any render paths back to object paths.
+ */
+export function getMasterImageUrl(src: string | null | undefined): string {
+  if (!src || typeof src !== 'string') return '';
+  const trimmed = src.trim();
+  if (!trimmed) return '';
+
+  // Preserve relative paths, data URLs, and blob URLs
+  if (trimmed.startsWith('/') || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+    return trimmed;
+  }
+
+  // Preserve vector graphics
+  if (trimmed.toLowerCase().endsWith('.svg') || trimmed.toLowerCase().includes('.svg?')) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+
+    // If not Supabase, return unchanged
+    if (!SUPABASE_ORIGIN_REGEX.test(parsed.origin)) {
+      return trimmed;
+    }
+
+    const hasObjectPath = parsed.pathname.includes(STORAGE_OBJECT_PATH);
+    const hasRenderPath = parsed.pathname.includes(STORAGE_RENDER_PATH);
+
+    if (!hasObjectPath && !hasRenderPath) {
+      return trimmed;
+    }
+
+    // Force standard object storage path (remove paid transformation path)
+    if (hasRenderPath) {
+      parsed.pathname = parsed.pathname.replace(STORAGE_RENDER_PATH, STORAGE_OBJECT_PATH);
+    }
+
+    // If it was inadvertently pointing to a thumbnail, revert to master
+    if (parsed.pathname.endsWith('-thumb.webp')) {
+      parsed.pathname = parsed.pathname.replace(/-thumb\.webp$/, '.webp');
+    }
+
+    // Strip legacy transformation query parameters to maximize CDN cache hit ratio
+    parsed.searchParams.delete('width');
+    parsed.searchParams.delete('height');
+    parsed.searchParams.delete('quality');
+    parsed.searchParams.delete('format');
+    parsed.searchParams.delete('resize');
+
+    return parsed.toString();
+  } catch {
+    return trimmed;
+  }
+}
+
+/**
+ * Returns the companion thumbnail URL for a product image.
+ * If the image is a WebP asset with a companion thumbnail, returns the -thumb.webp URL.
+ * If the image is a legacy PNG/JPG asset, safely returns the master URL (since no thumb exists).
+ */
+export function getThumbnailImageUrl(src: string | null | undefined): string {
+  if (!src || typeof src !== 'string') return '';
+  const trimmed = src.trim();
+  if (!trimmed) return '';
+
+  if (trimmed.startsWith('/') || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+    return trimmed;
+  }
+
+  if (trimmed.toLowerCase().endsWith('.svg') || trimmed.toLowerCase().includes('.svg?')) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+
+    if (!SUPABASE_ORIGIN_REGEX.test(parsed.origin)) {
+      return trimmed;
+    }
+
+    const hasObjectPath = parsed.pathname.includes(STORAGE_OBJECT_PATH);
+    const hasRenderPath = parsed.pathname.includes(STORAGE_RENDER_PATH);
+
+    if (!hasObjectPath && !hasRenderPath) {
+      return trimmed;
+    }
+
+    if (hasRenderPath) {
+      parsed.pathname = parsed.pathname.replace(STORAGE_RENDER_PATH, STORAGE_OBJECT_PATH);
+    }
+
+    // Strip legacy transformation query parameters
+    parsed.searchParams.delete('width');
+    parsed.searchParams.delete('height');
+    parsed.searchParams.delete('quality');
+    parsed.searchParams.delete('format');
+    parsed.searchParams.delete('resize');
+
+    // Only WebP assets generated by our optimization pipeline possess companion thumbnails
+    if (parsed.pathname.endsWith('.webp') && !parsed.pathname.endsWith('-thumb.webp')) {
+      parsed.pathname = parsed.pathname.replace(/\.webp$/, '-thumb.webp');
+    }
+
+    return parsed.toString();
+  } catch {
+    return trimmed;
+  }
+}
+
+/**
+ * Resolves the appropriate free-tier image URL based on target sizing options.
+ * Backward-compatible drop-in for components expecting getOptimizedImageUrl.
+ */
+export function getOptimizedImageUrl(
+  src: string | null | undefined,
+  options: ImageOptimizationOptions = {}
+): string {
+  if (!src || typeof src !== 'string') return '';
+
+  // Sizing threshold: requests <= 320px use the lightweight companion thumbnail
+  if (options.width && options.width <= 320) {
+    return getThumbnailImageUrl(src);
+  }
+
+  return getMasterImageUrl(src);
+}
+
+/**
+ * Custom Next.js Image loader that routes requests to standard free-tier object storage.
+ */
+export function supabaseImageLoader({
+  src,
+  width,
+}: {
+  src: string;
+  width: number;
+  quality?: number;
+}): string {
+  if (width <= 320) {
+    return getThumbnailImageUrl(src);
+  }
+  return getMasterImageUrl(src);
+}

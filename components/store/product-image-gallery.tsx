@@ -23,6 +23,10 @@ export interface ProductImageGalleryProps {
 }
 
 import { filterGalleryImages } from '@/lib/catalog/gallery-logic';
+import {
+  getMasterImageUrl,
+  getThumbnailImageUrl,
+} from '@/lib/catalog/image-loader';
 export { filterGalleryImages };
 
 
@@ -43,6 +47,49 @@ export function ProductImageGallery({
   const [activeIndex, setActiveIndex] = useState<number>(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxZoomed, setLightboxZoomed] = useState(false);
+
+  // Fallback tracking to prevent infinite retry loops and support stable placeholder display
+  const [failedThumbIds, setFailedThumbIds] = useState<Record<string, boolean>>({});
+  const [failedMasterIds, setFailedMasterIds] = useState<Record<string, boolean>>({});
+
+  // Reset fallback state when selectedVariantId changes
+  useEffect(() => {
+    setFailedThumbIds({});
+    setFailedMasterIds({});
+  }, [selectedVariantId]);
+
+  const getThumbSource = useCallback(
+    (img: ProductImage | null) => {
+      if (!img?.url) return '';
+      const key = img.id || img.url;
+      if (failedThumbIds[key]) {
+        return getMasterImageUrl(img.url);
+      }
+      return getThumbnailImageUrl(img.url);
+    },
+    [failedThumbIds]
+  );
+
+  const handleThumbError = useCallback(
+    (img: ProductImage | null) => {
+      if (!img?.url) return;
+      const key = img.id || img.url;
+      if (!failedThumbIds[key]) {
+        // Stage 1: Fall back from companion thumbnail to master image URL
+        setFailedThumbIds((prev) => ({ ...prev, [key]: true }));
+      } else if (!failedMasterIds[key]) {
+        // Stage 2: Master image also failed; render stable placeholder and terminate retries
+        setFailedMasterIds((prev) => ({ ...prev, [key]: true }));
+      }
+    },
+    [failedThumbIds, failedMasterIds]
+  );
+
+  const handleMasterError = useCallback((img: ProductImage | null) => {
+    if (!img?.url) return;
+    const key = img.id || img.url;
+    setFailedMasterIds((prev) => ({ ...prev, [key]: true }));
+  }, []);
 
   // Touch gesture state for mobile swiping
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
@@ -259,13 +306,25 @@ export function ProductImageGallery({
       >
         {/* Main Display Image */}
         {activeImage && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={activeImage.url}
-            alt={activeImage.altText || productName}
-            onClick={() => setLightboxOpen(true)}
-            className="w-full h-full object-cover transition-opacity duration-300"
-          />
+          failedMasterIds[activeImage.id || activeImage.url] ? (
+            <div className="w-full h-full flex flex-col items-center justify-center bg-neutral-900 text-neutral-600">
+              <Package className="h-16 w-16 text-luxury-gold/30 mb-2" />
+              <span className="text-xs uppercase tracking-widest text-neutral-500 font-mono">
+                Splender Jewel
+              </span>
+            </div>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={`main-${activeImage.id || activeImage.url}`}
+              src={getMasterImageUrl(activeImage.url)}
+              alt={activeImage.altText || productName}
+              onClick={() => setLightboxOpen(true)}
+              loading={safeActiveIndex === 0 ? 'eager' : 'lazy'}
+              onError={() => handleMasterError(activeImage)}
+              className="w-full h-full object-cover transition-opacity duration-300"
+            />
+          )
         )}
 
         {/* Badges Overlay (Discount / New Arrival) */}
@@ -339,6 +398,10 @@ export function ProductImageGallery({
         <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none pt-0.5">
           {filteredImages.map((img, idx) => {
             const isActive = idx === safeActiveIndex;
+            const imgKey = img.id || img.url;
+            const isMasterFailed = failedMasterIds[imgKey];
+            const isThumbFailed = failedThumbIds[imgKey];
+
             return (
               <button
                 key={img.id || `${img.url}-${idx}`}
@@ -354,12 +417,23 @@ export function ProductImageGallery({
                     : 'border-neutral-800 hover:border-neutral-600 opacity-60 hover:opacity-100'
                 }`}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={img.url}
-                  alt={img.altText || `Thumbnail ${idx + 1}`}
-                  className="w-full h-full object-cover"
-                />
+                {isMasterFailed ? (
+                  <div className="w-full h-full flex items-center justify-center bg-neutral-900 text-neutral-600">
+                    <Package className="h-6 w-6 text-luxury-gold/40" />
+                  </div>
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={`thumb-${imgKey}-${isThumbFailed ? 'master' : 'thumb'}`}
+                    src={getThumbSource(img)}
+                    alt={img.altText || `Thumbnail ${idx + 1}`}
+                    loading="lazy"
+                    width={80}
+                    height={80}
+                    onError={() => handleThumbError(img)}
+                    className="w-full h-full object-cover"
+                  />
+                )}
               </button>
             );
           })}
@@ -421,15 +495,24 @@ export function ProductImageGallery({
             style={{ touchAction: 'pan-y' }}
           >
             {activeImage && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={activeImage.url}
-                alt={activeImage.altText || productName}
-                onClick={() => setLightboxZoomed(!lightboxZoomed)}
-                className={`max-w-full max-h-[75vh] object-contain transition-transform duration-200 select-none ${
-                  lightboxZoomed ? 'scale-150 cursor-zoom-out' : 'scale-100 cursor-zoom-in'
-                }`}
-              />
+              failedMasterIds[activeImage.id || activeImage.url] ? (
+                <div className="flex flex-col items-center justify-center text-neutral-500 py-16">
+                  <Package className="h-20 w-20 text-luxury-gold/30 mb-4" />
+                  <span className="text-sm text-neutral-400">Image unavailable</span>
+                </div>
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={`lightbox-main-${activeImage.id || activeImage.url}`}
+                  src={getMasterImageUrl(activeImage.url)}
+                  alt={activeImage.altText || productName}
+                  onClick={() => setLightboxZoomed(!lightboxZoomed)}
+                  onError={() => handleMasterError(activeImage)}
+                  className={`max-w-full max-h-[75vh] object-contain transition-transform duration-200 select-none ${
+                    lightboxZoomed ? 'scale-150 cursor-zoom-out' : 'scale-100 cursor-zoom-in'
+                  }`}
+                />
+              )
             )}
 
             {/* Lightbox Navigation: Previous */}
@@ -460,25 +543,46 @@ export function ProductImageGallery({
           {/* Lightbox Bottom Thumbnails Row */}
           {hasMultiple && (
             <div className="flex justify-center gap-2 overflow-x-auto py-2 z-20">
-              {filteredImages.map((img, idx) => (
-                <button
-                  key={`lightbox-${img.id || idx}`}
-                  type="button"
-                  aria-label={`Jump to image ${idx + 1}`}
-                  onClick={() => {
-                    handleSelectIndex(idx);
-                    setLightboxZoomed(false);
-                  }}
-                  className={`relative aspect-square w-14 rounded-sm overflow-hidden border-2 transition-all shrink-0 ${
-                    idx === safeActiveIndex
-                      ? 'border-luxury-gold ring-1 ring-luxury-gold scale-105'
-                      : 'border-neutral-800 opacity-50 hover:opacity-100'
-                  }`}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={img.url} alt="" className="w-full h-full object-cover" />
-                </button>
-              ))}
+              {filteredImages.map((img, idx) => {
+                const imgKey = img.id || img.url;
+                const isMasterFailed = failedMasterIds[imgKey];
+                const isThumbFailed = failedThumbIds[imgKey];
+
+                return (
+                  <button
+                    key={`lightbox-${img.id || idx}`}
+                    type="button"
+                    aria-label={`Jump to image ${idx + 1}`}
+                    onClick={() => {
+                      handleSelectIndex(idx);
+                      setLightboxZoomed(false);
+                    }}
+                    className={`relative aspect-square w-14 rounded-sm overflow-hidden border-2 transition-all shrink-0 ${
+                      idx === safeActiveIndex
+                        ? 'border-luxury-gold ring-1 ring-luxury-gold scale-105'
+                        : 'border-neutral-800 opacity-50 hover:opacity-100'
+                    }`}
+                  >
+                    {isMasterFailed ? (
+                      <div className="w-full h-full flex items-center justify-center bg-neutral-900 text-neutral-600">
+                        <Package className="h-4 w-4 text-luxury-gold/40" />
+                      </div>
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        key={`lightbox-thumb-${imgKey}-${isThumbFailed ? 'master' : 'thumb'}`}
+                        src={getThumbSource(img)}
+                        alt=""
+                        loading="lazy"
+                        width={56}
+                        height={56}
+                        onError={() => handleThumbError(img)}
+                        className="w-full h-full object-cover"
+                      />
+                    )}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

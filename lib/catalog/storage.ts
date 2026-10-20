@@ -45,6 +45,26 @@ export interface CreateSignedUploadUrlResult {
   error?: string;
 }
 
+export interface SignedUploadTarget {
+  signedUrl: string;
+  path: string;
+  token: string;
+  publicUrl: string;
+}
+
+export interface CreateSignedUploadPairInput {
+  masterSize: number;
+  thumbnailSize: number;
+}
+
+export interface CreateSignedUploadPairResult {
+  success: boolean;
+  code?: UploadErrorCode;
+  master?: SignedUploadTarget;
+  thumbnail?: SignedUploadTarget;
+  error?: string;
+}
+
 export interface AttachImageInput {
   productId: string;
   variantId?: string | null;
@@ -136,6 +156,125 @@ export async function createProductImageUploadUrlAction(
       success: false,
       code: 'UPLOAD_FAILED',
       error: 'An unexpected error occurred while preparing image upload. Please retry.',
+    };
+  }
+}
+
+/**
+ * Generates authenticated signed upload URLs for both an optimized master WebP and its companion thumbnail.
+ * Guarantees atomic, paired naming under the collision-resistant prefix 'catalog/{timestamp}-{random}'.
+ */
+export async function createProductImagePairUploadUrlAction(
+  input: CreateSignedUploadPairInput
+): Promise<CreateSignedUploadPairResult> {
+  try {
+    try {
+      await requireAdminAuth();
+    } catch (authErr: unknown) {
+      const isAuthError = authErr instanceof Error && authErr.name === 'AdminAuthError';
+      const code = (isAuthError && (authErr as any).code === 'FORBIDDEN') ? 'FORBIDDEN' : 'UNAUTHENTICATED';
+      const message = authErr instanceof Error
+        ? authErr.message
+        : 'Authentication required. Please sign in as an administrator.';
+      return { success: false, code, error: message };
+    }
+
+    let adminClient;
+    try {
+      adminClient = createAdminClient();
+    } catch (configErr: unknown) {
+      console.error('[Storage Action] Server configuration error:', configErr instanceof Error ? configErr.message : 'Missing configuration');
+      return {
+        success: false,
+        code: 'CONFIGURATION_ERROR',
+        error: 'Storage service configuration error on server.',
+      };
+    }
+
+    // Validate size limits
+    const masterValidation = validateImageFile({
+      name: 'master.webp',
+      size: input?.masterSize,
+      type: 'image/webp',
+    });
+    if (!masterValidation.valid) {
+      return {
+        success: false,
+        code: 'UPLOAD_FAILED',
+        error: `Master image validation failed: ${masterValidation.error}`,
+      };
+    }
+
+    const thumbValidation = validateImageFile({
+      name: 'thumb.webp',
+      size: input?.thumbnailSize,
+      type: 'image/webp',
+    });
+    if (!thumbValidation.valid) {
+      return {
+        success: false,
+        code: 'UPLOAD_FAILED',
+        error: `Thumbnail image validation failed: ${thumbValidation.error}`,
+      };
+    }
+
+    // Generate atomic paired collision-resistant paths
+    const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const masterPath = `catalog/${uniqueSuffix}.webp`;
+    const thumbPath = `catalog/${uniqueSuffix}-thumb.webp`;
+
+    // Create signed upload URL for Master
+    const { data: masterData, error: masterError } = await adminClient.storage
+      .from(BUCKET_NAME)
+      .createSignedUploadUrl(masterPath);
+
+    if (masterError || !masterData) {
+      console.error('[Storage Action] Failed to create signed upload URL for master:', masterPath, masterError?.message);
+      return {
+        success: false,
+        code: 'STORAGE_ERROR',
+        error: `Storage service error for master: ${masterError?.message || 'Failed to create upload token.'}`,
+      };
+    }
+
+    // Create signed upload URL for Thumbnail
+    const { data: thumbData, error: thumbError } = await adminClient.storage
+      .from(BUCKET_NAME)
+      .createSignedUploadUrl(thumbPath);
+
+    if (thumbError || !thumbData) {
+      console.error('[Storage Action] Failed to create signed upload URL for thumbnail:', thumbPath, thumbError?.message);
+      return {
+        success: false,
+        code: 'STORAGE_ERROR',
+        error: `Storage service error for thumbnail: ${thumbError?.message || 'Failed to create upload token.'}`,
+      };
+    }
+
+    const { data: masterUrlData } = adminClient.storage.from(BUCKET_NAME).getPublicUrl(masterPath);
+    const { data: thumbUrlData } = adminClient.storage.from(BUCKET_NAME).getPublicUrl(thumbPath);
+
+    return {
+      success: true,
+      master: {
+        signedUrl: masterData.signedUrl,
+        path: masterPath,
+        token: masterData.token,
+        publicUrl: masterUrlData.publicUrl,
+      },
+      thumbnail: {
+        signedUrl: thumbData.signedUrl,
+        path: thumbPath,
+        token: thumbData.token,
+        publicUrl: thumbUrlData.publicUrl,
+      },
+    };
+  } catch (err: unknown) {
+    console.error('[Storage Action] Unexpected error:', err instanceof Error ? err.message : 'Unknown error');
+    return {
+      success: false,
+      code: 'UPLOAD_FAILED',
+      error: 'An unexpected error occurred while preparing image pair upload. Please retry.',
     };
   }
 }
@@ -508,7 +647,11 @@ export async function deleteProductImageAction(
       if (storagePath) {
         const { referenced, error: refError } = await isStorageObjectReferenced(adminClient, storagePath);
         if (!referenced && !refError) {
-          await adminClient.storage.from(BUCKET_NAME).remove([storagePath]);
+          const pathsToRemove = [storagePath];
+          if (storagePath.endsWith('.webp') && !storagePath.endsWith('-thumb.webp')) {
+            pathsToRemove.push(storagePath.replace(/\.webp$/, '-thumb.webp'));
+          }
+          await adminClient.storage.from(BUCKET_NAME).remove(pathsToRemove);
         }
       }
     } catch {
@@ -649,12 +792,25 @@ async function isStorageObjectReferenced(
     const canonicalFullUrl = `${baseOrigin}/storage/v1/object/public/${BUCKET_NAME}/${objectPath}`;
     const canonicalRootPath = `/storage/v1/object/public/${BUCKET_NAME}/${objectPath}`;
 
+    // If this object is a companion thumbnail, also verify if its master image is referenced
+    const relatedMasterPath = objectPath.endsWith('-thumb.webp')
+      ? objectPath.replace(/-thumb\.webp$/, '.webp')
+      : null;
+    const masterFullUrl = relatedMasterPath
+      ? `${baseOrigin}/storage/v1/object/public/${BUCKET_NAME}/${relatedMasterPath}`
+      : null;
+    const masterRootPath = relatedMasterPath
+      ? `/storage/v1/object/public/${BUCKET_NAME}/${relatedMasterPath}`
+      : null;
+
     const candidateUrls = Array.from(
       new Set([
         canonicalFullUrl,
         canonicalRootPath,
         encodeURI(canonicalFullUrl),
         encodeURI(canonicalRootPath),
+        ...(masterFullUrl ? [masterFullUrl, encodeURI(masterFullUrl)] : []),
+        ...(masterRootPath ? [masterRootPath, encodeURI(masterRootPath)] : []),
       ])
     ).filter(Boolean);
 
@@ -787,10 +943,15 @@ export async function deleteUnattachedProductImageAction(
       };
     }
 
-    // Safely remove unattached object from storage
+    // Safely remove unattached object (and its companion thumbnail if applicable) from storage
+    const pathsToRemove = [storagePath];
+    if (storagePath.endsWith('.webp') && !storagePath.endsWith('-thumb.webp')) {
+      pathsToRemove.push(storagePath.replace(/\.webp$/, '-thumb.webp'));
+    }
+
     const { error: removeError } = await adminClient.storage
       .from(BUCKET_NAME)
-      .remove([storagePath]);
+      .remove(pathsToRemove);
 
     if (removeError) {
       return { success: false, error: removeError.message };

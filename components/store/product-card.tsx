@@ -1,9 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { Package } from 'lucide-react';
 import { formatCurrency } from '@/lib/config/store';
+import { getMasterImageUrl, getThumbnailImageUrl } from '@/lib/catalog/image-loader';
 import type { ProductPublic } from '@/types/product';
 
 interface ProductCardProps {
@@ -13,6 +14,12 @@ interface ProductCardProps {
 export function ProductCard({ product }: ProductCardProps) {
   const primaryImage = product.images.find((img) => img.isPrimary) || product.images[0];
   const secondaryImage = product.images.length > 1 ? product.images[1] : null;
+
+  // Image fallback states to prevent loops and support placeholder rendering
+  const [primaryThumbFailed, setPrimaryThumbFailed] = useState(false);
+  const [primaryMasterFailed, setPrimaryMasterFailed] = useState(false);
+  const [secondaryThumbFailed, setSecondaryThumbFailed] = useState(false);
+  const [secondaryMasterFailed, setSecondaryMasterFailed] = useState(false);
 
   // Calculate discount percentage if applicable
   const hasDiscount = product.baseDiscountPrice != null && product.baseDiscountPrice < product.basePrice;
@@ -30,27 +37,51 @@ export function ProductCard({ product }: ProductCardProps) {
     >
       {/* Product Image Container */}
       <div className="relative aspect-square w-full bg-neutral-900 overflow-hidden">
-        {primaryImage ? (
+        {primaryImage && !primaryMasterFailed ? (
           <>
             {/* Primary Image */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={primaryImage.url}
+              key={`primary-${primaryImage.id || primaryImage.url}-${primaryThumbFailed ? 'master' : 'thumb'}`}
+              src={
+                primaryThumbFailed
+                  ? getMasterImageUrl(primaryImage.url)
+                  : getThumbnailImageUrl(primaryImage.url)
+              }
               alt={primaryImage.altText || product.name}
-              className={`w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105 ${
-                secondaryImage ? 'group-hover:opacity-0' : ''
-              }`}
               loading="lazy"
+              onError={() => {
+                if (!primaryThumbFailed) {
+                  setPrimaryThumbFailed(true);
+                } else {
+                  setPrimaryMasterFailed(true);
+                }
+              }}
+              className={`w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105 ${
+                secondaryImage && !secondaryMasterFailed ? 'group-hover:opacity-0' : ''
+              }`}
             />
 
             {/* Optional Secondary Image on Hover */}
-            {secondaryImage && (
+            {secondaryImage && !secondaryMasterFailed && (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={secondaryImage.url}
+                key={`secondary-${secondaryImage.id || secondaryImage.url}-${secondaryThumbFailed ? 'master' : 'thumb'}`}
+                src={
+                  secondaryThumbFailed
+                    ? getMasterImageUrl(secondaryImage.url)
+                    : getThumbnailImageUrl(secondaryImage.url)
+                }
                 alt={secondaryImage.altText || product.name}
-                className="w-full h-full object-cover absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 ease-out group-hover:scale-105"
                 loading="lazy"
+                onError={() => {
+                  if (!secondaryThumbFailed) {
+                    setSecondaryThumbFailed(true);
+                  } else {
+                    setSecondaryMasterFailed(true);
+                  }
+                }}
+                className="w-full h-full object-cover absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 ease-out group-hover:scale-105"
               />
             )}
           </>
