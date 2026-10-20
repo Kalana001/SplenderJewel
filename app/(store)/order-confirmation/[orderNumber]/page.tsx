@@ -122,7 +122,7 @@ export default async function OrderConfirmationPage({
   const cleanPhone = rawWhatsApp.replace(/[^0-9]/g, '');
 
   const whatsAppBankMessage = encodeURIComponent(
-    `Hello Splender Jewel, I have placed Order *${order.order_number}* via Bank Transfer for the total of *${formatCurrency(order.total_amount)}*.\n\nCould you please provide your bank account details or confirm receipt of my payment slip?`
+    `Hello Splender Jewel,\n\nI placed order ${order.order_number} for ${formatCurrency(order.total_amount)} using bank transfer.\n\nPlease send me your bank account details so I can complete the payment.\n\nThank you.`
   );
   const whatsAppBankUrl = `https://wa.me/${cleanPhone}?text=${whatsAppBankMessage}`;
 
@@ -159,23 +159,47 @@ export default async function OrderConfirmationPage({
 
         {/* Bank Transfer Instructions Card (if applicable) */}
         {isBankTransfer && (
-          <div className="bg-amber-950/40 border border-amber-800/60 rounded-xl p-6 space-y-4 text-neutral-200">
+          <div className="bg-amber-950/30 border border-amber-800/60 rounded-xl p-5 sm:p-6 space-y-4 text-neutral-200">
             <div className="flex items-center gap-2.5 text-amber-400">
-              <MessageCircle className="h-5 w-5" />
-              <h2 className="text-base font-serif font-bold text-white">
-                Bank Deposit / Transfer Instructions
+              <MessageCircle className="h-5 w-5 shrink-0" />
+              <h2 className="text-base sm:text-lg font-serif font-bold text-white">
+                Bank Transfer Payment Instructions
               </h2>
             </div>
 
             <p className="text-xs sm:text-sm text-neutral-300 leading-relaxed">
-              Please transfer the total amount of <strong className="text-white">{formatCurrency(order.total_amount)}</strong> to Splender Jewel. To ensure immediate verification and dispatch, send your payment receipt directly to our WhatsApp support:
+              Your order has been received and logged in our system. To protect your payment security, bank account details are provided directly through WhatsApp. Please complete the following steps:
             </p>
 
-            <div className="pt-1">
-              <a href={whatsAppBankUrl} target="_blank" rel="noopener noreferrer">
-                <Button variant="gold" size="lg" className="w-full sm:w-auto font-semibold flex items-center justify-center gap-2">
-                  <MessageCircle className="h-4 w-4 fill-current" />
-                  <span>Send Payment Slip via WhatsApp ({rawWhatsApp})</span>
+            <ol className="space-y-2 text-xs sm:text-sm text-neutral-300 list-decimal list-inside pl-1 leading-relaxed">
+              <li>
+                Tap the button below to request our bank account details via WhatsApp.
+              </li>
+              <li>
+                Transfer the confirmed order total of <strong className="text-white font-semibold">{formatCurrency(order.total_amount)}</strong>.
+              </li>
+              <li>
+                Send a photo or screenshot of your payment receipt / slip to our WhatsApp support.
+              </li>
+              <li>
+                Your payment will remain <span className="text-amber-400 font-medium">Pending Verification</span> until our admin confirms the transfer. Once verified, your order will be dispatched.
+              </li>
+            </ol>
+
+            <div className="pt-2">
+              <a
+                href={whatsAppBankUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block w-full sm:w-auto"
+              >
+                <Button
+                  variant="gold"
+                  size="lg"
+                  className="w-full sm:w-auto min-h-[44px] px-5 py-3 font-semibold flex items-center justify-center gap-2.5 text-center text-xs sm:text-sm text-luxury-black bg-luxury-gold hover:bg-luxury-gold/90 transition-all shadow-md active:scale-[0.99]"
+                >
+                  <MessageCircle className="h-4 w-4 shrink-0 fill-current" />
+                  <span className="whitespace-normal">Get Bank Details via WhatsApp</span>
                 </Button>
               </a>
             </div>

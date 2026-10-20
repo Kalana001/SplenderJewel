@@ -4,16 +4,16 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import {
   Search,
-  Filter,
   ShoppingBag,
   Clock,
+  Eye,
+  MessageCircle,
+  AlertTriangle,
   CheckCircle2,
   AlertCircle,
-  Truck,
-  ArrowRight,
-  Eye,
-  CreditCard,
-  MessageCircle,
+  Loader2,
+  X,
+  Layers,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,9 +22,12 @@ import { formatCurrency } from '@/lib/config/store';
 import {
   ORDER_STATUSES,
   ORDER_STATUS_LABELS,
-  PAYMENT_METHOD_LABELS,
   type OrderStatus,
 } from '@/lib/config/constants';
+import {
+  bulkUpdateOrderStatusAction,
+  type BulkOrderStatusResult,
+} from '@/lib/orders/admin-actions';
 
 interface OrderItemRow {
   id: string;
@@ -57,11 +60,27 @@ interface OrdersTableProps {
   };
 }
 
+interface BulkFeedbackState {
+  totalCount: number;
+  successCount: number;
+  failureCount: number;
+  targetStatus: OrderStatus;
+  failures: BulkOrderStatusResult[];
+}
+
 export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps) {
   const [orders, setOrders] = useState<OrderItemRow[]>(initialOrders);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [paymentFilter, setPaymentFilter] = useState('all');
+
+  // Bulk selection state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkTargetStatus, setBulkTargetStatus] = useState<OrderStatus>('confirmed');
+  const [bulkNotes, setBulkNotes] = useState('');
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const [isProcessingBulk, setIsProcessingBulk] = useState(false);
+  const [bulkFeedback, setBulkFeedback] = useState<BulkFeedbackState | null>(null);
 
   // Filter client-side
   const filteredOrders = orders.filter((order) => {
@@ -77,6 +96,102 @@ export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps)
     }
     return true;
   });
+
+  // Reconcile selection when search or filters change to prevent acting on hidden rows
+  const handleSearchChange = (val: string) => {
+    setSearch(val);
+    setSelectedIds(new Set());
+  };
+
+  const handleStatusFilterChange = (val: string) => {
+    setStatusFilter(val);
+    setSelectedIds(new Set());
+  };
+
+  const handlePaymentFilterChange = (val: string) => {
+    setPaymentFilter(val);
+    setSelectedIds(new Set());
+  };
+
+  const handleToggleSelectAll = () => {
+    if (filteredOrders.length === 0) return;
+    const allSelected = filteredOrders.every((o) => selectedIds.has(o.id));
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      const newSet = new Set(filteredOrders.map((o) => o.id));
+      setSelectedIds(newSet);
+    }
+  };
+
+  const handleToggleRow = (id: string) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setSelectedIds(next);
+  };
+
+  const handleClearSelection = () => {
+    setSelectedIds(new Set());
+  };
+
+  const handleExecuteBulkUpdate = async () => {
+    if (selectedIds.size === 0 || isProcessingBulk) return;
+
+    setIsProcessingBulk(true);
+    try {
+      const orderIds = Array.from(selectedIds);
+      const response = await bulkUpdateOrderStatusAction({
+        orderIds,
+        newStatus: bulkTargetStatus,
+        notes: bulkNotes.trim() || undefined,
+      });
+
+      if (response.successCount > 0) {
+        const successfulIdSet = new Set(
+          response.results.filter((r) => r.success).map((r) => r.orderId)
+        );
+        setOrders((prev) =>
+          prev.map((ord) =>
+            successfulIdSet.has(ord.id) ? { ...ord, order_status: bulkTargetStatus } : ord
+          )
+        );
+      }
+
+      setBulkFeedback({
+        totalCount: response.totalCount,
+        successCount: response.successCount,
+        failureCount: response.failureCount,
+        targetStatus: bulkTargetStatus,
+        failures: response.results.filter((r) => !r.success),
+      });
+
+      setSelectedIds(new Set());
+      setIsConfirmModalOpen(false);
+      setBulkNotes('');
+    } catch (err: unknown) {
+      setBulkFeedback({
+        totalCount: selectedIds.size,
+        successCount: 0,
+        failureCount: selectedIds.size,
+        targetStatus: bulkTargetStatus,
+        failures: [
+          {
+            orderId: 'all',
+            orderNumber: 'Bulk Request',
+            success: false,
+            error: err instanceof Error ? err.message : 'An unexpected error occurred.',
+          },
+        ],
+      });
+      setIsConfirmModalOpen(false);
+    } finally {
+      setIsProcessingBulk(false);
+    }
+  };
 
   function getStatusBadge(status: OrderStatus) {
     switch (status) {
@@ -96,6 +211,9 @@ export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps)
         return <Badge variant="outline">{status}</Badge>;
     }
   }
+
+  const allVisibleSelected =
+    filteredOrders.length > 0 && filteredOrders.every((o) => selectedIds.has(o.id));
 
   return (
     <div className="space-y-6">
@@ -128,6 +246,64 @@ export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps)
         </div>
       </div>
 
+      {/* Bulk Feedback Notification */}
+      {bulkFeedback && (
+        <div
+          role="status"
+          className={`p-4 rounded-lg border transition-all text-sm flex flex-col gap-2 ${
+            bulkFeedback.failureCount === 0
+              ? 'bg-emerald-950/30 border-emerald-800/80 text-emerald-200'
+              : bulkFeedback.successCount > 0
+              ? 'bg-amber-950/30 border-amber-800/80 text-amber-200'
+              : 'bg-rose-950/30 border-rose-800/80 text-rose-200'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2">
+              {bulkFeedback.failureCount === 0 ? (
+                <CheckCircle2 className="h-5 w-5 text-emerald-400 flex-shrink-0" />
+              ) : bulkFeedback.successCount > 0 ? (
+                <AlertCircle className="h-5 w-5 text-amber-400 flex-shrink-0" />
+              ) : (
+                <AlertTriangle className="h-5 w-5 text-rose-400 flex-shrink-0" />
+              )}
+              <span className="font-medium">
+                {bulkFeedback.failureCount === 0 ? (
+                  <>Successfully updated {bulkFeedback.successCount} {bulkFeedback.successCount === 1 ? 'order' : 'orders'} to {ORDER_STATUS_LABELS[bulkFeedback.targetStatus]}.</>
+                ) : (
+                  <>
+                    {bulkFeedback.successCount > 0 && (
+                      <span>{bulkFeedback.successCount} {bulkFeedback.successCount === 1 ? 'order' : 'orders'} updated successfully. </span>
+                    )}
+                    <span>{bulkFeedback.failureCount} {bulkFeedback.failureCount === 1 ? 'order' : 'orders'} could not be updated.</span>
+                  </>
+                )}
+              </span>
+            </div>
+            <button
+              onClick={() => setBulkFeedback(null)}
+              aria-label="Dismiss message"
+              className="text-neutral-400 hover:text-white p-1 rounded hover:bg-neutral-800 transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {bulkFeedback.failures.length > 0 && (
+            <div className="mt-2 text-xs border-t border-neutral-800 pt-2 space-y-1">
+              <span className="font-semibold text-neutral-300">Failure details:</span>
+              <ul className="list-disc pl-5 space-y-0.5 text-neutral-400">
+                {bulkFeedback.failures.map((f, i) => (
+                  <li key={`${f.orderId}-${i}`}>
+                    <span className="text-white font-mono">{f.orderNumber}</span>: {f.error || 'Status transition failed.'}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Filter and Search Bar */}
       <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-4 flex flex-col md:flex-row gap-4 justify-between items-stretch md:items-center">
         {/* Search Input */}
@@ -137,7 +313,7 @@ export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps)
             type="text"
             placeholder="Search order #, customer, phone, or district..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             className="pl-9 bg-neutral-950 border-neutral-700 text-white text-sm"
           />
         </div>
@@ -146,7 +322,7 @@ export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps)
         <div className="flex flex-wrap items-center gap-3">
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => handleStatusFilterChange(e.target.value)}
             className="h-10 px-3 py-2 rounded-md bg-neutral-950 border border-neutral-700 text-neutral-200 text-xs focus:ring-1 focus:ring-luxury-gold"
           >
             <option value="all">All Order Statuses</option>
@@ -160,7 +336,7 @@ export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps)
 
           <select
             value={paymentFilter}
-            onChange={(e) => setPaymentFilter(e.target.value)}
+            onChange={(e) => handlePaymentFilterChange(e.target.value)}
             className="h-10 px-3 py-2 rounded-md bg-neutral-950 border border-neutral-700 text-neutral-200 text-xs focus:ring-1 focus:ring-luxury-gold"
           >
             <option value="all">All Payment Methods</option>
@@ -169,6 +345,54 @@ export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps)
           </select>
         </div>
       </div>
+
+      {/* Floating Bulk Action Bar */}
+      {selectedIds.size > 0 && (
+        <div className="bg-neutral-900 border-2 border-luxury-gold/60 rounded-lg p-3 sm:p-4 shadow-xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 animate-in fade-in duration-200">
+          <div className="flex items-center gap-2.5">
+            <Badge className="bg-luxury-gold text-black font-semibold text-xs px-2.5 py-1">
+              <Layers className="h-3.5 w-3.5 mr-1" />
+              {selectedIds.size} {selectedIds.size === 1 ? 'order' : 'orders'} selected
+            </Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearSelection}
+              className="h-8 text-xs text-neutral-400 hover:text-white hover:bg-neutral-800"
+            >
+              Clear selection
+            </Button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <label htmlFor="bulk-target-status" className="text-xs text-neutral-300 font-medium whitespace-nowrap">
+                Action:
+              </label>
+              <select
+                id="bulk-target-status"
+                value={bulkTargetStatus}
+                onChange={(e) => setBulkTargetStatus(e.target.value as OrderStatus)}
+                className="h-9 px-3 py-1.5 rounded-md bg-neutral-950 border border-neutral-700 text-neutral-100 text-xs focus:ring-1 focus:ring-luxury-gold flex-1 sm:flex-initial"
+              >
+                <option value="pending">Set to Pending Review</option>
+                <option value="confirmed">Set to Order Confirmed</option>
+                <option value="processing">Set to Processing</option>
+                <option value="shipped">Set to Shipped</option>
+                <option value="delivered">Set to Delivered</option>
+                <option value="cancelled">Set to Cancelled</option>
+              </select>
+            </div>
+
+            <Button
+              onClick={() => setIsConfirmModalOpen(true)}
+              className="h-9 min-h-[44px] sm:min-h-[36px] px-4 text-xs font-semibold bg-luxury-gold text-black hover:bg-luxury-gold/90 w-full sm:w-auto"
+            >
+              Apply Status Update
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Orders Table */}
       <div className="bg-neutral-900 border border-neutral-800 rounded-lg overflow-hidden">
@@ -187,6 +411,15 @@ export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps)
             <table className="w-full text-left text-xs">
               <thead className="bg-neutral-950/80 border-b border-neutral-800 text-neutral-400 uppercase tracking-wider text-[11px]">
                 <tr>
+                  <th className="py-3 px-3 w-10 text-center">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all visible orders"
+                      checked={allVisibleSelected}
+                      onChange={handleToggleSelectAll}
+                      className="h-4 w-4 rounded border-neutral-700 bg-neutral-900 text-luxury-gold focus:ring-luxury-gold focus:ring-offset-neutral-950 cursor-pointer accent-amber-500"
+                    />
+                  </th>
                   <th className="py-3 px-4">Order #</th>
                   <th className="py-3 px-4">Date</th>
                   <th className="py-3 px-4">Customer</th>
@@ -205,9 +438,24 @@ export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps)
                     day: 'numeric',
                     year: 'numeric',
                   });
+                  const isSelected = selectedIds.has(order.id);
 
                   return (
-                    <tr key={order.id} className="hover:bg-neutral-850/50 transition-colors">
+                    <tr
+                      key={order.id}
+                      className={`hover:bg-neutral-850/50 transition-colors ${
+                        isSelected ? 'bg-luxury-gold/5' : ''
+                      }`}
+                    >
+                      <td className="py-3.5 px-3 text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select order ${order.order_number}`}
+                          checked={isSelected}
+                          onChange={() => handleToggleRow(order.id)}
+                          className="h-4 w-4 rounded border-neutral-700 bg-neutral-900 text-luxury-gold focus:ring-luxury-gold focus:ring-offset-neutral-950 cursor-pointer accent-amber-500"
+                        />
+                      </td>
                       <td className="py-3.5 px-4 font-mono font-semibold text-white">
                         <Link
                           href={`/admin/orders/${order.id}`}
@@ -267,6 +515,109 @@ export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps)
           </div>
         )}
       </div>
+
+      {/* Confirmation Dialog Modal */}
+      {isConfirmModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="bulk-confirm-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+        >
+          <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 id="bulk-confirm-title" className="text-base font-serif font-semibold text-white">
+                  Confirm Bulk Status Update
+                </h3>
+                <p className="text-xs text-neutral-400 mt-1">
+                  You are about to update {selectedIds.size} {selectedIds.size === 1 ? 'order' : 'orders'} to{' '}
+                  <span className="text-luxury-gold font-semibold uppercase">
+                    {ORDER_STATUS_LABELS[bulkTargetStatus]}
+                  </span>
+                  .
+                </p>
+              </div>
+              <button
+                onClick={() => !isProcessingBulk && setIsConfirmModalOpen(false)}
+                disabled={isProcessingBulk}
+                aria-label="Close dialog"
+                className="text-neutral-400 hover:text-white p-1 rounded hover:bg-neutral-800 transition-colors disabled:opacity-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Warning when updating to cancelled */}
+            {bulkTargetStatus === 'cancelled' ? (
+              <div className="p-3 rounded-md bg-rose-950/40 border border-rose-800 text-rose-300 text-xs space-y-1.5">
+                <div className="flex items-center gap-1.5 font-semibold text-rose-200">
+                  <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                  <span>Important Cancellation Warning</span>
+                </div>
+                <p>
+                  Setting status to <strong>Cancelled</strong> is permanent. Eligible orders will be cancelled
+                  and their reserved items will be atomically restocked into inventory via the database procedure.
+                  Cancelled orders cannot be reopened.
+                </p>
+              </div>
+            ) : (
+              <div className="p-3 rounded-md bg-neutral-950 border border-neutral-800 text-neutral-400 text-xs">
+                Eligible orders will transition to {ORDER_STATUS_LABELS[bulkTargetStatus]}, and an audit history entry
+                will be logged for each updated order.
+              </div>
+            )}
+
+            {/* Optional Notes */}
+            <div className="space-y-1.5">
+              <label htmlFor="bulk-notes-input" className="text-xs text-neutral-300 font-medium">
+                Admin Notes (Optional)
+              </label>
+              <Input
+                id="bulk-notes-input"
+                type="text"
+                placeholder="e.g., Dispatched in bulk batch #12"
+                value={bulkNotes}
+                onChange={(e) => setBulkNotes(e.target.value)}
+                disabled={isProcessingBulk}
+                className="bg-neutral-950 border-neutral-700 text-white text-xs h-9"
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsConfirmModalOpen(false)}
+                disabled={isProcessingBulk}
+                className="border-neutral-700 text-neutral-300 hover:text-white bg-neutral-900"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleExecuteBulkUpdate}
+                disabled={isProcessingBulk}
+                className={`min-h-[36px] px-4 font-semibold ${
+                  bulkTargetStatus === 'cancelled'
+                    ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                    : 'bg-luxury-gold text-black hover:bg-luxury-gold/90'
+                }`}
+              >
+                {isProcessingBulk ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    <span>Processing...</span>
+                  </>
+                ) : (
+                  <span>Confirm Update ({selectedIds.size})</span>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

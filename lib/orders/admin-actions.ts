@@ -300,6 +300,118 @@ export async function getAdminOrderById(orderId: string) {
   }
 }
 
+interface TransitionOrderResult {
+  orderId: string;
+  orderNumber?: string;
+  success: boolean;
+  previousStatus?: OrderStatus;
+  newStatus?: OrderStatus;
+  error?: string;
+}
+
+/**
+ * Internal helper: execute status transition on a single order.
+ * Reused by both individual and bulk actions to ensure identical validation,
+ * cancellation inventory restoration, and audit logging.
+ */
+async function transitionSingleOrder(
+  adminClient: any,
+  admin: { id: string; email?: string | null },
+  orderId: string,
+  newStatus: OrderStatus,
+  notes?: string
+): Promise<TransitionOrderResult> {
+  try {
+    // 1. Transactional path: invoke atomic database procedure update_order_status_with_audit
+    // This executes row-level locking, validation, cancellation restock delegation, and audit logging
+    // in a single atomic database transaction.
+    const { data: rpcData, error: rpcErr } = await (adminClient as any).rpc(
+      'update_order_status_with_audit',
+      {
+        p_order_id: orderId,
+        p_admin_id: admin.id,
+        p_new_status: newStatus,
+        p_notes: notes?.trim() || null,
+      }
+    );
+
+    if (!rpcErr && rpcData?.success) {
+      return {
+        orderId,
+        orderNumber: rpcData.order_number || orderId,
+        success: true,
+        previousStatus: rpcData.previous_status,
+        newStatus: rpcData.new_status,
+      };
+    }
+
+    // 2. Check if the RPC is not yet installed in the database
+    const isRpcMissing =
+      rpcErr &&
+      (rpcErr.code === 'PGRST202' ||
+        rpcErr.code === '42883' ||
+        rpcErr.message?.includes('does not exist') ||
+        rpcErr.message?.includes('function public.update_order_status_with_audit') ||
+        rpcErr.message?.includes('Could not find the function') ||
+        rpcErr.message?.includes('function update_order_status_with_audit'));
+
+    if (isRpcMissing) {
+      // Step 5: Controlled, safe error when RPC is missing.
+      // Unsafe non-atomic application fallback is strictly removed to prevent partial updates and race conditions.
+      return {
+        orderId,
+        success: false,
+        error:
+          'Order status service is temporarily unavailable. Database migration 00012 must be applied before updating order statuses.',
+      };
+    }
+
+    // 3. Handle controlled database exceptions and domain rejections
+    if (rpcErr) {
+      const msg = rpcErr.message || '';
+      let cleanError = 'Failed to update order status.';
+      if (msg.includes('Target order not found')) {
+        cleanError = 'Target order not found.';
+      } else if (msg.includes('Cancelled orders cannot be reopened')) {
+        cleanError = 'Cancelled orders cannot be reopened or transitioned to another status.';
+      } else if (msg.includes('Invalid target order status')) {
+        cleanError = 'Invalid order status specified.';
+      } else if (msg.includes('Unauthorized') || msg.includes('permission denied')) {
+        cleanError = 'Unauthorized to update order status.';
+      } else if (msg) {
+        cleanError = msg;
+      }
+
+      return {
+        orderId,
+        success: false,
+        error: cleanError,
+      };
+    }
+
+    if (rpcData && !rpcData.success) {
+      return {
+        orderId,
+        success: false,
+        error: rpcData.error || 'Failed to update order status.',
+      };
+    }
+
+    return {
+      orderId,
+      success: false,
+      error: 'Failed to update order status.',
+    };
+  } catch (err: unknown) {
+    console.error('[UpdateOrderStatus] Unexpected error:', err);
+    return {
+      orderId,
+      success: false,
+      error: 'Unexpected error updating order status.',
+    };
+  }
+}
+
 /**
  * UPDATE ORDER STATUS (PENDING -> CONFIRMED -> PROCESSING -> SHIPPED -> DELIVERED / CANCELLED)
  * Logs status transition in order_status_history and atomically restocks inventory when cancelled.
@@ -317,83 +429,149 @@ export async function updateOrderStatusAction(input: {
     return { success: false, error: 'Invalid order status specified.' };
   }
 
-  try {
-    // 1. Fetch current status
-    const { data: currentOrder, error: fetchErr } = await (adminClient.from('orders') as any)
-      .select('id, order_status, order_number')
-      .eq('id', input.orderId)
-      .single();
+  const result = await transitionSingleOrder(
+    adminClient,
+    admin,
+    input.orderId,
+    input.newStatus,
+    input.notes
+  );
 
-    if (fetchErr || !currentOrder) {
-      return { success: false, error: 'Target order not found.' };
-    }
-
-    const previousStatus = currentOrder.order_status;
-
-    if (previousStatus === input.newStatus) {
-      return { success: true };
-    }
-
-    if (previousStatus === ORDER_STATUSES.CANCELLED) {
-      return {
-        success: false,
-        error: 'Cancelled orders cannot be reopened or transitioned to another status.',
-      };
-    }
-
-    // 2. If cancelling the order, execute atomic cancellation + inventory restock procedure
-    if (input.newStatus === ORDER_STATUSES.CANCELLED) {
-      const { data: cancelData, error: cancelErr } = await (adminClient as any).rpc(
-        'cancel_order_and_restock',
-        {
-          p_order_id: input.orderId,
-          p_admin_id: admin.id,
-          p_notes: input.notes?.trim() || null,
-        }
-      );
-
-      if (cancelErr || !cancelData?.success) {
-        console.error('[UpdateOrderStatus] cancel_order_and_restock error:', cancelErr);
-        return {
-          success: false,
-          error: cancelErr?.message || 'Database failed to cancel order and restock inventory.',
-        };
-      }
-
-      revalidatePath('/admin/orders');
-      revalidatePath(`/admin/orders/${input.orderId}`);
-      revalidatePath('/admin/inventory');
-      revalidatePath('/shop');
-      return { success: true };
-    }
-
-    // 3. Standard non-cancellation status update
-    const { error: updateErr } = await (adminClient.from('orders') as any)
-      .update({
-        order_status: input.newStatus,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', input.orderId);
-
-    if (updateErr) {
-      return { success: false, error: 'Database failed to update order status.' };
-    }
-
-    // 4. Log transition history
-    await (adminClient.from('order_status_history') as any).insert({
-      order_id: input.orderId,
-      previous_status: previousStatus,
-      new_status: input.newStatus,
-      notes: input.notes?.trim() || `Status updated to ${input.newStatus} by admin (${admin.email})`,
-    });
-
+  if (result.success) {
     revalidatePath('/admin/orders');
     revalidatePath(`/admin/orders/${input.orderId}`);
+    if (input.newStatus === ORDER_STATUSES.CANCELLED) {
+      revalidatePath('/admin/inventory');
+      revalidatePath('/shop');
+    }
     return { success: true };
-  } catch (err: unknown) {
-    console.error('[UpdateOrderStatus] Error:', err);
-    return { success: false, error: 'Failed to update order status.' };
   }
+
+  return { success: false, error: result.error || 'Failed to update order status.' };
+}
+
+export interface BulkOrderStatusResult {
+  orderId: string;
+  orderNumber: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface BulkOrderStatusResponse {
+  success: boolean;
+  totalCount: number;
+  successCount: number;
+  failureCount: number;
+  results: BulkOrderStatusResult[];
+  error?: string;
+}
+
+/**
+ * BULK UPDATE ORDER STATUS
+ * Applies status transitions across multiple selected orders concurrently with safety validation.
+ * Enforces admin authorization, max batch limit, deduplication, atomic cancellation restock,
+ * and individual status audit history. Returns structured per-order success/failure details.
+ */
+export async function bulkUpdateOrderStatusAction(input: {
+  orderIds: string[];
+  newStatus: OrderStatus;
+  notes?: string;
+}): Promise<BulkOrderStatusResponse> {
+  const admin = await requireAdminAuth();
+  const adminClient = createAdminClient();
+
+  if (!input || !Array.isArray(input.orderIds) || input.orderIds.length === 0) {
+    return {
+      success: false,
+      totalCount: 0,
+      successCount: 0,
+      failureCount: 0,
+      results: [],
+      error: 'At least one order must be selected for bulk update.',
+    };
+  }
+
+  // Deduplicate and filter non-empty string IDs
+  const uniqueOrderIds = Array.from(
+    new Set(input.orderIds.filter((id) => typeof id === 'string' && id.trim().length > 0))
+  );
+
+  if (uniqueOrderIds.length === 0) {
+    return {
+      success: false,
+      totalCount: 0,
+      successCount: 0,
+      failureCount: 0,
+      results: [],
+      error: 'No valid order IDs provided.',
+    };
+  }
+
+  const MAX_BATCH_SIZE = 100;
+  if (uniqueOrderIds.length > MAX_BATCH_SIZE) {
+    return {
+      success: false,
+      totalCount: uniqueOrderIds.length,
+      successCount: 0,
+      failureCount: uniqueOrderIds.length,
+      results: [],
+      error: `Maximum ${MAX_BATCH_SIZE} orders can be updated in a single bulk operation.`,
+    };
+  }
+
+  const validStatuses = Object.values(ORDER_STATUSES);
+  if (!validStatuses.includes(input.newStatus)) {
+    return {
+      success: false,
+      totalCount: uniqueOrderIds.length,
+      successCount: 0,
+      failureCount: uniqueOrderIds.length,
+      results: [],
+      error: 'Invalid target order status specified.',
+    };
+  }
+
+  const results: BulkOrderStatusResult[] = [];
+
+  for (const orderId of uniqueOrderIds) {
+    const res = await transitionSingleOrder(
+      adminClient,
+      admin,
+      orderId,
+      input.newStatus,
+      input.notes
+    );
+    results.push({
+      orderId: res.orderId,
+      orderNumber: res.orderNumber || res.orderId,
+      success: res.success,
+      error: res.error,
+    });
+  }
+
+  const successCount = results.filter((r) => r.success).length;
+  const failureCount = results.filter((r) => !r.success).length;
+
+  if (successCount > 0) {
+    revalidatePath('/admin/orders');
+    if (input.newStatus === ORDER_STATUSES.CANCELLED) {
+      revalidatePath('/admin/inventory');
+      revalidatePath('/shop');
+    }
+    for (const res of results) {
+      if (res.success) {
+        revalidatePath(`/admin/orders/${res.orderId}`);
+      }
+    }
+  }
+
+  return {
+    success: failureCount === 0,
+    totalCount: uniqueOrderIds.length,
+    successCount,
+    failureCount,
+    results,
+  };
 }
 
 /**

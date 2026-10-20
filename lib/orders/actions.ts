@@ -27,6 +27,7 @@ export interface CreateOrderInput {
   paymentMethod: PaymentMethod;
   couponCode?: string | null;
   clientRequestId?: string | null;
+  checkoutSource?: 'cart' | 'buy_now';
   items: CreateOrderItemInput[];
 }
 
@@ -36,6 +37,7 @@ export interface CreateOrderResult {
   orderId?: string;
   orderToken?: string;
   error?: string;
+  cartCleanedUp?: boolean;
 }
 
 interface DistrictRow {
@@ -130,6 +132,20 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
         error: 'Client-supplied user identity is not permitted.',
       };
     }
+
+    // Validate checkoutSource strictly: must be 'cart' or 'buy_now' (or undefined/null defaulting to 'cart')
+    let validatedCheckoutSource: 'cart' | 'buy_now' = 'cart';
+    if (input.checkoutSource !== undefined && input.checkoutSource !== null) {
+      if (input.checkoutSource === 'cart' || input.checkoutSource === 'buy_now') {
+        validatedCheckoutSource = input.checkoutSource;
+      } else {
+        return {
+          success: false,
+          error: 'Invalid checkout source specified. Must be "cart" or "buy_now".',
+        };
+      }
+    }
+
     if (!input.customerName?.trim()) {
       return { success: false, error: 'Full name is required.' };
     }
@@ -323,11 +339,63 @@ export async function createOrderAction(input: CreateOrderInput): Promise<Create
       };
     }
 
+    // 7. Server-side cart deduction for authenticated customers
+    // Authoritatively deducts purchased items from Supabase cart BEFORE returning to client.
+    // CRITICAL SECURITY & CART ISOLATION RULE:
+    // Buy Now orders (validatedCheckoutSource === 'buy_now') MUST NOT mutate or deduct from customer's normal cart.
+    // Server-side cart deduction is strictly reserved for genuine cart checkouts (validatedCheckoutSource === 'cart').
+    let cartCleanedUp = true;
+    const isCartCheckout = input.checkoutSource !== 'buy_now' && validatedCheckoutSource === 'cart';
+
+    if (userId && rpcData.order_number && isCartCheckout) {
+      try {
+        // Validate checkout source: verify the customer actually has an active cart with matching variants
+        // before attempting deduction (defense-in-depth against accidental or unauthorized cart mutation).
+        const { data: userCart } = await (adminClient.from('carts') as any)
+          .select(`
+            id,
+            cart_items (
+              variant_id
+            )
+          `)
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        const hasMatchingCartItem =
+          userCart &&
+          Array.isArray(userCart.cart_items) &&
+          userCart.cart_items.some((ci: any) =>
+            consolidatedItems.some((item) => item.variantId === ci.variant_id)
+          );
+
+        if (hasMatchingCartItem) {
+          const { data: deductData, error: deductError } = await (adminClient as any).rpc(
+            'deduct_purchased_cart_items',
+            {
+              p_user_id: userId,
+              p_order_number: rpcData.order_number,
+            }
+          );
+          if (deductError) {
+            console.error('[OrderCreation] Server cart deduction error:', deductError);
+            cartCleanedUp = false;
+          } else if (deductData && !deductData.success) {
+            console.warn('[OrderCreation] Server cart deduction warning:', deductData.error);
+            cartCleanedUp = false;
+          }
+        }
+      } catch (deductErr) {
+        console.error('[OrderCreation] Unexpected error during server cart deduction:', deductErr);
+        cartCleanedUp = false;
+      }
+    }
+
     return {
       success: true,
       orderNumber: rpcData.order_number,
       orderId: rpcData.order_id,
       orderToken: rpcData.order_token,
+      cartCleanedUp,
     };
   } catch (err: unknown) {
     console.error('[OrderCreation] Unexpected server error processing order:', err instanceof Error ? err.message : err);

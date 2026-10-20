@@ -6,7 +6,7 @@ import { Container } from '@/components/ui/container';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/lib/config/store';
-import { ArrowLeft, Clock, MapPin, MessageCircle, PackageCheck, Receipt, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Clock, MapPin, MessageCircle, PackageCheck, Receipt, ShieldCheck, Truck } from 'lucide-react';
 
 interface AccountOrderDetailPageProps {
   params: Promise<{ orderId: string }>;
@@ -202,6 +202,41 @@ export default async function AccountOrderDetailPage({ params }: AccountOrderDet
                 {order.delivery_notes && (
                   <p className="text-neutral-500 italic pt-1">
                     Notes: &ldquo;{order.delivery_notes}&rdquo;
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Delivery Tracking */}
+            <Card className="border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-luxury-surface">
+              <CardHeader className="pb-3 border-b border-neutral-100 dark:border-neutral-850">
+                <CardTitle className="text-base font-serif flex items-center space-x-2">
+                  <Truck className="h-4 w-4 text-luxury-gold" />
+                  <span>Delivery Tracking</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-5 space-y-3 text-xs sm:text-sm">
+                {order.tracking_number && order.tracking_number.trim() ? (
+                  <div className="space-y-3">
+                    <div>
+                      <span className="text-neutral-500 dark:text-neutral-400 block text-xs uppercase tracking-wider font-medium mb-1">
+                        Tracking Number
+                      </span>
+                      <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 font-mono text-sm font-semibold text-luxury-gold break-all">
+                        <span>{order.tracking_number.trim()}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 text-xs text-neutral-600 dark:text-neutral-400 pt-1">
+                      <div>
+                        <span>Order Status: </span>
+                        <span className="font-semibold text-foreground uppercase">{currentStatus}</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-neutral-500 dark:text-neutral-400 italic">
+                    Tracking information will appear here once your parcel has been dispatched.
                   </p>
                 )}
               </CardContent>

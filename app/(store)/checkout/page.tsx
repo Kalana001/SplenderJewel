@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ShieldCheck,
   Truck,
@@ -15,6 +15,7 @@ import {
   Tag,
   CheckCircle2,
   X,
+  Sparkles,
 } from 'lucide-react';
 import { Container } from '@/components/ui/container';
 import { Button } from '@/components/ui/button';
@@ -26,11 +27,35 @@ import { getShippingBreakdown } from '@/lib/config/shipping';
 import { PAYMENT_METHODS, type PaymentMethod } from '@/lib/config/constants';
 import { createOrderAction, checkTesterAccessAction } from '@/lib/orders/actions';
 import { validateCouponAction } from '@/lib/coupons/actions';
+import { getBuyNowItemAction, type BuyNowItemDetails } from '@/lib/cart/actions';
 
-export default function CheckoutPage() {
+function CheckoutLoadingSkeleton() {
+  return (
+    <Container size="xl" className="py-12 sm:py-16">
+      <div className="max-w-4xl mx-auto space-y-6 animate-pulse">
+        <div className="h-8 bg-neutral-800 rounded w-48" />
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 h-96 bg-neutral-900 rounded-lg border border-neutral-800" />
+          <div className="h-96 bg-neutral-900 rounded-lg border border-neutral-800" />
+        </div>
+      </div>
+    </Container>
+  );
+}
+
+function CheckoutContent() {
   const router = useRouter();
-  const { items, isLoaded, totalCount, subtotal, clearCart, clearPurchasedItems } = useCart();
+  const searchParams = useSearchParams();
+  const isBuyNow = searchParams.get('buyNow') === 'true';
+
+  const { items, isLoaded, totalCount, subtotal: cartSubtotal, clearPurchasedItems } = useCart();
   const isLiveCheckout = process.env.NEXT_PUBLIC_ENABLE_LIVE_CHECKOUT === 'true';
+
+  // Buy Now Isolated Session State
+  const [buyNowItem, setBuyNowItem] = useState<BuyNowItemDetails | null>(null);
+  const [buyNowQty, setBuyNowQty] = useState<number>(1);
+  const [isLoadingBuyNow, setIsLoadingBuyNow] = useState<boolean>(isBuyNow);
+  const [buyNowError, setBuyNowError] = useState<string | null>(null);
 
   // Tester Authorization State
   const [testerState, setTesterState] = useState<{ isTester: boolean; isLiveCheckout: boolean; email?: string } | null>(null);
@@ -46,6 +71,75 @@ export default function CheckoutPage() {
       isMounted = false;
     };
   }, []);
+
+  // Hydrate and validate Buy Now selection strictly from server
+  useEffect(() => {
+    if (!isBuyNow) return;
+
+    let isMounted = true;
+    setIsLoadingBuyNow(true);
+    setBuyNowError(null);
+
+    try {
+      const stored = typeof window !== 'undefined' ? sessionStorage.getItem('splender_buy_now_session') : null;
+      if (!stored) {
+        if (isMounted) {
+          setBuyNowError('No Buy Now item selected. Redirecting to your bag...');
+          setIsLoadingBuyNow(false);
+          setTimeout(() => router.push('/cart'), 2000);
+        }
+        return;
+      }
+
+      const parsed = JSON.parse(stored);
+      if (!parsed || !parsed.variantId || !parsed.quantity) {
+        if (isMounted) {
+          setBuyNowError('Invalid Buy Now selection. Redirecting to your bag...');
+          setIsLoadingBuyNow(false);
+          setTimeout(() => router.push('/cart'), 2000);
+        }
+        return;
+      }
+
+      const requestedQty = Math.max(1, Number(parsed.quantity) || 1);
+
+      getBuyNowItemAction(parsed.variantId)
+        .then((res) => {
+          if (!isMounted) return;
+          if (!res.success || !res.item) {
+            setBuyNowError(res.error || 'The selected item is no longer available.');
+            setIsLoadingBuyNow(false);
+            return;
+          }
+
+          if (!res.item.isAvailable || res.item.availableStock <= 0) {
+            setBuyNowError('The selected item is currently out of stock.');
+            setIsLoadingBuyNow(false);
+            return;
+          }
+
+          const clampedQty = Math.min(requestedQty, res.item.availableStock);
+          setBuyNowItem(res.item);
+          setBuyNowQty(clampedQty);
+          setIsLoadingBuyNow(false);
+        })
+        .catch(() => {
+          if (isMounted) {
+            setBuyNowError('Failed to verify item availability. Please try again.');
+            setIsLoadingBuyNow(false);
+          }
+        });
+    } catch {
+      if (isMounted) {
+        setBuyNowError('Failed to initialize Buy Now checkout.');
+        setIsLoadingBuyNow(false);
+      }
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isBuyNow, router]);
 
   // Form Fields
   const [customerName, setCustomerName] = useState('');
@@ -71,15 +165,45 @@ export default function CheckoutPage() {
   const clientRequestIdRef = useRef<string | null>(null);
   const clientRequestPayloadRef = useRef<string | null>(null);
 
+  // Active items for this specific checkout session
+  const checkoutItems = isBuyNow
+    ? buyNowItem
+      ? [
+          {
+            variantId: buyNowItem.variantId,
+            productId: buyNowItem.productId,
+            productName: buyNowItem.productName,
+            variantTitle: buyNowItem.variantTitle,
+            sku: buyNowItem.sku,
+            price: buyNowItem.price,
+            discountPrice: buyNowItem.discountPrice,
+            imageUrl: buyNowItem.imageUrl,
+            slug: buyNowItem.slug,
+            quantity: buyNowQty,
+          },
+        ]
+      : []
+    : items;
+
+  const checkoutTotalCount = isBuyNow ? buyNowQty : totalCount;
+
+  const checkoutSubtotal = isBuyNow
+    ? buyNowItem
+      ? (buyNowItem.discountPrice != null && buyNowItem.discountPrice > 0
+          ? buyNowItem.discountPrice
+          : buyNowItem.price) * buyNowQty
+      : 0
+    : cartSubtotal;
+
   // Delivery fee dynamically calculated by payment method and total item quantity
-  const totalItemQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
+  const totalItemQuantity = isBuyNow ? buyNowQty : items.reduce((sum, item) => sum + item.quantity, 0);
   const shippingBreakdown = getShippingBreakdown({
     paymentMethod,
     totalQuantity: Math.max(1, totalItemQuantity),
   });
   const deliveryFee = totalItemQuantity > 0 ? shippingBreakdown.fee : 0;
   const discountAmount = appliedCoupon?.calculatedDiscount || 0;
-  const grandTotal = Math.max(0, subtotal - discountAmount) + deliveryFee;
+  const grandTotal = Math.max(0, checkoutSubtotal - discountAmount) + deliveryFee;
 
   // Handle Coupon Apply
   async function handleApplyCoupon(e: React.FormEvent) {
@@ -89,7 +213,7 @@ export default function CheckoutPage() {
     setIsValidatingCoupon(true);
 
     try {
-      const res = await validateCouponAction(couponInput.trim(), subtotal, {
+      const res = await validateCouponAction(couponInput.trim(), checkoutSubtotal, {
         phone1: phone1.trim() || null,
         email: email.trim() || null,
       });
@@ -131,8 +255,12 @@ export default function CheckoutPage() {
       return;
     }
 
-    if (items.length === 0) {
-      setErrorMessage('Your shopping bag is empty. Please add items before checking out.');
+    if (checkoutItems.length === 0) {
+      setErrorMessage(
+        isBuyNow
+          ? 'No Buy Now item selected for purchase.'
+          : 'Your shopping bag is empty. Please add items before checking out.'
+      );
       return;
     }
 
@@ -160,7 +288,7 @@ export default function CheckoutPage() {
 
     // Build canonical payload fingerprint to bind idempotency key to intended order contents
     const aggregatedItemsMap = new Map<string, number>();
-    for (const item of items) {
+    for (const item of checkoutItems) {
       const vid = item.variantId.trim();
       aggregatedItemsMap.set(vid, (aggregatedItemsMap.get(vid) || 0) + item.quantity);
     }
@@ -169,6 +297,7 @@ export default function CheckoutPage() {
       .sort((a, b) => a.variantId.localeCompare(b.variantId));
 
     const payloadFingerprint = JSON.stringify({
+      checkoutSource: isBuyNow ? 'buy_now' : 'cart',
       customerName: customerName.trim().toLowerCase(),
       phone1: phone1.trim(),
       phone2: phone2.trim() || '',
@@ -207,7 +336,8 @@ export default function CheckoutPage() {
         paymentMethod,
         couponCode: appliedCoupon?.code || null,
         clientRequestId: clientRequestIdRef.current,
-        items: items.map((i) => ({
+        checkoutSource: isBuyNow ? 'buy_now' : 'cart',
+        items: checkoutItems.map((i) => ({
           variantId: i.variantId,
           quantity: i.quantity,
         })),
@@ -223,14 +353,24 @@ export default function CheckoutPage() {
         return;
       }
 
-      // Order created successfully: reset idempotency state, clear purchased items from cart, and navigate to confirmation
+      // Order created successfully: reset idempotency state
       clientRequestIdRef.current = null;
       clientRequestPayloadRef.current = null;
-      const purchasedItems = items.map((i) => ({
-        variantId: i.variantId,
-        quantity: i.quantity,
-      }));
-      clearPurchasedItems(purchasedItems, res.orderNumber);
+
+      if (isBuyNow) {
+        // Clear temporary Buy Now session; shopping bag is untouched!
+        if (typeof window !== 'undefined') {
+          sessionStorage.removeItem('splender_buy_now_session');
+        }
+      } else {
+        // Cart checkout: deduct purchased items from shopping bag
+        const purchasedItems = checkoutItems.map((i) => ({
+          variantId: i.variantId,
+          quantity: i.quantity,
+        }));
+        await clearPurchasedItems(purchasedItems, res.orderNumber);
+      }
+
       const confirmationUrl = res.orderToken
         ? `/order-confirmation/${res.orderNumber}?token=${encodeURIComponent(res.orderToken)}`
         : `/order-confirmation/${res.orderNumber}`;
@@ -242,21 +382,46 @@ export default function CheckoutPage() {
     }
   }
 
-  if (!isLoaded) {
+  // Loading skeleton during cart or buy-now initialization
+  if ((!isLoaded && !isBuyNow) || (isBuyNow && isLoadingBuyNow)) {
+    return <CheckoutLoadingSkeleton />;
+  }
+
+  // Buy Now Error Display
+  if (isBuyNow && buyNowError) {
     return (
-      <Container size="xl" className="py-12 sm:py-16">
-        <div className="max-w-4xl mx-auto space-y-6 animate-pulse">
-          <div className="h-8 bg-neutral-800 rounded w-48" />
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-2 h-96 bg-neutral-900 rounded-lg border border-neutral-800" />
-            <div className="h-96 bg-neutral-900 rounded-lg border border-neutral-800" />
+      <Container size="xl" className="py-16 sm:py-24">
+        <div className="max-w-md mx-auto text-center space-y-6">
+          <div className="inline-flex items-center justify-center h-20 w-20 rounded-full bg-rose-950/40 border border-rose-800 text-rose-400 mb-2">
+            <AlertCircle className="h-10 w-10 stroke-[1.5]" />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-2xl sm:text-3xl font-serif font-bold text-white tracking-wide">
+              Buy Now Unavailable
+            </h1>
+            <p className="text-sm text-neutral-400">{buyNowError}</p>
+          </div>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+            <Link href="/shop">
+              <Button variant="gold" size="lg" className="w-full sm:w-auto px-8 font-semibold">
+                Browse Jewelry Collection
+              </Button>
+            </Link>
+            {items.length > 0 && (
+              <Link href="/cart">
+                <Button variant="outline" size="lg" className="w-full sm:w-auto px-6 border-neutral-700 text-neutral-300">
+                  View Shopping Bag ({totalCount})
+                </Button>
+              </Link>
+            )}
           </div>
         </div>
       </Container>
     );
   }
 
-  if (items.length === 0) {
+  // Empty Bag Display (Standard checkout)
+  if (!isBuyNow && items.length === 0) {
     return (
       <Container size="xl" className="py-16 sm:py-24">
         <div className="max-w-md mx-auto text-center space-y-6">
@@ -294,58 +459,64 @@ export default function CheckoutPage() {
               </div>
             )}
             <h1 className="text-2xl sm:text-3xl font-serif font-bold text-white tracking-wide">
-              {isLiveCheckout ? 'Secure Checkout' : 'Order Review & Checkout Preview'}
+              {isBuyNow ? 'Instant Buy Now Checkout' : isLiveCheckout ? 'Secure Checkout' : 'Order Review & Checkout Preview'}
             </h1>
             <p className="text-xs sm:text-sm text-neutral-400 mt-1">
-              {isLiveCheckout
-                ? 'Islandwide Delivery across Sri Lanka'
-                : 'Online order placement is currently inactive while storefront testing is underway'}
+              {isBuyNow
+                ? 'Review your selected piece and complete your direct order with islandwide delivery.'
+                : isLiveCheckout
+                ? 'Please complete your shipping and payment information to place your order.'
+                : 'Review calculated prices, official courier fees, and verified promo discounts before placing your order.'}
             </p>
           </div>
-
           <Link
-            href="/cart"
-            className="inline-flex items-center gap-2 text-xs uppercase tracking-wider text-neutral-400 hover:text-luxury-gold transition-colors"
+            href={isBuyNow ? (buyNowItem ? `/products/${buyNowItem.slug}` : '/shop') : '/cart'}
+            className="hidden sm:inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-luxury-gold transition-colors"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
-            <span>Return to Bag</span>
+            <span>{isBuyNow ? 'Back to Product' : 'Return to Bag'}</span>
           </Link>
         </div>
 
-        {/* Error Notification Alert */}
+        {/* Global Error Banner */}
         {errorMessage && (
-          <div className="flex items-start gap-3 p-4 bg-rose-950/70 border border-rose-800/80 rounded-lg text-rose-200 text-sm">
+          <div className="p-4 rounded-lg bg-rose-950/80 border border-rose-800/80 text-rose-200 text-sm flex items-start gap-3 shadow-md animate-fadeIn">
             <AlertCircle className="h-5 w-5 text-rose-400 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <strong className="block font-semibold">Unable to complete checkout:</strong>
+            <div className="flex-1 text-xs sm:text-sm">
+              <strong className="font-semibold block mb-0.5 text-rose-300">Order Submission Notice</strong>
               <span>{errorMessage}</span>
             </div>
+            <button
+              onClick={() => setErrorMessage(null)}
+              className="text-rose-400 hover:text-rose-200 transition-colors"
+              aria-label="Dismiss error"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         )}
 
-        {/* Main 2-Column Grid */}
+        {/* Checkout Two-Column Grid */}
         <form onSubmit={handleSubmit}>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-            {/* Left Column: Form Fields */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Left Column: Recipient & Delivery Information */}
             <div className="lg:col-span-2 space-y-8">
-              {/* 1. Recipient Contact Details */}
-              <div className="bg-neutral-900/60 border border-neutral-800 rounded-lg p-6 space-y-5">
-                <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
-                  <h2 className="text-base sm:text-lg font-serif font-bold text-white">
-                    1. Recipient & Contact Details
-                  </h2>
-                  <span className="text-xs text-luxury-gold font-medium">Required for delivery</span>
-                </div>
+              {/* Recipient Details */}
+              <div className="bg-neutral-900/80 border border-neutral-800 rounded-lg p-6 space-y-4">
+                <h2 className="text-lg font-serif font-bold text-white tracking-wide border-b border-neutral-800 pb-3 flex items-center gap-2">
+                  <span>1. Recipient Information</span>
+                </h2>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="sm:col-span-2 space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
-                      Full Name <span className="text-luxury-gold">*</span>
+                    <label htmlFor="customerName" className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
+                      Full Recipient Name <span className="text-luxury-gold">*</span>
                     </label>
                     <Input
+                      id="customerName"
                       type="text"
                       required
-                      placeholder="e.g. Kasun Perera"
+                      placeholder="e.g. Anusha Perera"
                       value={customerName}
                       onChange={(e) => setCustomerName(e.target.value)}
                       className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
@@ -353,26 +524,29 @@ export default function CheckoutPage() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
-                      Primary Contact Phone <span className="text-luxury-gold">*</span>
+                    <label htmlFor="phone1" className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
+                      Primary Contact Number <span className="text-luxury-gold">*</span>
                     </label>
                     <Input
+                      id="phone1"
                       type="tel"
                       required
-                      placeholder="e.g. 077 123 4567"
+                      placeholder="e.g. 0771234567"
                       value={phone1}
                       onChange={(e) => setPhone1(e.target.value)}
                       className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
                     />
+                    <p className="text-[11px] text-neutral-500">Required for courier delivery coordination.</p>
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
-                      Secondary Phone <span className="text-neutral-500 font-normal">(Optional)</span>
+                    <label htmlFor="phone2" className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
+                      Alternative Phone Number <span className="text-neutral-500 font-normal">(Optional)</span>
                     </label>
                     <Input
+                      id="phone2"
                       type="tel"
-                      placeholder="e.g. 011 234 5678"
+                      placeholder="e.g. 0112345678"
                       value={phone2}
                       onChange={(e) => setPhone2(e.target.value)}
                       className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
@@ -380,10 +554,11 @@ export default function CheckoutPage() {
                   </div>
 
                   <div className="sm:col-span-2 space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
-                      Email Address <span className="text-neutral-500 font-normal">(Optional, for receipt)</span>
+                    <label htmlFor="email" className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
+                      Email Address <span className="text-neutral-500 font-normal">(Optional for order confirmation)</span>
                     </label>
                     <Input
+                      id="email"
                       type="email"
                       placeholder="e.g. customer@example.com"
                       value={email}
@@ -394,156 +569,151 @@ export default function CheckoutPage() {
                 </div>
               </div>
 
-              {/* 2. Delivery Address in Sri Lanka */}
-              <div className="bg-neutral-900/60 border border-neutral-800 rounded-lg p-6 space-y-5">
-                <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
-                  <h2 className="text-base sm:text-lg font-serif font-bold text-white">
-                    2. Delivery Address (Sri Lanka)
-                  </h2>
-                  <span className="text-xs text-neutral-400">Home or Workplace delivery</span>
-                </div>
+              {/* Delivery Address */}
+              <div className="bg-neutral-900/80 border border-neutral-800 rounded-lg p-6 space-y-4">
+                <h2 className="text-lg font-serif font-bold text-white tracking-wide border-b border-neutral-800 pb-3 flex items-center gap-2">
+                  <span>2. Delivery Address (Sri Lanka)</span>
+                </h2>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="sm:col-span-2 space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
-                      Street Address / House / Flat <span className="text-luxury-gold">*</span>
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label htmlFor="addressLine" className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
+                      Street Address <span className="text-luxury-gold">*</span>
                     </label>
                     <Input
+                      id="addressLine"
                       type="text"
                       required
-                      placeholder="e.g. No. 42, Galle Road, Bambalapitiya"
+                      placeholder="e.g. No. 45, Galle Road, Apartment 3B"
                       value={addressLine}
                       onChange={(e) => setAddressLine(e.target.value)}
                       className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
                     />
                   </div>
 
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-1.5">
+                      <label htmlFor="district" className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
+                        District <span className="text-luxury-gold">*</span>
+                      </label>
+                      <select
+                        id="district"
+                        required
+                        value={district}
+                        onChange={(e) => setDistrict(e.target.value as SriLankaDistrict)}
+                        className="w-full h-10 px-3 py-2 rounded-md bg-neutral-950 border border-neutral-700 text-white text-sm focus:outline-none focus:ring-1 focus:ring-luxury-gold"
+                      >
+                        {SRI_LANKA_DISTRICTS.map((d) => (
+                          <option key={d} value={d}>
+                            {d}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label htmlFor="city" className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
+                        City / Town <span className="text-neutral-500 font-normal">(Optional)</span>
+                      </label>
+                      <Input
+                        id="city"
+                        type="text"
+                        placeholder="e.g. Kollupitiya"
+                        value={city}
+                        onChange={(e) => setCity(e.target.value)}
+                        className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label htmlFor="postalCode" className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
+                        Postal Code <span className="text-neutral-500 font-normal">(Optional)</span>
+                      </label>
+                      <Input
+                        id="postalCode"
+                        type="text"
+                        placeholder="e.g. 00300"
+                        value={postalCode}
+                        onChange={(e) => setPostalCode(e.target.value)}
+                        className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
+                      />
+                    </div>
+                  </div>
+
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
-                      City / Town <span className="text-neutral-500 font-normal">(Optional)</span>
+                    <label htmlFor="deliveryNotes" className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
+                      Courier Delivery Instructions <span className="text-neutral-500 font-normal">(Optional)</span>
                     </label>
                     <Input
+                      id="deliveryNotes"
                       type="text"
-                      placeholder="e.g. Colombo 04"
-                      value={city}
-                      onChange={(e) => setCity(e.target.value)}
-                      className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
-                      District <span className="text-luxury-gold">*</span>
-                    </label>
-                    <select
-                      required
-                      value={district}
-                      onChange={(e) => setDistrict(e.target.value as SriLankaDistrict)}
-                      className="w-full h-10 px-3 py-2 rounded-md bg-neutral-950 border border-neutral-700 text-white text-sm focus:outline-none focus:ring-1 focus:ring-luxury-gold focus:border-luxury-gold"
-                    >
-                      {SRI_LANKA_DISTRICTS.map((d) => (
-                        <option key={d} value={d} className="bg-neutral-950 text-white">
-                          {d}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
-                      Postal Code <span className="text-neutral-500 font-normal">(Optional)</span>
-                    </label>
-                    <Input
-                      type="text"
-                      placeholder="e.g. 00400"
-                      value={postalCode}
-                      onChange={(e) => setPostalCode(e.target.value)}
-                      className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5 sm:col-span-2">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-neutral-300">
-                      Delivery Instructions <span className="text-neutral-500 font-normal">(Optional)</span>
-                    </label>
-                    <textarea
-                      rows={2}
-                      placeholder="e.g. Deliver between 10am and 4pm, call before arrival"
+                      placeholder="e.g. Leave with security desk or call before arriving"
                       value={deliveryNotes}
                       onChange={(e) => setDeliveryNotes(e.target.value)}
-                      className="w-full px-3 py-2 rounded-md bg-neutral-950 border border-neutral-700 text-white text-sm focus:outline-none focus:ring-1 focus:ring-luxury-gold focus:border-luxury-gold"
+                      className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
                     />
                   </div>
                 </div>
               </div>
 
-              {/* 3. Payment Method */}
-              <div className="bg-neutral-900/60 border border-neutral-800 rounded-lg p-6 space-y-5">
-                <div className="border-b border-neutral-800 pb-3">
-                  <h2 className="text-base sm:text-lg font-serif font-bold text-white">
-                    3. Payment Method
-                  </h2>
-                  <p className="text-xs text-neutral-400 mt-0.5">
-                    Choose how you would like to complete your jewelry purchase
-                  </p>
-                </div>
+              {/* Payment Method Selection */}
+              <div className="bg-neutral-900/80 border border-neutral-800 rounded-lg p-6 space-y-4">
+                <h2 className="text-lg font-serif font-bold text-white tracking-wide border-b border-neutral-800 pb-3 flex items-center gap-2">
+                  <span>3. Payment Method</span>
+                </h2>
 
-                <div className="space-y-3">
-                  {/* Option 1: Cash on Delivery */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* COD */}
                   <label
-                    className={`block p-4 rounded-lg border cursor-pointer transition-all ${
+                    className={`flex items-start gap-3 p-4 rounded-lg border cursor-pointer transition-all ${
                       paymentMethod === PAYMENT_METHODS.COD
-                        ? 'bg-luxury-gold/10 border-luxury-gold'
-                        : 'bg-neutral-950 border-neutral-800 hover:border-neutral-700'
+                        ? 'border-luxury-gold bg-luxury-gold/5 ring-1 ring-luxury-gold'
+                        : 'border-neutral-800 hover:border-neutral-700 bg-neutral-950'
                     }`}
                   >
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="radio"
-                        name="paymentMethod"
-                        value={PAYMENT_METHODS.COD}
-                        checked={paymentMethod === PAYMENT_METHODS.COD}
-                        onChange={() => setPaymentMethod(PAYMENT_METHODS.COD)}
-                        className="mt-1 h-4 w-4 text-luxury-gold focus:ring-luxury-gold border-neutral-700 bg-neutral-900"
-                      />
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <Banknote className="h-4 w-4 text-luxury-gold" />
-                          <span className="text-sm font-semibold text-white">Cash on Delivery (COD)</span>
-                        </div>
-                        <p className="text-xs text-neutral-400 mt-1 leading-relaxed">
-                          Pay in cash when you receive your parcel. Dispatched through Sri Lanka Post COD Service. No advance payment required.
-                        </p>
+                    <input
+                      type="radio"
+                      name="paymentMethod"
+                      value={PAYMENT_METHODS.COD}
+                      checked={paymentMethod === PAYMENT_METHODS.COD}
+                      onChange={() => setPaymentMethod(PAYMENT_METHODS.COD)}
+                      className="mt-1 text-luxury-gold focus:ring-luxury-gold bg-neutral-900 border-neutral-700"
+                    />
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Banknote className="h-4 w-4 text-luxury-gold" />
+                        <span className="font-semibold text-white text-sm">Cash on Delivery</span>
                       </div>
+                      <p className="text-xs text-neutral-400">
+                        Pay cash directly to the courier upon delivery of your parcel.
+                      </p>
                     </div>
                   </label>
 
-                  {/* Option 2: Bank Transfer */}
+                  {/* Bank Transfer */}
                   <label
-                    className={`block p-4 rounded-lg border cursor-pointer transition-all ${
+                    className={`flex items-start gap-3 p-4 rounded-lg border cursor-pointer transition-all ${
                       paymentMethod === PAYMENT_METHODS.BANK_TRANSFER
-                        ? 'bg-luxury-gold/10 border-luxury-gold'
-                        : 'bg-neutral-950 border-neutral-800 hover:border-neutral-700'
+                        ? 'border-luxury-gold bg-luxury-gold/5 ring-1 ring-luxury-gold'
+                        : 'border-neutral-800 hover:border-neutral-700 bg-neutral-950'
                     }`}
                   >
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="radio"
-                        name="paymentMethod"
-                        value={PAYMENT_METHODS.BANK_TRANSFER}
-                        checked={paymentMethod === PAYMENT_METHODS.BANK_TRANSFER}
-                        onChange={() => setPaymentMethod(PAYMENT_METHODS.BANK_TRANSFER)}
-                        className="mt-1 h-4 w-4 text-luxury-gold focus:ring-luxury-gold border-neutral-700 bg-neutral-900"
-                      />
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <MessageCircle className="h-4 w-4 text-emerald-400" />
-                          <span className="text-sm font-semibold text-white">Bank Transfer</span>
-                        </div>
-                        <p className="text-xs text-neutral-400 mt-1 leading-relaxed">
-                          Direct bank deposit or transfer. Dispatched through Sri Lanka Post Speed Post Service after payment confirmation.
-                        </p>
+                    <input
+                      type="radio"
+                      name="paymentMethod"
+                      value={PAYMENT_METHODS.BANK_TRANSFER}
+                      checked={paymentMethod === PAYMENT_METHODS.BANK_TRANSFER}
+                      onChange={() => setPaymentMethod(PAYMENT_METHODS.BANK_TRANSFER)}
+                      className="mt-1 text-luxury-gold focus:ring-luxury-gold bg-neutral-900 border-neutral-700"
+                    />
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <MessageCircle className="h-4 w-4 text-emerald-400" />
+                        <span className="font-semibold text-white text-sm">Bank Transfer (WhatsApp)</span>
                       </div>
+                      <p className="text-xs text-neutral-400">
+                        Transfer funds and share payment receipt via WhatsApp for verification.
+                      </p>
                     </div>
                   </label>
                 </div>
@@ -553,13 +723,33 @@ export default function CheckoutPage() {
             {/* Right Column: Order Review & Pricing Summary */}
             <div className="lg:col-span-1 space-y-6">
               <div className="bg-neutral-900/80 border border-neutral-800 rounded-lg p-6 space-y-6 sticky top-24">
-                <h2 className="text-lg font-serif font-bold text-white tracking-wide border-b border-neutral-800 pb-3">
-                  Order Summary ({totalCount})
-                </h2>
+                <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+                  <h2 className="text-lg font-serif font-bold text-white tracking-wide">
+                    Order Summary ({checkoutTotalCount})
+                  </h2>
+                  {isBuyNow && (
+                    <span className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded bg-luxury-gold/20 text-luxury-gold border border-luxury-gold/40">
+                      Buy Now
+                    </span>
+                  )}
+                </div>
+
+                {/* Buy Now Preservation Notice */}
+                {isBuyNow && (
+                  <div className="p-3 bg-luxury-gold/10 border border-luxury-gold/30 rounded-md text-xs text-luxury-gold space-y-1">
+                    <div className="flex items-center gap-1.5 font-semibold">
+                      <Sparkles className="h-4 w-4 shrink-0" />
+                      <span>Instant Checkout</span>
+                    </div>
+                    <p className="text-[11px] text-neutral-300">
+                      Purchasing this item directly. Your normal shopping bag ({totalCount} items) is safe and preserved.
+                    </p>
+                  </div>
+                )}
 
                 {/* Items Mini List */}
                 <div className="max-h-60 overflow-y-auto divide-y divide-neutral-800/80 pr-1 space-y-2">
-                  {items.map((item) => {
+                  {checkoutItems.map((item) => {
                     const price = item.discountPrice != null && item.discountPrice > 0 ? item.discountPrice : item.price;
                     return (
                       <div key={item.variantId} className="pt-2 flex items-center gap-3 text-xs">
@@ -653,8 +843,8 @@ export default function CheckoutPage() {
                 {/* Financial Totals */}
                 <div className="space-y-3 pt-3 border-t border-neutral-800 text-sm">
                   <div className="flex justify-between text-neutral-300">
-                    <span>Bag Subtotal</span>
-                    <span className="font-semibold text-white">{formatCurrency(subtotal)}</span>
+                    <span>{isBuyNow ? 'Item Subtotal' : 'Bag Subtotal'}</span>
+                    <span className="font-semibold text-white">{formatCurrency(checkoutSubtotal)}</span>
                   </div>
 
                   {appliedCoupon && (
@@ -716,7 +906,7 @@ export default function CheckoutPage() {
                       type="submit"
                       variant="gold"
                       size="lg"
-                      disabled={isSubmitting || items.length === 0}
+                      disabled={isSubmitting || checkoutItems.length === 0}
                       className="w-full text-base font-semibold py-4 flex items-center justify-center gap-2 shadow-lg shadow-luxury-gold/15 hover:shadow-luxury-gold/25"
                     >
                       {isSubmitting ? (
@@ -729,53 +919,19 @@ export default function CheckoutPage() {
                       )}
                     </Button>
                   ) : (
-                    <div className="space-y-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="lg"
-                        disabled={true}
-                        className="w-full text-xs sm:text-sm font-semibold py-3.5 flex items-center justify-center gap-2 border-amber-600/40 text-amber-300/80 bg-amber-950/20 cursor-not-allowed select-none"
-                      >
-                        <span>Place Order Disabled (Testing Mode)</span>
-                      </Button>
-                      <a
-                        href={getWhatsAppLink('Hello Splender Jewel, I would like to inquire about items from your collection.')}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block"
-                      >
-                        <Button
-                          type="button"
-                          variant="gold"
-                          size="lg"
-                          className="w-full text-xs uppercase tracking-wider font-semibold py-3 flex items-center justify-center gap-2 shadow-md shadow-luxury-gold/10"
-                        >
-                          <MessageCircle className="h-4 w-4" />
-                          <span>Contact Us on WhatsApp</span>
-                        </Button>
-                      </a>
-                    </div>
+                    <Button
+                      type="button"
+                      disabled
+                      size="lg"
+                      className="w-full text-sm font-medium py-3.5 bg-neutral-800 text-neutral-500 border border-neutral-700 cursor-not-allowed"
+                    >
+                      Live Checkout Disabled
+                    </Button>
                   )}
 
-                  <p className="text-[11px] text-neutral-400 text-center leading-relaxed">
-                    {isLiveCheckout
-                      ? 'By confirming, you agree to our islandwide delivery terms.'
-                      : testerState?.isTester
-                      ? 'Authorized testing mode. Test order will be safely processed for end-to-end verification.'
-                      : 'Testing preview only. No charge or real delivery will be scheduled.'}
-                  </p>
-                </div>
-
-                {/* Trust Badges */}
-                <div className="border-t border-neutral-800 pt-4 space-y-2 text-xs text-neutral-400">
-                  <div className="flex items-center gap-2">
-                    <Truck className="h-4 w-4 text-luxury-gold shrink-0" />
-                    <span>Islandwide Delivery via Sri Lanka Post</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <ShieldCheck className="h-4 w-4 text-luxury-gold shrink-0" />
-                    <span>Customer data protection & encrypted privacy</span>
+                  <div className="flex items-center justify-center gap-1.5 text-[11px] text-neutral-400 pt-1">
+                    <ShieldCheck className="h-3.5 w-3.5 text-luxury-gold" />
+                    <span>256-Bit SSL Encrypted • Direct Customer Care</span>
                   </div>
                 </div>
               </div>
@@ -784,5 +940,13 @@ export default function CheckoutPage() {
         </form>
       </div>
     </Container>
+  );
+}
+
+export default function CheckoutPage() {
+  return (
+    <Suspense fallback={<CheckoutLoadingSkeleton />}>
+      <CheckoutContent />
+    </Suspense>
   );
 }

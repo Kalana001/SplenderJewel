@@ -47,7 +47,7 @@ interface CartContextType {
   clearPurchasedItems: (
     purchasedItems: ({ variantId: string; quantity: number } | string)[],
     orderNumber?: string
-  ) => void;
+  ) => Promise<void>;
 }
 
 const CART_STORAGE_KEY = 'splender_cart_v1';
@@ -756,7 +756,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const lastDeductedOrderRef = useRef<string | null>(null);
 
   const clearPurchasedItems = useCallback(
-    (purchasedInput: ({ variantId: string; quantity: number } | string)[], orderNumber?: string) => {
+    async (
+      purchasedInput: ({ variantId: string; quantity: number } | string)[],
+      orderNumber?: string
+    ): Promise<void> => {
       if (!purchasedInput || purchasedInput.length === 0) return;
 
       // Idempotency: skip if already deducted for this orderNumber on this client
@@ -779,6 +782,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       for (const item of normalizedItems) {
         const cur = purchasedMap.get(item.variantId) || 0;
         purchasedMap.set(item.variantId, cur + item.quantity);
+        // Clear any stale failed mutations for purchased items to prevent stale retry resurrection
+        failedMutationsRef.current.delete(item.variantId);
+      }
+      if (failedMutationsRef.current.size === 0) {
+        setSyncError(null);
       }
 
       // Locally deduct purchased quantities, preserving any surplus/newer quantities (e.g. from Device B)
@@ -807,10 +815,19 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         console.warn('[Cart] Failed to update localStorage cart:', e);
       }
 
+      // Enqueue client-side deduction (acts as an idempotent backup / recovery path)
       queueMutation(
         { type: 'remove', variantId: `order_${orderNumber || Date.now()}` },
         () => deductPurchasedCartItemsAction(normalizedItems, orderNumber)
       );
+
+      // Await mutation queue settlement before caller navigation to prevent mobile browser abort
+      try {
+        await Promise.race([
+          mutationQueueRef.current,
+          new Promise((resolve) => setTimeout(resolve, 1500)),
+        ]);
+      } catch {}
     },
     [queueMutation]
   );

@@ -840,4 +840,104 @@ export async function clearCartAction(): Promise<{ success: boolean; error?: str
   }
 }
 
+export interface BuyNowItemDetails {
+  variantId: string;
+  productId: string;
+  productName: string;
+  variantTitle: string;
+  sku: string;
+  price: number;
+  discountPrice: number | null;
+  imageUrl: string | null;
+  slug: string;
+  availableStock: number;
+  isAvailable: boolean;
+}
+
+/**
+ * AUTHORITATIVE BUY NOW ITEM DETAILS
+ * Retrieves published product and active variant details strictly from database.
+ * Never trusts client or sessionStorage prices, discounts, or stock numbers.
+ */
+export async function getBuyNowItemAction(variantId: string): Promise<{
+  success: boolean;
+  item?: BuyNowItemDetails;
+  error?: string;
+}> {
+  try {
+    const trimmedId = variantId?.trim();
+    if (!trimmedId || !UUID_REGEX.test(trimmedId)) {
+      return { success: false, error: 'Invalid variant identifier.' };
+    }
+
+    const adminClient = createAdminClient();
+
+    const { data: variant, error } = await (adminClient.from('product_variants') as any)
+      .select(`
+        id,
+        product_id,
+        title,
+        sku,
+        price,
+        discount_price,
+        stock_quantity,
+        stock_status,
+        is_active,
+        products!inner (
+          id,
+          name,
+          slug,
+          is_active,
+          product_images (
+            url,
+            is_primary,
+            display_order
+          )
+        )
+      `)
+      .eq('id', trimmedId)
+      .eq('is_active', true)
+      .eq('products.is_active', true)
+      .maybeSingle();
+
+    if (error || !variant || !variant.products) {
+      return { success: false, error: 'Product option is unavailable or does not exist.' };
+    }
+
+    const product = variant.products;
+    const images = Array.isArray(product.product_images) ? product.product_images : [];
+    const sortedImages = [...images].sort(
+      (a: any, b: any) =>
+        (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0) ||
+        (a.display_order ?? 0) - (b.display_order ?? 0)
+    );
+    const primaryImage = sortedImages[0]?.url || null;
+
+    const availableStock =
+      typeof variant.stock_quantity === 'number' ? Math.max(0, variant.stock_quantity) : 0;
+    const isAvailable = variant.stock_status !== 'out_of_stock' && availableStock > 0;
+
+    return {
+      success: true,
+      item: {
+        variantId: variant.id,
+        productId: product.id,
+        productName: product.name,
+        variantTitle: variant.title,
+        sku: variant.sku,
+        price: Number(variant.price),
+        discountPrice: variant.discount_price != null ? Number(variant.discount_price) : null,
+        imageUrl: primaryImage,
+        slug: product.slug,
+        availableStock,
+        isAvailable,
+      },
+    };
+  } catch (err: unknown) {
+    console.error('[GetBuyNowItemAction] Error:', err);
+    return { success: false, error: 'Failed to retrieve item details.' };
+  }
+}
+
+
 

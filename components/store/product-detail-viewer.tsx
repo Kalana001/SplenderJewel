@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Package,
   ShieldCheck,
@@ -62,6 +63,8 @@ export function ProductDetailViewer({
   const availabilitySeq = useRef(0);
 
   const { items: cartItems, addItem } = useCart();
+  const router = useRouter();
+  const [isNavigatingBuyNow, setIsNavigatingBuyNow] = useState(false);
 
   // Query server-controlled availability strictly for selected active variant
   useEffect(() => {
@@ -276,6 +279,57 @@ export function ProductDetailViewer({
     setTimeout(() => setAddedToBag(false), 3500);
   }
 
+  function handleBuyNow() {
+    setStockError(null);
+    if (!selectedVariant) return;
+
+    if (isLoadingAvailability) {
+      setStockError('Please wait while inventory availability is verified.');
+      return;
+    }
+
+    if (availabilityError) {
+      setStockError(availabilityError);
+      return;
+    }
+
+    if (isOutOfStock || availableStock <= 0) {
+      setStockError('This item is currently out of stock.');
+      return;
+    }
+
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      setStockError('Please select a valid quantity of at least 1.');
+      return;
+    }
+
+    if (quantity > availableStock) {
+      setStockError(
+        `Only ${availableStock} ${availableStock === 1 ? 'unit is' : 'units are'} available in stock.`
+      );
+      return;
+    }
+
+    setIsNavigatingBuyNow(true);
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        sessionStorage.setItem(
+          'splender_buy_now_session',
+          JSON.stringify({
+            variantId: selectedVariant.id,
+            quantity,
+            timestamp: Date.now(),
+          })
+        );
+      }
+      router.push('/checkout?buyNow=true');
+    } catch (err) {
+      console.error('[BuyNow] Failed to initialize Buy Now session:', err);
+      setStockError('Unable to proceed to checkout. Please try again.');
+      setIsNavigatingBuyNow(false);
+    }
+  }
+
   // Build safe WhatsApp pre-filled enquiry URL
   const cleanPhone = storeWhatsAppNumber.replace(/[^0-9]/g, '');
   const whatsAppMessage = encodeURIComponent(
@@ -471,13 +525,13 @@ export function ProductDetailViewer({
 
           {/* Shopping Bag & WhatsApp Actions */}
           <div className="space-y-3 pt-3">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
               {/* Quantity Selector */}
-              <div className="flex items-center border border-neutral-700 rounded bg-neutral-900/80 h-12 px-2 shrink-0">
+              <div className="flex items-center justify-between sm:justify-center border border-neutral-700 rounded bg-neutral-900/80 h-12 px-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                  disabled={quantity <= 1 || isLoadingAvailability || Boolean(availabilityError) || isOutOfStock || remainingAvailable <= 0}
+                  disabled={quantity <= 1 || isLoadingAvailability || Boolean(availabilityError) || isOutOfStock || availableStock <= 0}
                   className="p-1.5 text-neutral-400 hover:text-white disabled:opacity-30 transition-colors"
                   aria-label="Decrease quantity"
                 >
@@ -488,14 +542,12 @@ export function ProductDetailViewer({
                 </span>
                 <button
                   type="button"
-                  onClick={() => setQuantity((q) => Math.min(remainingAvailable, q + 1))}
-                  disabled={isLoadingAvailability || Boolean(availabilityError) || isOutOfStock || remainingAvailable <= 0 || quantity >= remainingAvailable}
+                  onClick={() => setQuantity((q) => Math.min(availableStock, q + 1))}
+                  disabled={isLoadingAvailability || Boolean(availabilityError) || isOutOfStock || availableStock <= 0 || quantity >= availableStock}
                   className="p-1.5 text-neutral-400 hover:text-white disabled:opacity-30 transition-colors"
                   aria-label="Increase quantity"
                   title={
-                    isMaxInBag
-                      ? `All ${availableStock} available units are already in your bag.`
-                      : quantity >= remainingAvailable
+                    quantity >= availableStock
                       ? 'Maximum available stock reached'
                       : 'Increase quantity'
                   }
@@ -504,38 +556,65 @@ export function ProductDetailViewer({
                 </button>
               </div>
 
-              {/* Add to Bag Button */}
-              <Button
-                type="button"
-                variant="gold"
-                size="lg"
-                disabled={isLoadingAvailability || Boolean(availabilityError) || isOutOfStock || isMaxInBag || remainingAvailable <= 0}
-                onClick={handleAddToBag}
-                className="flex-1 h-12 text-sm sm:text-base font-semibold flex items-center justify-center gap-2 shadow-lg shadow-luxury-gold/10 hover:shadow-luxury-gold/20 disabled:opacity-50"
-              >
-                {addedToBag ? (
-                  <>
-                    <Check className="h-5 w-5 text-luxury-black stroke-[2.5]" />
-                    <span>Added to Bag!</span>
-                  </>
-                ) : isLoadingAvailability ? (
-                  <>
-                    <Loader2 className="h-5 w-5 text-luxury-black animate-spin" />
-                    <span>Verifying Stock...</span>
-                  </>
-                ) : (
-                  <>
-                    <ShoppingBag className="h-5 w-5 text-luxury-black" />
-                    <span>
-                      {isOutOfStock
-                        ? 'Out of Stock'
-                        : isMaxInBag
-                        ? 'All in Bag'
-                        : 'Add to Bag'}
-                    </span>
-                  </>
-                )}
-              </Button>
+              {/* Action Buttons: Add to Bag & Buy Now */}
+              <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Add to Bag Button */}
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="lg"
+                  disabled={isLoadingAvailability || Boolean(availabilityError) || isOutOfStock || isMaxInBag || remainingAvailable <= 0}
+                  onClick={handleAddToBag}
+                  className="w-full h-12 min-h-[44px] text-sm sm:text-base font-semibold flex items-center justify-center gap-2 border-luxury-gold/50 text-white hover:border-luxury-gold hover:text-luxury-gold bg-neutral-900/90 transition-all disabled:opacity-50"
+                  aria-label="Add to shopping bag"
+                >
+                  {addedToBag ? (
+                    <>
+                      <Check className="h-5 w-5 text-luxury-gold stroke-[2.5]" />
+                      <span>Added to Bag!</span>
+                    </>
+                  ) : isLoadingAvailability ? (
+                    <>
+                      <Loader2 className="h-5 w-5 text-luxury-gold animate-spin" />
+                      <span>Verifying...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShoppingBag className="h-5 w-5 text-luxury-gold" />
+                      <span>
+                        {isOutOfStock
+                          ? 'Out of Stock'
+                          : isMaxInBag
+                          ? 'All in Bag'
+                          : 'Add to Bag'}
+                      </span>
+                    </>
+                  )}
+                </Button>
+
+                {/* Buy Now Button */}
+                <Button
+                  type="button"
+                  variant="gold"
+                  size="lg"
+                  disabled={isLoadingAvailability || Boolean(availabilityError) || isOutOfStock || availableStock <= 0 || isNavigatingBuyNow}
+                  onClick={handleBuyNow}
+                  className="w-full h-12 min-h-[44px] text-sm sm:text-base font-semibold flex items-center justify-center gap-2 shadow-lg shadow-luxury-gold/15 hover:shadow-luxury-gold/25 transition-all disabled:opacity-50"
+                  aria-label="Buy now with instant checkout"
+                >
+                  {isNavigatingBuyNow ? (
+                    <>
+                      <Loader2 className="h-5 w-5 text-luxury-black animate-spin" />
+                      <span>Proceeding...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-5 w-5 text-luxury-black" />
+                      <span>{isOutOfStock ? 'Out of Stock' : 'Buy Now'}</span>
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
 
             {/* In-Bag Stock Counter & Remaining Limit */}
