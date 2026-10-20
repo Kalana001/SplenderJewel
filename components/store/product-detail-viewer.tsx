@@ -26,7 +26,8 @@ import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/lib/config/store';
 import { useCart } from '@/lib/cart/cart-context';
 import { checkVariantAvailabilityAction } from '@/lib/cart/actions';
-import { addToWishlist, removeProductFromWishlist } from '@/lib/wishlist/actions';
+import { addToWishlist, removeProductFromWishlist, checkProductWishlistStatus } from '@/lib/wishlist/actions';
+import { createClient } from '@/lib/supabase/client';
 import type { ProductPublic, ProductVariantPublic, ProductImage } from '@/types/product';
 import { ProductImageGallery } from '@/components/store/product-image-gallery';
 
@@ -41,13 +42,72 @@ export function ProductDetailViewer({
   product,
   storeWhatsAppNumber,
   initialIsWishlisted = false,
-  isAuthenticated = false,
+  isAuthenticated: initialIsAuthenticated = false,
 }: ProductDetailViewerProps) {
-  // Wishlist state
+  // Wishlist & customer authentication state (hydrated client-side for ISR isolation)
   const [isWishlisted, setIsWishlisted] = useState(Boolean(initialIsWishlisted));
+  const [isAuthenticated, setIsAuthenticated] = useState(Boolean(initialIsAuthenticated));
   const [isTogglingWishlist, setIsTogglingWishlist] = useState(false);
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [wishlistMessage, setWishlistMessage] = useState<string | null>(null);
+  const wishlistSeq = useRef(0);
+
+  // Client-side wishlist hydration: fetch status for currently active user without blocking page ISR
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadWishlistStatus() {
+      const currentSeq = ++wishlistSeq.current;
+      try {
+        const res = await checkProductWishlistStatus(product.id);
+        if (!isMounted || currentSeq !== wishlistSeq.current) return;
+        setIsAuthenticated(res.isAuthenticated);
+        setIsWishlisted(res.isWishlisted);
+      } catch {
+        if (!isMounted || currentSeq !== wishlistSeq.current) return;
+        setIsAuthenticated(false);
+        setIsWishlisted(false);
+      }
+    }
+
+    loadWishlistStatus();
+
+    // Listen to Supabase client session changes
+    const supabase = createClient();
+    let subscription: { unsubscribe: () => void } | null = null;
+    if (supabase) {
+      const authListener = supabase.auth.onAuthStateChange((event, session) => {
+        if (!isMounted) return;
+        if (event === 'SIGNED_OUT' || !session?.user) {
+          setIsAuthenticated(false);
+          setIsWishlisted(false);
+        } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
+          loadWishlistStatus();
+        }
+      });
+      subscription = authListener?.data?.subscription || null;
+    }
+
+    const handleCustomSignOut = () => {
+      if (!isMounted) return;
+      setIsAuthenticated(false);
+      setIsWishlisted(false);
+    };
+    const handleCustomSignIn = () => {
+      if (!isMounted) return;
+      loadWishlistStatus();
+    };
+
+    window.addEventListener('splender:auth-signed-out', handleCustomSignOut);
+    window.addEventListener('splender:auth-signed-in', handleCustomSignIn);
+
+    return () => {
+      isMounted = false;
+      subscription?.unsubscribe();
+      window.removeEventListener('splender:auth-signed-out', handleCustomSignOut);
+      window.removeEventListener('splender:auth-signed-in', handleCustomSignIn);
+    };
+  }, [product.id]);
 
   // Variant selection: default to first active variant
   const [selectedVariant, setSelectedVariant] = useState<ProductVariantPublic>(
@@ -176,6 +236,7 @@ export function ProductDetailViewer({
       return;
     }
 
+    const currentSeq = ++wishlistSeq.current;
     const previousState = isWishlisted;
     setIsWishlisted(!previousState);
     setIsTogglingWishlist(true);
@@ -184,6 +245,7 @@ export function ProductDetailViewer({
     try {
       if (previousState) {
         const res = await removeProductFromWishlist(product.id, selectedVariant?.id);
+        if (currentSeq !== wishlistSeq.current) return;
         if (!res.success) {
           setIsWishlisted(previousState);
           setWishlistMessage(res.error || 'Failed to update wishlist.');
@@ -193,6 +255,7 @@ export function ProductDetailViewer({
         }
       } else {
         const res = await addToWishlist(product.id, selectedVariant?.id);
+        if (currentSeq !== wishlistSeq.current) return;
         if (!res.success) {
           setIsWishlisted(previousState);
           setWishlistMessage(res.error || 'Failed to save to wishlist.');
@@ -202,10 +265,14 @@ export function ProductDetailViewer({
         }
       }
     } catch {
-      setIsWishlisted(previousState);
-      setWishlistMessage('An error occurred updating wishlist.');
+      if (currentSeq === wishlistSeq.current) {
+        setIsWishlisted(previousState);
+        setWishlistMessage('An error occurred updating wishlist.');
+      }
     } finally {
-      setIsTogglingWishlist(false);
+      if (currentSeq === wishlistSeq.current) {
+        setIsTogglingWishlist(false);
+      }
     }
   }
 

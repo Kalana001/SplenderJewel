@@ -5,6 +5,50 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentUser, requireCustomerAuth } from '@/lib/auth/server';
 import type { WishlistProduct } from '@/types/wishlist';
 
+/**
+ * Check whether a specific product is in the currently authenticated customer's wishlist.
+ * Used for client-side wishlist status hydration on ISR product detail pages.
+ */
+export async function checkProductWishlistStatus(productId: string): Promise<{
+  isAuthenticated: boolean;
+  isWishlisted: boolean;
+}> {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return { isAuthenticated: false, isWishlisted: false };
+    }
+
+    const supabase = await createServerSupabaseClient();
+    if (!supabase) {
+      return { isAuthenticated: true, isWishlisted: false };
+    }
+
+    const { data: wishlist } = await (supabase.from('wishlists') as any)
+      .select('id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!wishlist) {
+      return { isAuthenticated: true, isWishlisted: false };
+    }
+
+    const { data: item } = await (supabase.from('wishlist_items') as any)
+      .select('id')
+      .eq('wishlist_id', wishlist.id)
+      .eq('product_id', productId)
+      .limit(1)
+      .maybeSingle();
+
+    return {
+      isAuthenticated: true,
+      isWishlisted: Boolean(item),
+    };
+  } catch {
+    return { isAuthenticated: false, isWishlisted: false };
+  }
+}
+
 export async function getCustomerWishlist(): Promise<{
   success: boolean;
   items: WishlistProduct[];

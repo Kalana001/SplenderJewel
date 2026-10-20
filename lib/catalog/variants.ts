@@ -4,6 +4,7 @@ import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAdminAuth } from '@/lib/auth/server';
+import { revalidateProductById } from '@/lib/catalog/products';
 import type { ProductVariantAdmin } from '@/types/product';
 import type { StockStatus } from '@/lib/config/constants';
 
@@ -129,6 +130,7 @@ export async function createVariantAction(input: CreateVariantInput): Promise<Va
 
     revalidatePath(`/admin/products/${input.productId}`);
     revalidatePath('/shop');
+    await revalidateProductById(input.productId);
 
     return {
       success: true,
@@ -254,6 +256,7 @@ export async function updateVariantAction(
     revalidatePath(`/admin/products/${current.product_id}`);
     revalidatePath('/admin/inventory');
     revalidatePath('/shop');
+    await revalidateProductById(current.product_id);
 
     return {
       success: true,
@@ -348,6 +351,7 @@ export async function adjustVariantStockAction(
 
     if (productId) {
       revalidatePath(`/admin/products/${productId}`);
+      await revalidateProductById(productId);
     }
     revalidatePath('/admin/inventory');
     revalidatePath('/shop');
@@ -425,6 +429,7 @@ export async function deleteVariantAction(
     revalidatePath(`/admin/products/${productId}`);
     revalidatePath('/admin/inventory');
     revalidatePath('/shop');
+    await revalidateProductById(productId);
 
     return { success: true };
   } catch (err: unknown) {

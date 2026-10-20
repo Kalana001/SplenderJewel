@@ -675,9 +675,16 @@ export async function updateProductAction(
     if (input.metaTitle !== undefined) updatePayload.meta_title = input.metaTitle?.trim() || null;
     if (input.metaDescription !== undefined) updatePayload.meta_description = input.metaDescription?.trim() || null;
 
-    const { error } = await (adminClient.from('products') as any)
+    const { data: existingProduct } = await (adminClient.from('products') as any)
+      .select('slug')
+      .eq('id', productId)
+      .maybeSingle();
+
+    const { data: updatedProduct, error } = await (adminClient.from('products') as any)
       .update(updatePayload)
-      .eq('id', productId);
+      .eq('id', productId)
+      .select('slug')
+      .maybeSingle();
 
     if (error) {
       return { success: false, error: error.message };
@@ -686,6 +693,12 @@ export async function updateProductAction(
     revalidatePath('/admin/products');
     revalidatePath(`/admin/products/${productId}`);
     revalidatePath('/shop');
+    if (existingProduct?.slug) {
+      revalidatePath(`/products/${existingProduct.slug}`);
+    }
+    if (updatedProduct?.slug && updatedProduct.slug !== existingProduct?.slug) {
+      revalidatePath(`/products/${updatedProduct.slug}`);
+    }
 
     return { success: true };
   } catch (err: unknown) {
@@ -707,9 +720,11 @@ export async function toggleProductActiveAction(
     await requireAdminAuth();
     const adminClient = createAdminClient();
 
-    const { error } = await (adminClient.from('products') as any)
+    const { data: updatedProduct, error } = await (adminClient.from('products') as any)
       .update({ is_active: isActive })
-      .eq('id', productId);
+      .eq('id', productId)
+      .select('slug')
+      .maybeSingle();
 
     if (error) {
       return { success: false, error: error.message };
@@ -718,6 +733,9 @@ export async function toggleProductActiveAction(
     revalidatePath('/admin/products');
     revalidatePath(`/admin/products/${productId}`);
     revalidatePath('/shop');
+    if (updatedProduct?.slug) {
+      revalidatePath(`/products/${updatedProduct.slug}`);
+    }
 
     return { success: true };
   } catch (err: unknown) {
@@ -770,6 +788,11 @@ export async function deleteProductAction(
       }
     }
 
+    const { data: targetProduct } = await (adminClient.from('products') as any)
+      .select('slug')
+      .eq('id', productId)
+      .maybeSingle();
+
     const { error: deleteError } = await (adminClient.from('products') as any)
       .delete()
       .eq('id', productId);
@@ -786,6 +809,9 @@ export async function deleteProductAction(
 
     revalidatePath('/admin/products');
     revalidatePath('/shop');
+    if (targetProduct?.slug) {
+      revalidatePath(`/products/${targetProduct.slug}`);
+    }
 
     return { success: true };
   } catch (err: unknown) {
@@ -793,5 +819,25 @@ export async function deleteProductAction(
       success: false,
       error: err instanceof Error ? err.message : 'An error occurred deleting the product.',
     };
+  }
+}
+
+/**
+ * Helper to safely revalidate the public product detail page by its database ID.
+ */
+export async function revalidateProductById(productId?: string | null) {
+  if (!productId?.trim()) return;
+  try {
+    const adminClient = createAdminClient();
+    const { data: prod } = await (adminClient.from('products') as any)
+      .select('slug')
+      .eq('id', productId)
+      .maybeSingle();
+
+    if (prod?.slug) {
+      revalidatePath(`/products/${prod.slug}`);
+    }
+  } catch (err) {
+    console.error('[revalidateProductById] Error revalidating product page:', err);
   }
 }

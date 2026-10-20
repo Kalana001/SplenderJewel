@@ -4,6 +4,7 @@ import 'server-only';
 import { revalidatePath } from 'next/cache';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAdminAuth } from '@/lib/auth/server';
+import { revalidateProductById } from '@/lib/catalog/products';
 import type { ProductImage } from '@/types/product';
 
 import {
@@ -474,6 +475,7 @@ export async function attachProductImageAction(
 
     revalidatePath(`/admin/products/${input.productId}`);
     revalidatePath('/shop');
+    await revalidateProductById(input.productId);
 
     return {
       success: true,
@@ -524,6 +526,7 @@ export async function setPrimaryProductImageAction(
 
     revalidatePath(`/admin/products/${productId}`);
     revalidatePath('/shop');
+    await revalidateProductById(productId);
     return { success: true };
   } catch (err: unknown) {
     return {
@@ -557,6 +560,7 @@ export async function updateProductImageVariantAction(
 
     revalidatePath(`/admin/products/${productId}`);
     revalidatePath('/shop');
+    await revalidateProductById(productId);
     return { success: true };
   } catch (err: unknown) {
     return {
@@ -586,6 +590,7 @@ export async function reorderProductImagesAction(
     }
 
     revalidatePath(`/admin/products/${productId}`);
+    await revalidateProductById(productId);
     return { success: true };
   } catch (err: unknown) {
     return {
@@ -660,6 +665,7 @@ export async function deleteProductImageAction(
 
     revalidatePath(`/admin/products/${productId}`);
     revalidatePath('/shop');
+    await revalidateProductById(productId);
     return { success: true };
   } catch (err: unknown) {
     return {

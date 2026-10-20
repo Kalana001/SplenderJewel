@@ -1,12 +1,26 @@
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { getPublicProductBySlug, getStoreWhatsAppNumber } from '@/lib/catalog/public';
+import { createPublicSupabaseClient } from '@/lib/supabase/server';
 import { ProductDetailViewer } from '@/components/store/product-detail-viewer';
 import { Container } from '@/components/ui/container';
-import { getCurrentUser } from '@/lib/auth/server';
-import { getCustomerWishlist } from '@/lib/wishlist/actions';
 
-export const revalidate = 300;
+export const revalidate = 60;
+export const dynamicParams = true;
+
+export async function generateStaticParams() {
+  try {
+    const supabase = createPublicSupabaseClient();
+    if (!supabase) return [];
+    const { data: products } = await (supabase.from('products') as any)
+      .select('slug')
+      .eq('is_active', true)
+      .limit(50);
+    return (products || []).filter((p: any) => p && p.slug).map((p: any) => ({ slug: p.slug }));
+  } catch {
+    return [];
+  }
+}
 
 interface ProductDetailPageProps {
   params: Promise<{ slug: string }>;
@@ -50,19 +64,14 @@ export async function generateMetadata({ params }: ProductDetailPageProps): Prom
 export default async function ProductDetailPage({ params }: ProductDetailPageProps) {
   const { slug } = await params;
 
-  const [product, whatsAppNumber, user, wishlistRes] = await Promise.all([
+  const [product, whatsAppNumber] = await Promise.all([
     getPublicProductBySlug(slug),
     getStoreWhatsAppNumber(),
-    getCurrentUser(),
-    getCustomerWishlist(),
   ]);
 
   if (!product) {
     notFound();
   }
-
-  const isWishlisted = Boolean(wishlistRes?.items?.some((item) => item.productId === product.id));
-  const isAuthenticated = Boolean(user);
 
   // Safely construct Schema.org Product structured data (no confidential data or exact stock)
   const isAvailable = product.variants.some((v) => v.stockStatus !== 'out_of_stock');
@@ -98,8 +107,6 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
         <ProductDetailViewer
           product={product}
           storeWhatsAppNumber={whatsAppNumber}
-          initialIsWishlisted={isWishlisted}
-          isAuthenticated={isAuthenticated}
         />
       </Container>
     </div>
