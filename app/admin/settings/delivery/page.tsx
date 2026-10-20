@@ -5,7 +5,7 @@ import { DeliverySettingsManager } from '@/components/admin/settings/delivery-se
 
 export const metadata = {
   title: 'Delivery Matrix | Splender Jewel Admin',
-  description: 'Manage shipping fees and delivery zones for all 25 administrative districts in Sri Lanka',
+  description: 'Review nationwide postal shipping tiers and manage operational delivery zones across Sri Lanka 25 administrative districts',
 };
 
 export default async function AdminDeliverySettingsPage() {
@@ -25,7 +25,7 @@ export default async function AdminDeliverySettingsPage() {
             Delivery Matrix & Shipping Rates
           </h1>
           <p className="text-xs sm:text-sm text-neutral-400 mt-1">
-            Review payment-method and quantity delivery tier rules, free shipping thresholds, and operational status for all 25 Sri Lankan districts.
+            Review official payment-method and quantity delivery tier rules, and manage operational shipping availability for all 25 Sri Lankan districts.
           </p>
         </div>
       </div>

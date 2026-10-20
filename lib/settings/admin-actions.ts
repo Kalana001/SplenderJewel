@@ -77,6 +77,46 @@ export async function getAdminDeliverySettings(): Promise<{
   }
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Dedicated server action to update operational delivery availability for a specific district.
+ * Does not mutate legacy fee columns or alter postal tier shipping calculations.
+ */
+export async function updateDistrictAvailability(
+  districtId: string,
+  isActive: boolean
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await requireAdminAuth();
+    const adminClient = createAdminClient();
+
+    const trimmedId = districtId?.trim();
+    if (!trimmedId || typeof trimmedId !== 'string' || !UUID_REGEX.test(trimmedId)) {
+      return { success: false, error: 'Valid district UUID identifier is required.' };
+    }
+    if (typeof isActive !== 'boolean') {
+      return { success: false, error: 'District availability status must be a boolean.' };
+    }
+
+    const { error } = await (adminClient.from('delivery_districts') as any)
+      .update({
+        is_active: isActive,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', trimmedId);
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    revalidatePath('/admin/settings/delivery');
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to update district availability.' };
+  }
+}
+
 export async function updateDistrictDeliveryFee(
   districtId: string,
   deliveryFee: number,
