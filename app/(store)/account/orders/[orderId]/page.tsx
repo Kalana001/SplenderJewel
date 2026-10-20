@@ -12,6 +12,15 @@ interface AccountOrderDetailPageProps {
   params: Promise<{ orderId: string }>;
 }
 
+export const metadata = {
+  title: 'Order Details',
+  description: 'View order details and delivery status with Splender Jewel.',
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
+
 function getStatusBadgeVariant(status: string) {
   switch (status.toLowerCase()) {
     case 'delivered':

@@ -1,5 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import {
   CheckCircle2,
@@ -24,6 +25,15 @@ interface OrderConfirmationPageProps {
   params: Promise<{ orderNumber: string }>;
   searchParams: Promise<{ token?: string }>;
 }
+
+export const metadata: Metadata = {
+  title: 'Order Confirmation',
+  description: 'Thank you for your order with Splender Jewel.',
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 export default async function OrderConfirmationPage({
   params,

@@ -5,7 +5,7 @@ import { ContentPageViewer } from '@/components/store/content-page-viewer';
 export const revalidate = 60;
 
 export const metadata = {
-  title: 'Returns & Exchanges | Splender Jewel',
+  title: 'Returns & Exchanges',
   description: 'Returns and exchanges policy for Splender Jewel fashion jewellery and accessories.',
 };
 

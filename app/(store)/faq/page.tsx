@@ -5,7 +5,7 @@ import { ContentPageViewer } from '@/components/store/content-page-viewer';
 export const revalidate = 60;
 
 export const metadata = {
-  title: 'Frequently Asked Questions | Splender Jewel',
+  title: 'Frequently Asked Questions',
   description: 'Find answers regarding Splender Jewel fashion jewellery, Islandwide Delivery via Sri Lanka Post, and payment methods.',
 };
 

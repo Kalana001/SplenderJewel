@@ -5,8 +5,12 @@ import { CatalogBrowser } from '@/components/store/catalog-browser';
 import { Container } from '@/components/ui/container';
 
 export const metadata: Metadata = {
-  title: 'Search Jewelry | Splender Jewel',
+  title: 'Search Jewelry',
   description: 'Search fine jewelry by name, material, or style across the Splender Jewel catalog.',
+  robots: {
+    index: false,
+    follow: true,
+  },
 };
 
 interface SearchPageProps {

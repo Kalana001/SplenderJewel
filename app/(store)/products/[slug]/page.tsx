@@ -18,25 +18,26 @@ export async function generateMetadata({ params }: ProductDetailPageProps): Prom
 
   if (!product) {
     return {
-      title: 'Product Not Found | Splender Jewel',
+      title: 'Product Not Found',
     };
   }
 
   const primaryImage = product.images.find((img) => img.isPrimary) || product.images[0];
-  const pageTitle = product.metaTitle || `${product.name} | Splender Jewel`;
+  const rawTitle = (product.metaTitle || product.name || '').trim();
+  const cleanTitle = rawTitle.replace(/\s*\|\s*Splender(?:\s*Jewel|—\s*The\s*Jewel\s*Gallery)?$/i, '').trim() || product.name;
   const pageDescription =
     product.metaDescription ||
     product.shortDescription ||
     `Order ${product.name} online in Sri Lanka. Fine fashion jewelry by Splender Jewel with islandwide delivery.`;
 
   return {
-    title: pageTitle,
+    title: cleanTitle,
     description: pageDescription,
     alternates: {
       canonical: `/products/${product.slug}`,
     },
     openGraph: {
-      title: pageTitle,
+      title: `${cleanTitle} | Splender Jewel`,
       description: pageDescription,
       url: `/products/${product.slug}`,
       siteName: 'Splender Jewel',

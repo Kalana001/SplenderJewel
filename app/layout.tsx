@@ -1,11 +1,8 @@
 import type { Metadata, Viewport } from 'next';
+import { getCanonicalSiteUrl } from '@/lib/auth/redirect';
 import './globals.css';
 
-const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL ||
-  (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : null) ||
-  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
-  (process.env.NODE_ENV === 'production' ? 'https://splenderjewel.com' : 'http://localhost:3000');
+const siteUrl = getCanonicalSiteUrl();
 
 export const metadata: Metadata = {
   title: {

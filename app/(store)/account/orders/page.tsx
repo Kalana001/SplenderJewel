@@ -10,8 +10,12 @@ import { formatCurrency } from '@/lib/config/store';
 import { Package, ArrowLeft, Clock, Truck, Gem, ArrowRight } from 'lucide-react';
 
 export const metadata = {
-  title: 'Order History | Splender Jewel',
+  title: 'Order History',
   description: 'View your past orders and shipping status with Splender Jewel.',
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 function getStatusBadgeVariant(status: string) {

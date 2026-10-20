@@ -6,7 +6,7 @@ import { Container } from '@/components/ui/container';
 export const revalidate = 300;
 
 export const metadata = {
-  title: 'Jewellery Catalog | Splender Jewel',
+  title: 'Jewellery Catalog',
   description: 'Explore the full fashion jewellery collection by Splender Jewel. Rings, necklaces, bracelets, and earrings with Islandwide Delivery.',
 };
 

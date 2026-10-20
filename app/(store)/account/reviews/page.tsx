@@ -6,8 +6,12 @@ import { getCustomerReviews, getEligibleReviewProducts } from '@/lib/reviews/cus
 import { getCurrentUser } from '@/lib/auth/server';
 
 export const metadata = {
-  title: 'My Product Reviews | Splender Jewel',
+  title: 'My Product Reviews',
   description: 'Submit and manage verified purchase product reviews for delivered jewelry pieces.',
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 export default async function AccountReviewsPage() {

@@ -7,8 +7,12 @@ import { ProfileEditor } from '@/components/store/profile-editor';
 import { ArrowLeft, UserCircle } from 'lucide-react';
 
 export const metadata = {
-  title: 'Profile Details | Splender Jewel',
+  title: 'Profile Details',
   description: 'Manage your contact information and account security at Splender Jewel.',
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 export default async function AccountProfilePage() {

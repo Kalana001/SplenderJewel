@@ -22,18 +22,18 @@ export async function generateMetadata({ params }: CategoryPageProps): Promise<M
 
   if (!category) {
     return {
-      title: 'Category Not Found | Splender — The Jewel Gallery',
+      title: 'Category Not Found',
     };
   }
 
   return {
-    title: `${category.name} Collection | Splender — The Jewel Gallery`,
-    description: category.description || `Browse curated ${category.name} in Sri Lanka. Fine fashion jewelry by Splender — The Jewel Gallery.`,
+    title: `${category.name} Collection`,
+    description: category.description || `Browse curated ${category.name} in Sri Lanka. Fine fashion jewelry by Splender Jewel.`,
     alternates: {
       canonical: `/category/${category.slug}`,
     },
     openGraph: {
-      title: `${category.name} | Splender — The Jewel Gallery`,
+      title: `${category.name} Collection | Splender Jewel`,
       description: category.description || `Explore ${category.name} fine jewelry collection.`,
       images: category.imageUrl ? [category.imageUrl] : ['/images/logo.png'],
     },

@@ -4,8 +4,12 @@ import { WishlistManager } from '@/components/store/wishlist-manager';
 import { getCustomerWishlist } from '@/lib/wishlist/actions';
 
 export const metadata = {
-  title: 'My Wishlist | Splender Jewel',
+  title: 'My Wishlist',
   description: 'View and manage your saved luxury jewelry pieces.',
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 const WISHLIST_LOAD_ERROR_MESSAGE =

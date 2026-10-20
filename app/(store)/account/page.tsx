@@ -22,8 +22,12 @@ import {
 } from 'lucide-react';
 
 export const metadata = {
-  title: 'My Account | Splender Jewel',
+  title: 'My Account',
   description: 'Manage your customer profile, order history, and preferences at Splender Jewel.',
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 function getStatusBadgeVariant(status: string) {

@@ -5,7 +5,7 @@ import { ContentPageViewer } from '@/components/store/content-page-viewer';
 export const revalidate = 60;
 
 export const metadata = {
-  title: 'Privacy Policy | Splender Jewel',
+  title: 'Privacy Policy',
   description: 'How Splender Jewel protects your privacy, personal information, and delivery coordinates.',
 };
 

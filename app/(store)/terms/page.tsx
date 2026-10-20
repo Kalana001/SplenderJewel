@@ -5,7 +5,7 @@ import { ContentPageViewer } from '@/components/store/content-page-viewer';
 export const revalidate = 60;
 
 export const metadata = {
-  title: 'Terms & Conditions | Splender Jewel',
+  title: 'Terms & Conditions',
   description: 'Terms and conditions for orders, purchases, and services on Splender Jewel.',
 };
 

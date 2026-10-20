@@ -6,8 +6,12 @@ import { getCustomerAddresses } from '@/lib/addresses/actions';
 import { getCurrentUser } from '@/lib/auth/server';
 
 export const metadata = {
-  title: 'Saved Delivery Addresses | Splender Jewel',
+  title: 'Saved Delivery Addresses',
   description: 'Manage home and office delivery addresses across Sri Lanka for fast checkout.',
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 export default async function AccountAddressesPage() {

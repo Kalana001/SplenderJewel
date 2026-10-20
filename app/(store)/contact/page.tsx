@@ -10,7 +10,7 @@ import { ContentPageViewer } from '@/components/store/content-page-viewer';
 export const revalidate = 60;
 
 export const metadata = {
-  title: 'Contact Us | Splender Jewel',
+  title: 'Contact Us',
   description: 'Connect with the Splender Jewel team in Negombo, Sri Lanka for assistance, inquiries, and Bank Transfer verifications.',
 };
 

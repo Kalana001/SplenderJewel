@@ -5,7 +5,7 @@ import { ContentPageViewer } from '@/components/store/content-page-viewer';
 export const revalidate = 60;
 
 export const metadata = {
-  title: 'About Splender Jewel | Fashion Jewellery & Accessories',
+  title: 'About Us',
   description: 'Discover Splender Jewel — stylish fashion jewellery and accessories based in Negombo, Sri Lanka, with Islandwide Delivery.',
 };
 
