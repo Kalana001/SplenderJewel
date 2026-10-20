@@ -57,37 +57,50 @@ export default async function AccountDashboardPage() {
     redirect('/login?redirectTo=/account');
   }
 
-  // Fetch profile record with explicit column projection
-  const { data: profile } = await (supabase.from('profiles') as any)
-    .select('id, email, full_name, phone1, phone2, avatar_url, account_status, created_at, updated_at')
-    .eq('id', user.id)
-    .maybeSingle();
+  // Fetch independent customer records concurrently after verifying user.id
+  const [profileResult, ordersResult, addressResult, wishlistResult] = await Promise.all([
+    // 1. Profile record with explicit column projection
+    (supabase.from('profiles') as any)
+      .select('id, email, full_name, phone1, phone2, avatar_url, account_status, created_at, updated_at')
+      .eq('id', user.id)
+      .maybeSingle(),
 
-  // Fetch orders overview with safe column projection omitting admin_notes
-  const { data: recentOrders, count: totalOrders } = await (supabase.from('orders') as any)
-    .select(`
-      id,
-      order_number,
-      order_status,
-      total_amount,
-      created_at
-    `, { count: 'exact' })
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
-    .limit(3);
+    // 2. Orders overview with safe column projection omitting admin_notes
+    (supabase.from('orders') as any)
+      .select(
+        `
+        id,
+        order_number,
+        order_status,
+        total_amount,
+        created_at
+      `,
+        { count: 'exact' }
+      )
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(3),
 
-  // Fetch address count
-  const { count: addressCount } = await (supabase.from('addresses') as any)
-    .select('id', { count: 'exact', head: true })
-    .eq('user_id', user.id);
+    // 3. Address count
+    (supabase.from('addresses') as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id),
 
-  // Fetch wishlist items count for the signed-in customer
+    // 4. Wishlist lookup
+    (supabase.from('wishlists') as any)
+      .select('id')
+      .eq('user_id', user.id)
+      .maybeSingle(),
+  ]);
+
+  const profile = profileResult?.data;
+  const recentOrders = ordersResult?.data;
+  const totalOrders = ordersResult?.count;
+  const addressCount = addressResult?.count;
+  const userWishlist = wishlistResult?.data;
+
+  // Fetch wishlist items count only after obtaining the correct wishlist ID
   let wishlistCount = 0;
-  const { data: userWishlist } = await (supabase.from('wishlists') as any)
-    .select('id')
-    .eq('user_id', user.id)
-    .maybeSingle();
-
   if (userWishlist?.id) {
     const { count: itemsCount } = await (supabase.from('wishlist_items') as any)
       .select('id', { count: 'exact', head: true })
