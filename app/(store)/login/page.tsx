@@ -28,7 +28,7 @@ function LoginForm() {
   const [errorMessage, setErrorMessage] = useState<string | null>(errorParam);
   const [infoMessage, setInfoMessage] = useState<string | null>(messageParam);
 
-  const safeTargetUrl = getSafeRedirectUrl(redirectTo, '/account');
+  const safeTargetUrl = getSafeRedirectUrl(redirectTo, '/');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
