@@ -20,6 +20,7 @@ import {
   Minus,
   Check,
   Loader2,
+  Star,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -36,6 +37,11 @@ interface ProductDetailViewerProps {
   storeWhatsAppNumber: string;
   initialIsWishlisted?: boolean;
   isAuthenticated?: boolean;
+  reviewsSummary?: {
+    averageRating: number;
+    totalReviews: number;
+    isUnavailable?: boolean;
+  };
 }
 
 export function ProductDetailViewer({
@@ -43,6 +49,7 @@ export function ProductDetailViewer({
   storeWhatsAppNumber,
   initialIsWishlisted = false,
   isAuthenticated: initialIsAuthenticated = false,
+  reviewsSummary,
 }: ProductDetailViewerProps) {
   // Wishlist & customer authentication state (hydrated client-side for ISR isolation)
   const [isWishlisted, setIsWishlisted] = useState(Boolean(initialIsWishlisted));
@@ -251,6 +258,9 @@ export function ProductDetailViewer({
           setWishlistMessage(res.error || 'Failed to update wishlist.');
         } else {
           setWishlistMessage('Removed from your wishlist.');
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('splender:wishlist-updated'));
+          }
           setTimeout(() => setWishlistMessage(null), 3000);
         }
       } else {
@@ -261,6 +271,9 @@ export function ProductDetailViewer({
           setWishlistMessage(res.error || 'Failed to save to wishlist.');
         } else {
           setWishlistMessage('Saved to your wishlist.');
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('splender:wishlist-updated'));
+          }
           setTimeout(() => setWishlistMessage(null), 3000);
         }
       }
@@ -467,6 +480,39 @@ export function ProductDetailViewer({
                 <h1 className="text-2xl sm:text-3xl lg:text-4xl font-serif text-white leading-tight">
                   {product.name}
                 </h1>
+
+                {reviewsSummary && reviewsSummary.totalReviews > 0 && !reviewsSummary.isUnavailable ? (
+                  <a
+                    href="#reviews"
+                    className="inline-flex items-center gap-1.5 mt-2 text-xs text-neutral-300 hover:text-luxury-gold transition-colors"
+                  >
+                    <div className="flex items-center gap-0.5">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <Star
+                          key={star}
+                          className={`h-3.5 w-3.5 ${
+                            star <= Math.round(reviewsSummary.averageRating)
+                              ? 'fill-amber-400 text-amber-400'
+                              : 'text-neutral-600'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <span className="font-semibold text-white">
+                      {reviewsSummary.averageRating.toFixed(1)}
+                    </span>
+                    <span className="text-neutral-400">
+                      ({reviewsSummary.totalReviews} {reviewsSummary.totalReviews === 1 ? 'review' : 'reviews'})
+                    </span>
+                  </a>
+                ) : (
+                  <a
+                    href="#reviews"
+                    className="inline-block mt-2 text-xs text-neutral-400 hover:text-luxury-gold transition-colors"
+                  >
+                    No reviews yet &bull; Be the first to review
+                  </a>
+                )}
               </div>
 
               {/* Wishlist Heart Action */}

@@ -23,6 +23,8 @@ export interface PublicProductsResult {
   page: number;
   limit: number;
   totalPages: number;
+  isOverflow?: boolean;
+  errorMessage?: string;
 }
 
 /**
@@ -39,6 +41,33 @@ export const getPublicProducts = cache(async function getPublicProducts(
   const page = Number.isInteger(rawPage) && rawPage >= 1 ? rawPage : 1;
   const rawLimit = Number(filters?.limit);
   const limit = Number.isInteger(rawLimit) && rawLimit >= 1 ? Math.min(48, rawLimit) : 24;
+
+  // Validate and sanitize price range filters
+  let minPrice: number | undefined = undefined;
+  let maxPrice: number | undefined = undefined;
+
+  if (filters?.minPrice != null) {
+    const rawMin = Number(filters.minPrice);
+    if (Number.isFinite(rawMin) && rawMin >= 0) {
+      minPrice = Math.min(100_000_000, rawMin);
+    }
+  }
+
+  if (filters?.maxPrice != null) {
+    const rawMax = Number(filters.maxPrice);
+    if (Number.isFinite(rawMax) && rawMax >= 0) {
+      maxPrice = Math.min(100_000_000, rawMax);
+    }
+  }
+
+  if (minPrice != null && maxPrice != null && minPrice > maxPrice) {
+    const temp = minPrice;
+    minPrice = maxPrice;
+    maxPrice = temp;
+  }
+
+  const hasPriceFilter = minPrice != null || maxPrice != null;
+  const isPriceSort = filters?.sort === 'price-asc' || filters?.sort === 'price-desc';
 
   const emptyResult: PublicProductsResult = {
     products: [],
@@ -155,6 +184,193 @@ export const getPublicProducts = cache(async function getPublicProducts(
         break;
     }
 
+    if (hasPriceFilter || isPriceSort) {
+      // NOTE ON SELLING PRICE FILTERING ARCHITECTURE:
+      // Product prices and discounts reside in child `product_variants` rows, not on the parent `products` table.
+      // In PostgREST, parent row counts and filtering cannot evaluate aggregated child expressions
+      // (e.g. min(discount_price || price)) dynamically with `{ count: 'exact' }`.
+      // To guarantee 100% accurate selling price filtering (including active discounts) and exact total counts
+      // without schema migrations, candidate active products matching all other filters are retrieved and resolved
+      // server-side before pagination is applied. Safe bounded batching up to 5,000 prevents silent truncation.
+      const batchSize = 1000;
+      const maxCandidates = 5000;
+      const rawProducts: any[] = [];
+      let from = 0;
+      let hasOverflow = false;
+
+      while (from < maxCandidates) {
+        const to = from + batchSize - 1;
+        const batchQuery = typeof query.range === 'function' ? query.range(from, to) : query.limit(batchSize);
+        const { data: batch, count: totalDbMatches, error } = await batchQuery;
+
+        if (error || !batch || !Array.isArray(batch)) {
+          if (from === 0) return emptyResult;
+          break;
+        }
+
+        // If total eligible matching rows exceed the candidate ceiling, do NOT silently truncate.
+        // Immediately halt and return a controlled customer-safe overflow result.
+        if (totalDbMatches != null && totalDbMatches > maxCandidates) {
+          hasOverflow = true;
+          console.warn(
+            `[Catalog] Price-filtered match (${totalDbMatches}) exceeds candidate ceiling (${maxCandidates}). Safe overflow state returned.`
+          );
+          break;
+        }
+
+        rawProducts.push(...batch);
+
+        if (batch.length < batchSize || typeof query.range !== 'function') {
+          break;
+        }
+
+        from += batchSize;
+      }
+
+      if (hasOverflow || rawProducts.length >= maxCandidates) {
+        if (!hasOverflow) {
+          console.warn(
+            `[Catalog] Price-filtered raw candidates reached ceiling (${maxCandidates}). Safe overflow state returned.`
+          );
+        }
+        return {
+          products: [],
+          total: 0,
+          page,
+          limit,
+          totalPages: 0,
+          isOverflow: true,
+          errorMessage:
+            'The selected price filter matches too many products. Please narrow your price range or select a category.',
+        };
+      }
+
+      const candidates: ProductPublic[] = [];
+
+      for (const row of rawProducts) {
+        const activeVariants: ProductVariantPublic[] = (row.product_variants || [])
+          .filter((v: any) => v.is_active === true)
+          .map((v: any) => ({
+            id: v.id,
+            productId: v.product_id,
+            sku: v.sku,
+            title: v.title,
+            attributes: v.attributes || {},
+            price: Number(v.price),
+            discountPrice: v.discount_price != null ? Number(v.discount_price) : null,
+            stockStatus: v.stock_status as StockStatus,
+            isActive: v.is_active,
+            images: [],
+            createdAt: v.created_at,
+            updatedAt: v.updated_at,
+          }));
+
+        if (activeVariants.length === 0) continue;
+
+        const prices = activeVariants.map((v) => v.price);
+        const basePrice = Math.min(...prices);
+
+        const discountPrices = activeVariants
+          .map((v) => v.discountPrice)
+          .filter((p): p is number => p != null && p > 0);
+        const baseDiscountPrice = discountPrices.length > 0 ? Math.min(...discountPrices) : null;
+        // Parity with ProductCard display: discount applies only if strictly lower than basePrice
+        const effectiveSellingPrice =
+          baseDiscountPrice != null && baseDiscountPrice < basePrice
+            ? baseDiscountPrice
+            : basePrice;
+
+        // Apply price range boundary checks against customer-visible selling price
+        if (minPrice != null && effectiveSellingPrice < minPrice) continue;
+        if (maxPrice != null && effectiveSellingPrice > maxPrice) continue;
+
+        const images: ProductImage[] = (row.product_images || [])
+          .sort(
+            (a: any, b: any) =>
+              (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0) || a.display_order - b.display_order
+          )
+          .map((img: any) => ({
+            id: img.id,
+            productId: img.product_id,
+            variantId: img.variant_id,
+            url: img.url,
+            altText: img.alt_text,
+            displayOrder: img.display_order,
+            isPrimary: img.is_primary,
+            createdAt: '',
+          }));
+
+        const category: Category | null = row.categories
+          ? {
+              id: row.categories.id,
+              name: row.categories.name,
+              slug: row.categories.slug,
+              displayOrder: 0,
+              isActive: true,
+              createdAt: '',
+            }
+          : null;
+
+        candidates.push({
+          id: row.id,
+          name: row.name,
+          slug: row.slug,
+          productCode: row.product_code,
+          shortDescription: row.short_description,
+          description: row.description,
+          material: row.material,
+          gender: row.gender,
+          categoryId: row.category_id,
+          category,
+          images,
+          variants: activeVariants,
+          basePrice,
+          baseDiscountPrice,
+          isFeatured: row.is_featured,
+          isNewArrival: row.is_new_arrival,
+          isBestSeller: row.is_best_seller,
+          isActive: row.is_active,
+          metaTitle: row.meta_title,
+          metaDescription: row.meta_description,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        });
+      }
+
+      // Catalog-wide sorting by price if requested (deterministic with ID tie-breaker)
+      const getEffectivePrice = (p: ProductPublic) =>
+        p.baseDiscountPrice != null && p.baseDiscountPrice < p.basePrice
+          ? p.baseDiscountPrice
+          : p.basePrice;
+
+      if (filters?.sort === 'price-asc') {
+        candidates.sort(
+          (a, b) =>
+            getEffectivePrice(a) - getEffectivePrice(b) ||
+            a.id.localeCompare(b.id)
+        );
+      } else if (filters?.sort === 'price-desc') {
+        candidates.sort(
+          (a, b) =>
+            getEffectivePrice(b) - getEffectivePrice(a) ||
+            b.id.localeCompare(a.id)
+        );
+      }
+
+      const total = candidates.length;
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+      const pagedProducts = candidates.slice(offset, offset + limit);
+
+      return {
+        products: pagedProducts,
+        total,
+        page,
+        limit,
+        totalPages,
+      };
+    }
+
+    // Standard pagination path when no price filter or price sorting is active
     query = query.range(offset, offset + limit - 1);
 
     const { data: rawProducts, count, error } = await query;
@@ -199,10 +415,6 @@ export const getPublicProducts = cache(async function getPublicProducts(
         .map((v) => v.discountPrice)
         .filter((p): p is number => p != null && p > 0);
       const baseDiscountPrice = discountPrices.length > 0 ? Math.min(...discountPrices) : null;
-
-      // Price filter check if applied
-      if (filters?.minPrice != null && basePrice < filters.minPrice) continue;
-      if (filters?.maxPrice != null && basePrice > filters.maxPrice) continue;
 
       const images: ProductImage[] = (row.product_images || [])
         .sort(
@@ -255,13 +467,6 @@ export const getPublicProducts = cache(async function getPublicProducts(
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       });
-    }
-
-    // Client-side sort by price if requested
-    if (filters?.sort === 'price-asc') {
-      products.sort((a, b) => (a.baseDiscountPrice || a.basePrice) - (b.baseDiscountPrice || b.basePrice));
-    } else if (filters?.sort === 'price-desc') {
-      products.sort((a, b) => (b.baseDiscountPrice || b.basePrice) - (a.baseDiscountPrice || a.basePrice));
     }
 
     return {

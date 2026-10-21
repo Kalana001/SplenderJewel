@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ShoppingBag, Search, User, Menu, X, Heart, LogOut } from 'lucide-react';
@@ -11,6 +11,7 @@ import { twMerge } from 'tailwind-merge';
 import { useCart } from '@/lib/cart/cart-context';
 import { createClient } from '@/lib/supabase/client';
 import { signOutCustomer } from '@/lib/auth/actions';
+import { getCustomerWishlistCount } from '@/lib/wishlist/actions';
 import type { Category } from '@/types/product';
 
 interface HeaderProps {
@@ -21,12 +22,14 @@ interface HeaderProps {
 export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [wishlistCount, setWishlistCount] = useState<number>(0);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const pathname = usePathname();
   const router = useRouter();
   const config = getStoreConfig();
   const { totalCount, isLoaded } = useCart();
+  const countSeq = useRef(0);
 
   useEffect(() => {
     const supabase = createClient();
@@ -34,10 +37,31 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
 
     let isMounted = true;
 
+    const refreshWishlistCount = async () => {
+      const currentSeq = ++countSeq.current;
+      try {
+        const res = await getCustomerWishlistCount();
+        if (isMounted && currentSeq === countSeq.current) {
+          setIsAuthenticated(res.isAuthenticated);
+          setWishlistCount(res.isAuthenticated ? res.count : 0);
+        }
+      } catch {
+        if (isMounted && currentSeq === countSeq.current) {
+          setWishlistCount(0);
+        }
+      }
+    };
+
     // Check existing customer session on mount
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (isMounted) {
         setIsAuthenticated(!!session?.user);
+        if (session?.user) {
+          refreshWishlistCount();
+        } else {
+          ++countSeq.current;
+          setWishlistCount(0);
+        }
       }
     });
 
@@ -47,30 +71,51 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (isMounted) {
         setIsAuthenticated(!!session?.user);
+        if (session?.user) {
+          refreshWishlistCount();
+        } else {
+          ++countSeq.current;
+          setWishlistCount(0);
+        }
       }
     });
 
     const handleCustomSignOut = () => {
-      if (isMounted) setIsAuthenticated(false);
+      if (isMounted) {
+        ++countSeq.current;
+        setIsAuthenticated(false);
+        setWishlistCount(0);
+      }
     };
     const handleCustomSignIn = () => {
-      if (isMounted) setIsAuthenticated(true);
+      if (isMounted) {
+        setIsAuthenticated(true);
+        refreshWishlistCount();
+      }
+    };
+    const handleWishlistUpdated = () => {
+      if (isMounted) {
+        refreshWishlistCount();
+      }
     };
 
     window.addEventListener('splender:auth-signed-out', handleCustomSignOut);
     window.addEventListener('splender:auth-signed-in', handleCustomSignIn);
+    window.addEventListener('splender:wishlist-updated', handleWishlistUpdated);
 
     return () => {
       isMounted = false;
       subscription?.unsubscribe();
       window.removeEventListener('splender:auth-signed-out', handleCustomSignOut);
       window.removeEventListener('splender:auth-signed-in', handleCustomSignIn);
+      window.removeEventListener('splender:wishlist-updated', handleWishlistUpdated);
     };
   }, []);
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
     setLogoutError(null);
+    ++countSeq.current;
     try {
       const result = await signOutCustomer();
       if (result && !result.success) {
@@ -80,6 +125,7 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('splender:auth-signed-out'));
       }
+      setWishlistCount(0);
       setMobileMenuOpen(false);
       if (pathname === '/') {
         router.refresh();
@@ -182,10 +228,15 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
           <div className="flex items-center justify-end space-x-0.5 sm:space-x-1 z-10 shrink-0">
             <Link
               href="/account/wishlist"
-              className="p-1.5 sm:p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
-              aria-label="Wishlist"
+              className="relative p-1.5 sm:p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
+              aria-label={wishlistCount > 0 ? `Wishlist (${wishlistCount} items)` : 'Wishlist'}
             >
               <Heart className="h-5 w-5" />
+              {wishlistCount > 0 && (
+                <span className="absolute top-0.5 right-0.5 sm:top-1 sm:right-1 flex h-4 w-4 items-center justify-center rounded-full bg-luxury-gold text-[10px] font-bold text-luxury-black shadow-sm">
+                  {wishlistCount > 99 ? '99+' : wishlistCount}
+                </span>
+              )}
             </Link>
 
             <Link
@@ -271,6 +322,22 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
             >
               <User className="h-4 w-4" />
               <span>My Account & Orders</span>
+            </Link>
+
+            <Link
+              href="/account/wishlist"
+              onClick={() => setMobileMenuOpen(false)}
+              className="inline-flex items-center justify-between text-xs text-neutral-400 hover:text-luxury-gold transition-colors py-1 px-2"
+            >
+              <span className="inline-flex items-center space-x-2">
+                <Heart className="h-4 w-4" />
+                <span>My Wishlist</span>
+              </span>
+              {wishlistCount > 0 && (
+                <span className="flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-luxury-gold text-[10px] font-bold text-luxury-black">
+                  {wishlistCount > 99 ? '99+' : wishlistCount}
+                </span>
+              )}
             </Link>
 
             {isAuthenticated && (

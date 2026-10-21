@@ -2,7 +2,9 @@ import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { getPublicProductBySlug, getStoreWhatsAppNumber } from '@/lib/catalog/public';
 import { createPublicSupabaseClient } from '@/lib/supabase/server';
+import { getProductApprovedReviews } from '@/lib/reviews/public';
 import { ProductDetailViewer } from '@/components/store/product-detail-viewer';
+import { ProductReviewsSection } from '@/components/store/product-reviews';
 import { Container } from '@/components/ui/container';
 
 export const revalidate = 60;
@@ -58,6 +60,12 @@ export async function generateMetadata({ params }: ProductDetailPageProps): Prom
       images: primaryImage ? [{ url: primaryImage.url, alt: primaryImage.altText || product.name }] : [],
       type: 'website',
     },
+    twitter: {
+      card: 'summary_large_image',
+      title: `${cleanTitle} | Splender Jewel`,
+      description: pageDescription,
+      images: primaryImage ? [primaryImage.url] : [],
+    },
   };
 }
 
@@ -73,11 +81,13 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
     notFound();
   }
 
+  const reviewsData = await getProductApprovedReviews(product.id);
+
   // Safely construct Schema.org Product structured data (no confidential data or exact stock)
   const isAvailable = product.variants.some((v) => v.stockStatus !== 'out_of_stock');
   const displayPrice = product.baseDiscountPrice || product.basePrice;
 
-  const jsonLd = {
+  const jsonLd: any = {
     '@context': 'https://schema.org',
     '@type': 'Product',
     name: product.name,
@@ -97,6 +107,14 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
     },
   };
 
+  if (reviewsData.summary.totalReviews > 0) {
+    jsonLd.aggregateRating = {
+      '@type': 'AggregateRating',
+      ratingValue: reviewsData.summary.averageRating.toFixed(1),
+      reviewCount: reviewsData.summary.totalReviews,
+    };
+  }
+
   return (
     <div className="py-8 sm:py-12 bg-luxury-black min-h-screen">
       <script
@@ -107,6 +125,11 @@ export default async function ProductDetailPage({ params }: ProductDetailPagePro
         <ProductDetailViewer
           product={product}
           storeWhatsAppNumber={whatsAppNumber}
+          reviewsSummary={reviewsData.summary}
+        />
+        <ProductReviewsSection
+          reviewsData={reviewsData}
+          productName={product.name}
         />
       </Container>
     </div>

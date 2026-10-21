@@ -29,6 +29,13 @@ export const metadata: Metadata = {
       },
     ],
   },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Splender Jewel | Fashion Jewellery & Accessories — Sri Lanka',
+    description:
+      'Discover Splender Jewel — stylish fashion jewellery and accessories based in Negombo, Sri Lanka. Elegance, modern trends, and timeless style with Islandwide Delivery.',
+    images: ['/images/logo.png'],
+  },
 };
 
 export const viewport: Viewport = {

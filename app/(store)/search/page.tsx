@@ -22,6 +22,8 @@ interface SearchPageProps {
     gender?: string;
     material?: string;
     category?: string;
+    minPrice?: string;
+    maxPrice?: string;
   }>;
 }
 
@@ -33,6 +35,8 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
   const gender = params.gender as any;
   const material = params.material?.trim() || '';
   const categorySlug = params.category?.trim() || '';
+  const minPrice = params.minPrice ? Number(params.minPrice) : undefined;
+  const maxPrice = params.maxPrice ? Number(params.maxPrice) : undefined;
 
   const [productsRes, categories, materials] = await Promise.all([
     getPublicProducts({
@@ -40,6 +44,8 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
       categorySlug: categorySlug && categorySlug !== 'all' ? categorySlug : undefined,
       gender: gender && gender !== 'all' ? gender : undefined,
       material: material && material !== 'all' ? material : undefined,
+      minPrice: Number.isFinite(minPrice) ? minPrice : undefined,
+      maxPrice: Number.isFinite(maxPrice) ? maxPrice : undefined,
       sort: sort || 'newest',
       page,
       limit: 24,
@@ -59,7 +65,9 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
             currentCategorySlug={categorySlug || undefined}
             categoryTitle={searchTerm ? `Search Results for "${searchTerm}"` : 'Search Jewelry'}
             categoryDescription={
-              searchTerm
+              productsRes.isOverflow
+                ? 'The search matched too many items to apply exact price filtering. Please narrow your price range or search terms.'
+                : searchTerm
                 ? `Found ${productsRes.total} piece${productsRes.total === 1 ? '' : 's'} matching your search.`
                 : 'Type a jewelry name, stone type, or material to browse our collection.'
             }
@@ -68,6 +76,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
             totalProducts={productsRes.total}
             initialSearchQuery={searchTerm}
             baseUrl="/search"
+            isOverflow={productsRes.isOverflow}
           />
         </Suspense>
       </Container>

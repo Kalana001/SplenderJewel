@@ -8,6 +8,7 @@ import { InstagramIcon } from '@/components/icons/instagram';
 import { getPublicCategories, getPublicProducts } from '@/lib/catalog/public';
 import { getPublicBanners, getPublicHomepageSections } from '@/lib/cms/public';
 import { getPublicApprovedReviews } from '@/lib/reviews/public';
+import { getCanonicalSiteUrl } from '@/lib/auth/redirect';
 import { HeroBanner } from '@/components/store/hero-banner';
 import { ProductCard } from '@/components/store/product-card';
 import { EditorialCollage } from '@/components/store/editorial-collage';
@@ -92,8 +93,32 @@ export default async function HomePage() {
     storeConfig
   );
 
+  const siteUrl = getCanonicalSiteUrl();
+  const homepageJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'JewelryStore',
+    name: 'Splender Jewel',
+    description:
+      'Fine fashion jewellery and accessories based in Negombo, Sri Lanka. Elegance, modern trends, and timeless style with islandwide delivery.',
+    url: siteUrl,
+    logo: `${siteUrl}/images/logo.png`,
+    telephone: storeConfig.whatsAppNumber || '+94764689907',
+    sameAs: ['https://www.instagram.com/splender_jewel/'],
+    priceRange: 'LKR',
+    currenciesAccepted: 'LKR',
+    paymentAccepted: 'Cash on Delivery, Bank Transfer',
+    areaServed: {
+      '@type': 'Country',
+      name: 'Sri Lanka',
+    },
+  };
+
   return (
     <div className="space-y-12 sm:space-y-16 md:space-y-20 pb-16 sm:pb-20">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(homepageJsonLd).replace(/</g, '\\u003c') }}
+      />
       {sortedSectionKeys.map((sectionKey) => {
         switch (sectionKey) {
           case 'hero':

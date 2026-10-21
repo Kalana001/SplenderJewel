@@ -100,6 +100,9 @@ export function WishlistManager({ initialItems, loadError = null }: WishlistMana
       if (res.success) {
         setItems((prev) => removeWishlistItem(prev, item.id));
         setFeedback({ type: 'success', message: `"${item.productName}" was removed from your wishlist.` });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('splender:wishlist-updated'));
+        }
       } else {
         setFeedback({ type: 'error', message: toSafeWishlistError(res.error, REMOVE_FAILURE_MESSAGE) });
       }
@@ -128,6 +131,9 @@ export function WishlistManager({ initialItems, loadError = null }: WishlistMana
         switch (outcome.status) {
           case 'moved':
             setItems((prev) => removeWishlistItem(prev, item.id));
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new Event('splender:wishlist-updated'));
+            }
             setFeedback({
               type: 'success',
               message: `"${item.productName}" was added to your cart and removed from your wishlist.`,
@@ -169,6 +175,9 @@ export function WishlistManager({ initialItems, loadError = null }: WishlistMana
       onSuccess: () => {
         setItems([]);
         setFeedback({ type: 'success', message: 'Your wishlist has been cleared.' });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('splender:wishlist-updated'));
+        }
       },
     });
   }, []);

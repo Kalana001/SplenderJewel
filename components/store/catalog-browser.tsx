@@ -21,6 +21,7 @@ interface CatalogBrowserProps {
   totalProducts?: number;
   initialSearchQuery?: string;
   baseUrl?: string;
+  isOverflow?: boolean;
 }
 
 export function CatalogBrowser({
@@ -35,6 +36,7 @@ export function CatalogBrowser({
   totalProducts = initialProducts.length,
   initialSearchQuery = '',
   baseUrl,
+  isOverflow = false,
 }: CatalogBrowserProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -48,11 +50,18 @@ export function CatalogBrowser({
   const activeGender = searchParams.get('gender') || 'all';
   const activeMaterial = searchParams.get('material') || 'all';
   const activeCategory = searchParams.get('category') || currentCategorySlug || 'all';
+  const activeMinPrice = searchParams.get('minPrice') || '';
+  const activeMaxPrice = searchParams.get('maxPrice') || '';
 
-  // Sync search input state with URL parameter on browser back/forward navigation
+  const [customMinPrice, setCustomMinPrice] = useState(activeMinPrice);
+  const [customMaxPrice, setCustomMaxPrice] = useState(activeMaxPrice);
+
+  // Sync search input & price inputs state with URL parameter on browser back/forward navigation
   useEffect(() => {
     const urlQuery = searchParams.get('q') || '';
     setSearchTerm(urlQuery);
+    setCustomMinPrice(searchParams.get('minPrice') || '');
+    setCustomMaxPrice(searchParams.get('maxPrice') || '');
   }, [searchParams]);
 
   // Sort state initialized from URL if present
@@ -64,6 +73,25 @@ export function CatalogBrowser({
   const [sortOption, setSortOption] = useState<'newest' | 'price-asc' | 'price-desc' | 'name-asc'>(initialSort);
 
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
+
+  // LKR Price range presets
+  const pricePresets: Array<{ label: string; min: number | null; max: number | null }> = [
+    { label: 'All Prices', min: null, max: null },
+    { label: 'Under Rs. 2,500', min: null, max: 2500 },
+    { label: 'Rs. 2,500 – Rs. 5,000', min: 2500, max: 5000 },
+    { label: 'Rs. 5,000 – Rs. 10,000', min: 5000, max: 10000 },
+    { label: 'Rs. 10,000 – Rs. 20,000', min: 10000, max: 20000 },
+    { label: 'Above Rs. 20,000', min: 20000, max: null },
+  ];
+
+  const isPresetActive = (min: number | null, max: number | null) => {
+    const curMin = activeMinPrice ? Number(activeMinPrice) : null;
+    const curMax = activeMaxPrice ? Number(activeMaxPrice) : null;
+    if (min === null && max === null) {
+      return curMin === null && curMax === null;
+    }
+    return curMin === min && curMax === max;
+  };
 
   // Available materials from server facet query or extracted fallback
   const materialsList = useMemo(() => {
@@ -85,6 +113,8 @@ export function CatalogBrowser({
     sort?: string | null;
     category?: string | null;
     q?: string | null;
+    minPrice?: string | number | null;
+    maxPrice?: string | number | null;
   }) => {
     const params = new URLSearchParams(searchParams.toString());
     for (const [key, val] of Object.entries(updates)) {
@@ -96,6 +126,33 @@ export function CatalogBrowser({
     }
     const qs = params.toString();
     return `${baseUrl || pathname}${qs ? `?${qs}` : ''}`;
+  };
+
+  // Handle custom price submission
+  const handleApplyCustomPrice = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    let min: number | null = null;
+    let max: number | null = null;
+
+    if (customMinPrice.trim()) {
+      const parsed = parseFloat(customMinPrice.trim());
+      if (!isNaN(parsed) && parsed >= 0) min = parsed;
+    }
+    if (customMaxPrice.trim()) {
+      const parsed = parseFloat(customMaxPrice.trim());
+      if (!isNaN(parsed) && parsed >= 0) max = parsed;
+    }
+
+    if (min !== null && max !== null && min > max) {
+      const temp = min;
+      min = max;
+      max = temp;
+      setCustomMinPrice(String(min));
+      setCustomMaxPrice(String(max));
+    }
+
+    router.push(buildFilterUrl({ minPrice: min, maxPrice: max, page: 1 }));
+    setMobileFilterOpen(false);
   };
 
   // Handle Search Submission (fetches from server)
@@ -156,7 +213,9 @@ export function CatalogBrowser({
     searchTerm !== '' ||
     activeCategory !== (currentCategorySlug || 'all') ||
     activeGender !== 'all' ||
-    activeMaterial !== 'all';
+    activeMaterial !== 'all' ||
+    Boolean(activeMinPrice) ||
+    Boolean(activeMaxPrice);
 
   // Sort products on current page (price sorts client-side where database lacks price column on product root)
   const sortedProducts = useMemo(() => {
@@ -378,6 +437,70 @@ export function CatalogBrowser({
               </div>
             </div>
           )}
+
+          {/* Price Range Filter (Server-side execution with presets & custom inputs) */}
+          <div className="space-y-3 border-t border-luxury-border pt-4">
+            <h4 className="text-xs uppercase tracking-wider text-neutral-400 font-semibold">
+              Price Range (LKR)
+            </h4>
+            <div className="space-y-1">
+              {pricePresets.map((preset) => {
+                const active = isPresetActive(preset.min, preset.max);
+                return (
+                  <Link
+                    key={preset.label}
+                    href={buildFilterUrl({
+                      minPrice: preset.min,
+                      maxPrice: preset.max,
+                      page: 1,
+                    })}
+                    className={`block w-full text-left text-xs py-1.5 px-2 rounded transition-colors ${
+                      active
+                        ? 'bg-luxury-gold text-luxury-black font-semibold'
+                        : 'text-neutral-300 hover:text-white hover:bg-luxury-surface'
+                    }`}
+                  >
+                    {preset.label}
+                  </Link>
+                );
+              })}
+            </div>
+
+            {/* Custom Min / Max Price Inputs */}
+            <form onSubmit={handleApplyCustomPrice} className="pt-2 space-y-2">
+              <div className="flex items-center gap-1.5 text-xs">
+                <input
+                  type="number"
+                  min="0"
+                  step="100"
+                  placeholder="Min"
+                  value={customMinPrice}
+                  onChange={(e) => setCustomMinPrice(e.target.value)}
+                  className="w-1/2 bg-luxury-surface border border-neutral-700 text-white text-xs rounded px-2 py-1.5 focus:outline-none focus:border-luxury-gold"
+                  aria-label="Minimum price in LKR"
+                />
+                <span className="text-neutral-500">–</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="100"
+                  placeholder="Max"
+                  value={customMaxPrice}
+                  onChange={(e) => setCustomMaxPrice(e.target.value)}
+                  className="w-1/2 bg-luxury-surface border border-neutral-700 text-white text-xs rounded px-2 py-1.5 focus:outline-none focus:border-luxury-gold"
+                  aria-label="Maximum price in LKR"
+                />
+              </div>
+              <Button
+                type="submit"
+                variant="outline"
+                size="sm"
+                className="w-full text-[11px] h-7 border-neutral-700 hover:border-luxury-gold hover:text-luxury-gold"
+              >
+                Apply Price Filter
+              </Button>
+            </form>
+          </div>
         </aside>
 
         {/* Product Grid Area */}
@@ -402,7 +525,20 @@ export function CatalogBrowser({
             </span>
           </div>
 
-          {currentPage > totalPages && totalPages > 0 ? (
+          {isOverflow ? (
+            <div className="bg-luxury-card border border-luxury-border rounded-md p-16 text-center">
+              <Package className="h-12 w-12 text-luxury-gold mx-auto mb-3" />
+              <h3 className="text-lg font-serif text-white mb-2">Price Filter Matches Too Many Pieces</h3>
+              <p className="text-sm text-neutral-400 max-w-md mx-auto mb-5">
+                The selected price range matches more items than can be safely filtered at once. Please narrow your price range or select a specific category to view pieces.
+              </p>
+              {hasActiveFilters && (
+                <Button variant="gold" size="sm" onClick={resetFilters}>
+                  Clear All Filters
+                </Button>
+              )}
+            </div>
+          ) : currentPage > totalPages && totalPages > 0 ? (
             <div className="bg-luxury-card border border-luxury-border rounded-md p-16 text-center">
               <Package className="h-12 w-12 text-neutral-600 mx-auto mb-3" />
               <h3 className="text-lg font-serif text-white mb-2">No Products on Page {currentPage}</h3>
@@ -635,6 +771,71 @@ export function CatalogBrowser({
                   </div>
                 </div>
               )}
+
+              {/* Price Range */}
+              <div className="space-y-3 border-t border-luxury-border pt-4">
+                <h4 className="text-xs uppercase tracking-wider text-neutral-400 font-semibold">
+                  Price Range (LKR)
+                </h4>
+                <div className="space-y-1">
+                  {pricePresets.map((preset) => {
+                    const active = isPresetActive(preset.min, preset.max);
+                    return (
+                      <Link
+                        key={preset.label}
+                        href={buildFilterUrl({
+                          minPrice: preset.min,
+                          maxPrice: preset.max,
+                          page: 1,
+                        })}
+                        onClick={() => setMobileFilterOpen(false)}
+                        className={`block w-full text-left text-xs py-1.5 px-2 rounded ${
+                          active
+                            ? 'bg-luxury-gold text-luxury-black font-semibold'
+                            : 'text-neutral-300'
+                        }`}
+                      >
+                        {preset.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+
+                {/* Custom Min / Max Price Inputs */}
+                <form onSubmit={handleApplyCustomPrice} className="pt-2 space-y-2">
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <input
+                      type="number"
+                      min="0"
+                      step="100"
+                      placeholder="Min"
+                      value={customMinPrice}
+                      onChange={(e) => setCustomMinPrice(e.target.value)}
+                      className="w-1/2 bg-luxury-surface border border-neutral-700 text-white text-xs rounded px-2 py-1.5 focus:outline-none focus:border-luxury-gold"
+                      aria-label="Minimum price in LKR"
+                    />
+                    <span className="text-neutral-500">–</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="100"
+                      placeholder="Max"
+                      value={customMaxPrice}
+                      onChange={(e) => setCustomMaxPrice(e.target.value)}
+                      className="w-1/2 bg-luxury-surface border border-neutral-700 text-white text-xs rounded px-2 py-1.5 focus:outline-none focus:border-luxury-gold"
+                      aria-label="Maximum price in LKR"
+                    />
+                  </div>
+                  <Button
+                    type="submit"
+                    variant="outline"
+                    size="sm"
+                    className="w-full text-[11px] h-7 border-neutral-700 hover:border-luxury-gold hover:text-luxury-gold"
+                  >
+                    Apply Price Filter
+                  </Button>
+                </form>
+              </div>
             </div>
 
             <div className="pt-6 border-t border-luxury-border flex gap-3">

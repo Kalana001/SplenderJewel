@@ -49,6 +49,49 @@ export async function checkProductWishlistStatus(productId: string): Promise<{
   }
 }
 
+/**
+ * Retrieve total item count in the authenticated customer's wishlist.
+ * Used for the header wishlist counter badge.
+ * Strictly isolated per customer; returns count: 0 for guests.
+ */
+export async function getCustomerWishlistCount(): Promise<{
+  isAuthenticated: boolean;
+  count: number;
+}> {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return { isAuthenticated: false, count: 0 };
+    }
+
+    const supabase = await createServerSupabaseClient();
+    if (!supabase) {
+      return { isAuthenticated: true, count: 0 };
+    }
+
+    const { data: wishlist } = await (supabase.from('wishlists') as any)
+      .select('id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!wishlist) {
+      return { isAuthenticated: true, count: 0 };
+    }
+
+    const { count, error } = await (supabase.from('wishlist_items') as any)
+      .select('id', { count: 'exact', head: true })
+      .eq('wishlist_id', wishlist.id);
+
+    if (error || typeof count !== 'number') {
+      return { isAuthenticated: true, count: 0 };
+    }
+
+    return { isAuthenticated: true, count };
+  } catch {
+    return { isAuthenticated: false, count: 0 };
+  }
+}
+
 export async function getCustomerWishlist(): Promise<{
   success: boolean;
   items: WishlistProduct[];

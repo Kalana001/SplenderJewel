@@ -18,6 +18,8 @@ interface ShopPageProps {
     gender?: string;
     material?: string;
     q?: string;
+    minPrice?: string;
+    maxPrice?: string;
   }>;
 }
 
@@ -28,12 +30,16 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
   const sort = params.sort as any;
   const gender = params.gender as any;
   const material = params.material?.trim() || '';
+  const minPrice = params.minPrice ? Number(params.minPrice) : undefined;
+  const maxPrice = params.maxPrice ? Number(params.maxPrice) : undefined;
 
   const [productsRes, categories, materials] = await Promise.all([
     getPublicProducts({
       search: q || undefined,
       gender: gender && gender !== 'all' ? gender : undefined,
       material: material && material !== 'all' ? material : undefined,
+      minPrice: Number.isFinite(minPrice) ? minPrice : undefined,
+      maxPrice: Number.isFinite(maxPrice) ? maxPrice : undefined,
       sort: sort || 'newest',
       page,
       limit: 24,
@@ -57,6 +63,7 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
             totalProducts={productsRes.total}
             initialSearchQuery={q}
             baseUrl="/shop"
+            isOverflow={productsRes.isOverflow}
           />
         </Suspense>
       </Container>

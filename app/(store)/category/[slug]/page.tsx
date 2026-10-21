@@ -16,6 +16,8 @@ interface CategoryPageProps {
     gender?: string;
     material?: string;
     q?: string;
+    minPrice?: string;
+    maxPrice?: string;
   }>;
 }
 
@@ -56,6 +58,8 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
   const sort = sParams.sort as any;
   const gender = sParams.gender as any;
   const material = sParams.material?.trim() || '';
+  const minPrice = sParams.minPrice ? Number(sParams.minPrice) : undefined;
+  const maxPrice = sParams.maxPrice ? Number(sParams.maxPrice) : undefined;
 
   const [category, categories, materials, productsRes] = await Promise.all([
     getPublicCategoryBySlug(slug),
@@ -66,6 +70,8 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
       search: q || undefined,
       gender: gender && gender !== 'all' ? gender : undefined,
       material: material && material !== 'all' ? material : undefined,
+      minPrice: Number.isFinite(minPrice) ? minPrice : undefined,
+      maxPrice: Number.isFinite(maxPrice) ? maxPrice : undefined,
       sort: sort || 'newest',
       page,
       limit: 24,
@@ -92,6 +98,7 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
             totalProducts={productsRes.total}
             initialSearchQuery={q}
             baseUrl={`/category/${slug}`}
+            isOverflow={productsRes.isOverflow}
           />
         </Suspense>
       </Container>
