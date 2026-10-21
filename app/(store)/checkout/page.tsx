@@ -16,6 +16,10 @@ import {
   CheckCircle2,
   X,
   Sparkles,
+  MapPin,
+  Home,
+  Building2,
+  Plus,
 } from 'lucide-react';
 import { Container } from '@/components/ui/container';
 import { Button } from '@/components/ui/button';
@@ -28,6 +32,9 @@ import { PAYMENT_METHODS, type PaymentMethod } from '@/lib/config/constants';
 import { createOrderAction, checkTesterAccessAction } from '@/lib/orders/actions';
 import { validateCouponAction } from '@/lib/coupons/actions';
 import { getBuyNowItemAction, type BuyNowItemDetails } from '@/lib/cart/actions';
+import { getCheckoutSavedAddressesAction } from '@/lib/addresses/actions';
+import type { CustomerAddress } from '@/types/address';
+import { createClient } from '@/lib/supabase/client';
 
 function CheckoutLoadingSkeleton() {
   return (
@@ -152,6 +159,144 @@ function CheckoutContent() {
   const [postalCode, setPostalCode] = useState('');
   const [deliveryNotes, setDeliveryNotes] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(PAYMENT_METHODS.COD);
+
+  // Saved Addresses State (Hydrated for authenticated customers)
+  const [savedAddresses, setSavedAddresses] = useState<CustomerAddress[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState<string | 'new'>('new');
+  const [isLoadingAddresses, setIsLoadingAddresses] = useState(false);
+  const [isAuthenticatedCustomer, setIsAuthenticatedCustomer] = useState(false);
+  const [addressLoadError, setAddressLoadError] = useState<string | null>(null);
+  const addressSeqRef = useRef(0);
+  const hasUserManuallyEditedRef = useRef(false);
+
+  // Hydrate saved addresses for registered customers
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadAddresses() {
+      const currentSeq = ++addressSeqRef.current;
+      setIsLoadingAddresses(true);
+      setAddressLoadError(null);
+
+      try {
+        const res = await getCheckoutSavedAddressesAction();
+        if (!isMounted || currentSeq !== addressSeqRef.current) return;
+
+        setIsAuthenticatedCustomer(res.isAuthenticated);
+        if (res.isAuthenticated) {
+          setSavedAddresses(res.addresses);
+          if (res.error) {
+            setAddressLoadError(res.error);
+          }
+
+          // Pre-populate with default address only if the user hasn't already manually typed in the form
+          if (!hasUserManuallyEditedRef.current && res.addresses.length > 0) {
+            const defaultAddr = res.addresses.find((a) => a.isDefault) || res.addresses[0];
+            setSelectedAddressId(defaultAddr.id);
+            setCustomerName((prev) => prev || defaultAddr.fullName);
+            setPhone1((prev) => prev || defaultAddr.phone1);
+            setPhone2((prev) => prev || defaultAddr.phone2 || '');
+            setAddressLine((prev) => prev || defaultAddr.addressLine);
+            setCity((prev) => prev || defaultAddr.city || '');
+            setDistrict(defaultAddr.district);
+            setPostalCode((prev) => prev || defaultAddr.postalCode || '');
+            setDeliveryNotes((prev) => prev || defaultAddr.deliveryNotes || '');
+          }
+
+          if (res.email) {
+            setEmail((prev) => prev || res.email!);
+          }
+        } else {
+          setSavedAddresses([]);
+          setSelectedAddressId('new');
+        }
+      } catch {
+        if (!isMounted || currentSeq !== addressSeqRef.current) return;
+        setIsAuthenticatedCustomer(false);
+        setSavedAddresses([]);
+        setSelectedAddressId('new');
+      } finally {
+        if (isMounted && currentSeq === addressSeqRef.current) {
+          setIsLoadingAddresses(false);
+        }
+      }
+    }
+
+    loadAddresses();
+
+    const handleAuthChange = () => {
+      hasUserManuallyEditedRef.current = false;
+      loadAddresses();
+    };
+
+    const handleSignOut = () => {
+      if (!isMounted) return;
+      ++addressSeqRef.current;
+      setIsAuthenticatedCustomer(false);
+      setSavedAddresses([]);
+      setSelectedAddressId('new');
+      setAddressLoadError(null);
+      setIsLoadingAddresses(false);
+      hasUserManuallyEditedRef.current = false;
+
+      // Clear customer-specific recipient & delivery fields on logout to protect account privacy
+      setCustomerName('');
+      setPhone1('');
+      setPhone2('');
+      setEmail('');
+      setAddressLine('');
+      setCity('');
+      setDistrict('Colombo');
+      setPostalCode('');
+      setDeliveryNotes('');
+    };
+
+    window.addEventListener('splender:auth-signed-in', handleAuthChange);
+    window.addEventListener('splender:auth-signed-out', handleSignOut);
+
+    const supabase = createClient();
+    let subscription: { unsubscribe: () => void } | null = null;
+    if (supabase) {
+      const authListener = supabase.auth.onAuthStateChange((event) => {
+        if (!isMounted) return;
+        if (event === 'SIGNED_OUT') {
+          handleSignOut();
+        } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
+          handleAuthChange();
+        }
+      });
+      subscription = authListener?.data?.subscription || null;
+    }
+
+    return () => {
+      isMounted = false;
+      subscription?.unsubscribe();
+      window.removeEventListener('splender:auth-signed-in', handleAuthChange);
+      window.removeEventListener('splender:auth-signed-out', handleSignOut);
+    };
+  }, []);
+
+  function handleSelectSavedAddress(addr: CustomerAddress) {
+    setSelectedAddressId(addr.id);
+    hasUserManuallyEditedRef.current = false;
+    setCustomerName(addr.fullName);
+    setPhone1(addr.phone1);
+    setPhone2(addr.phone2 || '');
+    setAddressLine(addr.addressLine);
+    setCity(addr.city || '');
+    setDistrict(addr.district);
+    setPostalCode(addr.postalCode || '');
+    setDeliveryNotes(addr.deliveryNotes || '');
+  }
+
+  function handleSelectNewAddress() {
+    setSelectedAddressId('new');
+    hasUserManuallyEditedRef.current = true;
+    setAddressLine('');
+    setCity('');
+    setPostalCode('');
+    setDeliveryNotes('');
+  }
 
   // Coupon State
   const [couponInput, setCouponInput] = useState('');
@@ -518,7 +663,10 @@ function CheckoutContent() {
                       required
                       placeholder="e.g. Anusha Perera"
                       value={customerName}
-                      onChange={(e) => setCustomerName(e.target.value)}
+                      onChange={(e) => {
+                        setCustomerName(e.target.value);
+                        hasUserManuallyEditedRef.current = true;
+                      }}
                       className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
                     />
                   </div>
@@ -533,7 +681,10 @@ function CheckoutContent() {
                       required
                       placeholder="e.g. 0771234567"
                       value={phone1}
-                      onChange={(e) => setPhone1(e.target.value)}
+                      onChange={(e) => {
+                        setPhone1(e.target.value);
+                        hasUserManuallyEditedRef.current = true;
+                      }}
                       className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
                     />
                     <p className="text-[11px] text-neutral-500">Required for courier delivery coordination.</p>
@@ -548,7 +699,10 @@ function CheckoutContent() {
                       type="tel"
                       placeholder="e.g. 0112345678"
                       value={phone2}
-                      onChange={(e) => setPhone2(e.target.value)}
+                      onChange={(e) => {
+                        setPhone2(e.target.value);
+                        hasUserManuallyEditedRef.current = true;
+                      }}
                       className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
                     />
                   </div>
@@ -571,9 +725,109 @@ function CheckoutContent() {
 
               {/* Delivery Address */}
               <div className="bg-neutral-900/80 border border-neutral-800 rounded-lg p-6 space-y-4">
-                <h2 className="text-lg font-serif font-bold text-white tracking-wide border-b border-neutral-800 pb-3 flex items-center gap-2">
+                <h2 className="text-lg font-serif font-bold text-white tracking-wide border-b border-neutral-800 pb-3 flex items-center justify-between gap-2">
                   <span>2. Delivery Address (Sri Lanka)</span>
+                  {selectedAddressId !== 'new' && (
+                    <span className="text-[11px] font-normal text-luxury-gold flex items-center gap-1">
+                      <CheckCircle2 className="h-3 w-3" />
+                      <span>Using Saved Address</span>
+                    </span>
+                  )}
                 </h2>
+
+                {/* Saved Address Selector for Authenticated Customers */}
+                {isAuthenticatedCustomer && addressLoadError && savedAddresses.length === 0 && (
+                  <div className="p-3 rounded-lg bg-neutral-900/80 border border-neutral-800 text-neutral-300 text-xs flex items-center gap-2 mb-4">
+                    <AlertCircle className="h-4 w-4 text-luxury-gold shrink-0" />
+                    <span>Could not load saved addresses. You may enter your delivery address manually below.</span>
+                  </div>
+                )}
+
+                {isAuthenticatedCustomer && savedAddresses.length > 0 && (
+                  <div className="space-y-3 pb-3 border-b border-neutral-800">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-luxury-gold flex items-center gap-1.5">
+                        <MapPin className="h-3.5 w-3.5" />
+                        <span>Select Saved Address</span>
+                      </span>
+                      {isLoadingAddresses && (
+                        <span className="text-[11px] text-neutral-400 flex items-center gap-1">
+                          <Loader2 className="h-3 w-3 animate-spin text-luxury-gold" />
+                          <span>Updating...</span>
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {savedAddresses.map((addr) => {
+                        const isSelected = selectedAddressId === addr.id;
+                        return (
+                          <button
+                            key={addr.id}
+                            type="button"
+                            onClick={() => handleSelectSavedAddress(addr)}
+                            className={`text-left p-3.5 rounded-lg border transition-all relative flex flex-col justify-between ${
+                              isSelected
+                                ? 'bg-luxury-gold/10 border-luxury-gold shadow-sm ring-1 ring-luxury-gold'
+                                : 'bg-neutral-950/60 border-neutral-800 hover:border-neutral-700 text-neutral-300'
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-center justify-between gap-2 mb-1.5 pr-5">
+                                <span className="text-xs font-semibold text-white truncate flex items-center gap-1.5">
+                                  {addr.label?.toLowerCase() === 'home' ? (
+                                    <Home className="h-3.5 w-3.5 text-luxury-gold shrink-0" />
+                                  ) : addr.label?.toLowerCase() === 'office' ? (
+                                    <Building2 className="h-3.5 w-3.5 text-luxury-gold shrink-0" />
+                                  ) : (
+                                    <MapPin className="h-3.5 w-3.5 text-luxury-gold shrink-0" />
+                                  )}
+                                  <span>{addr.label || 'Saved Address'}</span>
+                                </span>
+                                {addr.isDefault && (
+                                  <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-luxury-gold/20 text-luxury-gold shrink-0">
+                                    Default
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-neutral-200 font-medium truncate">{addr.fullName}</p>
+                              <p className="text-xs text-neutral-400 line-clamp-1 mt-0.5">{addr.addressLine}</p>
+                              <p className="text-[11px] text-neutral-500 mt-0.5">
+                                {addr.city ? `${addr.city}, ` : ''}{addr.district} • {addr.phone1}
+                              </p>
+                            </div>
+                            {isSelected && (
+                              <div className="absolute top-3 right-3 text-luxury-gold">
+                                <CheckCircle2 className="h-4 w-4" />
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+
+                      {/* Option to enter a new address manually */}
+                      <button
+                        type="button"
+                        onClick={handleSelectNewAddress}
+                        className={`text-left p-3.5 rounded-lg border transition-all flex items-center justify-center gap-2 ${
+                          selectedAddressId === 'new'
+                            ? 'bg-luxury-gold/10 border-luxury-gold text-luxury-gold shadow-sm ring-1 ring-luxury-gold'
+                            : 'bg-neutral-950/40 border-dashed border-neutral-800 hover:border-neutral-700 text-neutral-400 hover:text-neutral-200'
+                        }`}
+                      >
+                        <Plus className="h-4 w-4" />
+                        <span className="text-xs font-semibold">Enter a new address</span>
+                      </button>
+                    </div>
+
+                    {addressLoadError && (
+                      <p className="text-xs text-rose-400 flex items-center gap-1 mt-1">
+                        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                        <span>{addressLoadError}</span>
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <div className="space-y-4">
                   <div className="space-y-1.5">
@@ -586,7 +840,10 @@ function CheckoutContent() {
                       required
                       placeholder="e.g. No. 45, Galle Road, Apartment 3B"
                       value={addressLine}
-                      onChange={(e) => setAddressLine(e.target.value)}
+                      onChange={(e) => {
+                        setAddressLine(e.target.value);
+                        hasUserManuallyEditedRef.current = true;
+                      }}
                       className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
                     />
                   </div>
@@ -600,7 +857,10 @@ function CheckoutContent() {
                         id="district"
                         required
                         value={district}
-                        onChange={(e) => setDistrict(e.target.value as SriLankaDistrict)}
+                        onChange={(e) => {
+                          setDistrict(e.target.value as SriLankaDistrict);
+                          hasUserManuallyEditedRef.current = true;
+                        }}
                         className="w-full h-10 px-3 py-2 rounded-md bg-neutral-950 border border-neutral-700 text-white text-sm focus:outline-none focus:ring-1 focus:ring-luxury-gold"
                       >
                         {SRI_LANKA_DISTRICTS.map((d) => (
@@ -620,7 +880,10 @@ function CheckoutContent() {
                         type="text"
                         placeholder="e.g. Kollupitiya"
                         value={city}
-                        onChange={(e) => setCity(e.target.value)}
+                        onChange={(e) => {
+                          setCity(e.target.value);
+                          hasUserManuallyEditedRef.current = true;
+                        }}
                         className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
                       />
                     </div>
@@ -634,7 +897,10 @@ function CheckoutContent() {
                         type="text"
                         placeholder="e.g. 00300"
                         value={postalCode}
-                        onChange={(e) => setPostalCode(e.target.value)}
+                        onChange={(e) => {
+                          setPostalCode(e.target.value);
+                          hasUserManuallyEditedRef.current = true;
+                        }}
                         className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
                       />
                     </div>
@@ -649,7 +915,10 @@ function CheckoutContent() {
                       type="text"
                       placeholder="e.g. Leave with security desk or call before arriving"
                       value={deliveryNotes}
-                      onChange={(e) => setDeliveryNotes(e.target.value)}
+                      onChange={(e) => {
+                        setDeliveryNotes(e.target.value);
+                        hasUserManuallyEditedRef.current = true;
+                      }}
                       className="bg-neutral-950 border-neutral-700 text-white focus:border-luxury-gold"
                     />
                   </div>

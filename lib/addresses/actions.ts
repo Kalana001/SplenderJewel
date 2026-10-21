@@ -2,7 +2,7 @@
 
 import 'server-only';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { requireCustomerAuth } from '@/lib/auth/server';
+import { requireCustomerAuth, getCurrentUser } from '@/lib/auth/server';
 import { isValidDistrict, type SriLankaDistrict } from '@/lib/config/districts';
 import { normalizePhoneNumber } from '@/lib/config/whatsapp';
 import type { CustomerAddress, AddressInput } from '@/types/address';
@@ -342,5 +342,60 @@ export async function setDefaultCustomerAddress(id: string): Promise<{
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message || 'Failed to set default address.' };
+  }
+}
+
+/**
+ * Guest-safe server action to retrieve saved delivery addresses for the checkout flow.
+ * - Validates session server-side via getCurrentUser().
+ * - Never accepts client-supplied user IDs.
+ * - Genuine unauthenticated guests return `{ isAuthenticated: false, addresses: [] }` without error.
+ * - Authenticated customers receive their own saved addresses strictly scoped by `user_id = user.id`.
+ * - Safely returns user.email to assist in checkout prefill.
+ */
+export async function getCheckoutSavedAddressesAction(): Promise<{
+  isAuthenticated: boolean;
+  addresses: CustomerAddress[];
+  email?: string | null;
+  error?: string;
+}> {
+  let user: { id: string; email?: string } | null = null;
+  try {
+    user = await getCurrentUser();
+  } catch {
+    // Genuine unauthenticated / corrupted session fallback
+    return { isAuthenticated: false, addresses: [] };
+  }
+
+  // Genuine unauthenticated guest
+  if (!user) {
+    return { isAuthenticated: false, addresses: [] };
+  }
+
+  // Authenticated customer: retrieve saved addresses with safe error boundary
+  try {
+    const res = await getCustomerAddresses();
+    if (!res.success) {
+      return {
+        isAuthenticated: true,
+        addresses: [],
+        email: user.email || null,
+        error: 'Unable to retrieve saved addresses at this time.',
+      };
+    }
+
+    return {
+      isAuthenticated: true,
+      addresses: res.addresses,
+      email: user.email || null,
+    };
+  } catch {
+    // Distinguish database/network errors: customer remains authenticated
+    return {
+      isAuthenticated: true,
+      addresses: [],
+      email: user.email || null,
+      error: 'Unable to retrieve saved addresses at this time.',
+    };
   }
 }
