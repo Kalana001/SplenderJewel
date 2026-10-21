@@ -47,7 +47,6 @@ export function AdminSidebar({ mobileOpen, onCloseMobile }: AdminSidebarProps) {
       group: 'Sales & Catalog',
       items: [
         { label: 'Orders', href: '/admin/orders', icon: ShoppingBag },
-        { label: 'Print Labels', href: '/admin/print-labels', icon: Printer },
         { label: 'Payments & Settlement', href: '/admin/payments', icon: CreditCard },
         { label: 'Products', href: '/admin/products', icon: Package },
         { label: 'Categories', href: '/admin/categories', icon: Layers },
@@ -56,6 +55,7 @@ export function AdminSidebar({ mobileOpen, onCloseMobile }: AdminSidebarProps) {
           ? [{ label: 'Purchases', href: '/admin/purchases', icon: ClipboardList }]
           : []),
         { label: 'Customers', href: '/admin/customers', icon: Users },
+        { label: 'Print Labels', href: '/admin/print-labels', icon: Printer },
       ],
     },
     {
@@ -75,7 +75,6 @@ export function AdminSidebar({ mobileOpen, onCloseMobile }: AdminSidebarProps) {
         { label: 'Delivery Matrix', href: '/admin/settings/delivery', icon: Settings },
         { label: 'Payment Settings', href: '/admin/settings/payments', icon: Settings },
         { label: 'WhatsApp Settings', href: '/admin/settings/whatsapp', icon: Settings },
-        { label: 'Package Label Print', href: '/admin/settings/print-template', icon: Printer },
         { label: 'Admin Users', href: '/admin/admin-user', icon: ShieldCheck },
         { label: 'Audit Log', href: '/admin/audit-log', icon: History },
       ],
