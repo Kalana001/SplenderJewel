@@ -110,8 +110,15 @@ export function StoreFooter({ categories = [] }: FooterProps = {}) {
               </li>
               <li>
                 <Link href="/account/orders" className="hover:text-luxury-gold transition-colors">
-                  Order Tracking
+                  Order History (Account)
                 </Link>
+              </li>
+              <li className="pt-2 text-neutral-400 text-[11px] leading-relaxed border-t border-neutral-900 mt-2">
+                <span>Guest orders: Refer to your order confirmation email / WhatsApp, or </span>
+                <Link href="/contact" className="text-luxury-gold hover:underline">
+                  contact customer support
+                </Link>
+                <span> with your order number.</span>
               </li>
             </ul>
           </div>

@@ -35,11 +35,16 @@ export interface PublicProductsResult {
 export const getPublicProducts = cache(async function getPublicProducts(
   filters?: PublicProductsFilter
 ): Promise<PublicProductsResult> {
+  const rawPage = Number(filters?.page);
+  const page = Number.isInteger(rawPage) && rawPage >= 1 ? rawPage : 1;
+  const rawLimit = Number(filters?.limit);
+  const limit = Number.isInteger(rawLimit) && rawLimit >= 1 ? Math.min(48, rawLimit) : 24;
+
   const emptyResult: PublicProductsResult = {
     products: [],
     total: 0,
-    page: filters?.page || 1,
-    limit: filters?.limit || 12,
+    page,
+    limit,
     totalPages: 0,
   };
 
@@ -47,8 +52,6 @@ export const getPublicProducts = cache(async function getPublicProducts(
     const supabase = createPublicSupabaseClient();
     if (!supabase) return emptyResult;
 
-    const page = Math.max(1, filters?.page || 1);
-    const limit = Math.max(1, Math.min(50, filters?.limit || 12));
     const offset = (page - 1) * limit;
 
     // If filtering by categorySlug, first resolve category ID
@@ -135,17 +138,20 @@ export const getPublicProducts = cache(async function getPublicProducts(
       }
     }
 
-    // Sorting
+    // Sorting with deterministic secondary tie-breaker to prevent pagination shifts
     switch (filters?.sort) {
       case 'name-asc':
-        query = query.order('name', { ascending: true });
+        query = query.order('name', { ascending: true }).order('id', { ascending: true });
         break;
       case 'featured':
-        query = query.order('is_featured', { ascending: false }).order('created_at', { ascending: false });
+        query = query
+          .order('is_featured', { ascending: false })
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false });
         break;
       case 'newest':
       default:
-        query = query.order('created_at', { ascending: false });
+        query = query.order('created_at', { ascending: false }).order('id', { ascending: false });
         break;
     }
 
@@ -553,4 +559,59 @@ export const getPublicCategories = cache(async function getPublicCategories(
   }
 
   return categories;
+});
+
+/**
+ * Retrieves all distinct product materials for public catalog filter options.
+ * Selects distinct materials from active products across the entire catalog
+ * without truncating at arbitrary small row limits, using safe bounded batching.
+ */
+export const getPublicMaterials = cache(async function getPublicMaterials(
+  client?: any
+): Promise<string[]> {
+  const fallbackMaterials = ['Gold', 'Rose Gold', 'Silver', 'Stainless Steel', 'Titanium'];
+  try {
+    const supabase = client !== undefined ? client : createPublicSupabaseClient();
+    if (!supabase) {
+      return fallbackMaterials;
+    }
+
+    const set = new Set<string>();
+    const batchSize = 1000;
+    let from = 0;
+    const maxRows = 5000;
+
+    while (from < maxRows) {
+      let query = (supabase.from('products') as any)
+        .select('material')
+        .eq('is_active', true)
+        .not('material', 'is', null);
+
+      if (typeof query.range === 'function') {
+        query = query.range(from, from + batchSize - 1);
+      }
+
+      const { data, error } = await query;
+
+      if (error || !data || !Array.isArray(data) || data.length === 0) {
+        break;
+      }
+
+      for (const row of data) {
+        if (row.material && typeof row.material === 'string' && row.material.trim()) {
+          set.add(row.material.trim());
+        }
+      }
+
+      if (data.length < batchSize || typeof query.range !== 'function') {
+        break;
+      }
+      from += batchSize;
+    }
+
+    const list = Array.from(set).sort();
+    return list.length > 0 ? list : fallbackMaterials;
+  } catch {
+    return fallbackMaterials;
+  }
 });
