@@ -47,6 +47,7 @@ export function AdminSidebar({ mobileOpen, onCloseMobile }: AdminSidebarProps) {
       group: 'Sales & Catalog',
       items: [
         { label: 'Orders', href: '/admin/orders', icon: ShoppingBag },
+        { label: 'Print Labels', href: '/admin/print-labels', icon: Printer },
         { label: 'Payments & Settlement', href: '/admin/payments', icon: CreditCard },
         { label: 'Products', href: '/admin/products', icon: Package },
         { label: 'Categories', href: '/admin/categories', icon: Layers },
