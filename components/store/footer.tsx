@@ -21,6 +21,9 @@ export function StoreFooter({ categories = [] }: FooterProps = {}) {
   return (
     <footer className="bg-luxury-black text-neutral-300 border-t border-neutral-800 pt-16 pb-12 text-sm">
       <Container size="xl">
+        {/* Accessible intermediate heading for landmark navigation */}
+        <h2 className="sr-only">Footer Navigation and Boutique Details</h2>
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10 mb-12">
           {/* Brand & Mission */}
           <div className="space-y-4">
@@ -48,7 +51,7 @@ export function StoreFooter({ categories = [] }: FooterProps = {}) {
                 href={getWhatsAppLink('Hello Splender Jewel, I have an enquiry.')}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center space-x-2 text-xs text-luxury-gold hover:text-luxury-gold-light transition-colors"
+                className="inline-flex items-center space-x-2 text-xs text-luxury-gold hover:text-luxury-gold-light transition-colors py-1"
               >
                 <MessageCircle className="h-4 w-4 shrink-0" />
                 <span>Chat with us on WhatsApp</span>
@@ -58,7 +61,7 @@ export function StoreFooter({ categories = [] }: FooterProps = {}) {
                   href={getInstagramLink(config)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center space-x-2 text-xs text-luxury-gold hover:text-luxury-gold-light transition-colors"
+                  className="inline-flex items-center space-x-2 text-xs text-luxury-gold hover:text-luxury-gold-light transition-colors py-1"
                 >
                   <InstagramIcon className="h-4 w-4 shrink-0" />
                   <span>Follow @splender_jewel on Instagram</span>
@@ -69,19 +72,19 @@ export function StoreFooter({ categories = [] }: FooterProps = {}) {
 
           {/* Quick Collections */}
           <div className="space-y-3">
-            <h4 className="text-xs uppercase tracking-widest font-semibold text-white">Collections</h4>
-            <ul className="space-y-2 text-xs">
+            <h3 className="text-xs uppercase tracking-widest font-semibold text-white">Collections</h3>
+            <ul className="space-y-1 sm:space-y-1.5 text-xs">
               {activeCategories.length > 0 ? (
                 activeCategories.map((cat) => (
                   <li key={cat.id || cat.slug}>
-                    <Link href={`/category/${cat.slug}`} className="hover:text-luxury-gold transition-colors">
+                    <Link href={`/category/${cat.slug}`} className="block py-1 sm:py-0.5 hover:text-luxury-gold transition-colors">
                       {cat.name}
                     </Link>
                   </li>
                 ))
               ) : (
                 <li>
-                  <Link href="/shop" className="hover:text-luxury-gold transition-colors">
+                  <Link href="/shop" className="block py-1 sm:py-0.5 hover:text-luxury-gold transition-colors">
                     All Jewelry Pieces
                   </Link>
                 </li>
@@ -91,25 +94,25 @@ export function StoreFooter({ categories = [] }: FooterProps = {}) {
 
           {/* Customer Support */}
           <div className="space-y-3">
-            <h4 className="text-xs uppercase tracking-widest font-semibold text-white">Customer Care</h4>
-            <ul className="space-y-2 text-xs">
+            <h3 className="text-xs uppercase tracking-widest font-semibold text-white">Customer Care</h3>
+            <ul className="space-y-1 sm:space-y-1.5 text-xs">
               <li>
-                <Link href="/faq" className="hover:text-luxury-gold transition-colors">
+                <Link href="/faq" className="block py-1 sm:py-0.5 hover:text-luxury-gold transition-colors">
                   Frequently Asked Questions
                 </Link>
               </li>
               <li>
-                <Link href="/returns" className="hover:text-luxury-gold transition-colors">
+                <Link href="/returns" className="block py-1 sm:py-0.5 hover:text-luxury-gold transition-colors">
                   Returns & Exchanges
                 </Link>
               </li>
               <li>
-                <Link href="/contact" className="hover:text-luxury-gold transition-colors">
+                <Link href="/contact" className="block py-1 sm:py-0.5 hover:text-luxury-gold transition-colors">
                   Contact Us
                 </Link>
               </li>
               <li>
-                <Link href="/account/orders" className="hover:text-luxury-gold transition-colors">
+                <Link href="/account/orders" className="block py-1 sm:py-0.5 hover:text-luxury-gold transition-colors">
                   Order History (Account)
                 </Link>
               </li>
@@ -125,20 +128,20 @@ export function StoreFooter({ categories = [] }: FooterProps = {}) {
 
           {/* Legal & Policies */}
           <div className="space-y-3">
-            <h4 className="text-xs uppercase tracking-widest font-semibold text-white">Legal & Policies</h4>
-            <ul className="space-y-2 text-xs">
+            <h3 className="text-xs uppercase tracking-widest font-semibold text-white">Legal & Policies</h3>
+            <ul className="space-y-1 sm:space-y-1.5 text-xs">
               <li>
-                <Link href="/privacy" className="hover:text-luxury-gold transition-colors">
+                <Link href="/privacy" className="block py-1 sm:py-0.5 hover:text-luxury-gold transition-colors">
                   Privacy Policy
                 </Link>
               </li>
               <li>
-                <Link href="/terms" className="hover:text-luxury-gold transition-colors">
+                <Link href="/terms" className="block py-1 sm:py-0.5 hover:text-luxury-gold transition-colors">
                   Terms & Conditions
                 </Link>
               </li>
               <li>
-                <Link href="/about" className="hover:text-luxury-gold transition-colors">
+                <Link href="/about" className="block py-1 sm:py-0.5 hover:text-luxury-gold transition-colors">
                   About Splender Jewel
                 </Link>
               </li>

@@ -15,11 +15,11 @@ const buttonVariants = cva(
         ruby:
           'bg-luxury-ruby text-white hover:bg-luxury-ruby-light font-semibold shadow-sm shadow-luxury-ruby/20 border border-luxury-ruby/40 hover:border-luxury-ruby',
         outline:
-          'border border-neutral-300 dark:border-neutral-700 bg-transparent hover:bg-neutral-100 dark:hover:bg-neutral-800 text-foreground',
+          'border border-neutral-700 bg-transparent hover:bg-neutral-850 text-neutral-200 hover:text-white',
         secondary:
-          'bg-neutral-100 dark:bg-neutral-800 text-foreground hover:bg-neutral-200 dark:hover:bg-neutral-700',
+          'bg-neutral-850 text-neutral-200 hover:bg-neutral-800 hover:text-white',
         ghost:
-          'hover:bg-neutral-100 dark:hover:bg-neutral-800 text-foreground',
+          'hover:bg-neutral-850 text-neutral-300 hover:text-white',
         destructive:
           'bg-red-700 text-white hover:bg-red-800 focus-visible:ring-red-500',
       },

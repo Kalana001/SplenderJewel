@@ -11,7 +11,7 @@ export function Card({
     <div
       className={twMerge(
         clsx(
-          'rounded-sm border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-luxury-surface text-foreground shadow-sm transition-all',
+          'rounded-sm border border-neutral-800 bg-luxury-surface text-foreground shadow-sm transition-all',
           className
         )
       )}
@@ -37,20 +37,25 @@ export function CardHeader({
   );
 }
 
+interface CardTitleProps extends React.HTMLAttributes<HTMLHeadingElement> {
+  as?: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' | 'div';
+}
+
 export function CardTitle({
+  as: Component = 'h2',
   className,
   children,
   ...props
-}: React.HTMLAttributes<HTMLHeadingElement>) {
+}: CardTitleProps) {
   return (
-    <h3
+    <Component
       className={twMerge(
-        clsx('font-serif text-lg font-semibold leading-none tracking-wide', className))
-      }
+        clsx('font-serif text-lg font-semibold leading-none tracking-wide text-white', className)
+      )}
       {...props}
     >
       {children}
-    </h3>
+    </Component>
   );
 }
 
@@ -61,7 +66,7 @@ export function CardDescription({
 }: React.HTMLAttributes<HTMLParagraphElement>) {
   return (
     <p
-      className={twMerge(clsx('text-sm text-neutral-500 dark:text-neutral-400', className))}
+      className={twMerge(clsx('text-sm text-neutral-400', className))}
       {...props}
     >
       {children}

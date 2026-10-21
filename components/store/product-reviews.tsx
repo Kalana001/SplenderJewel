@@ -69,7 +69,7 @@ export function ProductReviewsSection({ reviewsData, productName }: ProductRevie
                           className={`h-4 w-4 ${
                             star <= Math.round(averageRating)
                               ? 'fill-amber-400 text-amber-400'
-                              : 'text-neutral-600'
+                              : 'text-neutral-500/80 stroke-[1.5]'
                           }`}
                         />
                       ))}
@@ -127,7 +127,7 @@ export function ProductReviewsSection({ reviewsData, productName }: ProductRevie
                             className={`h-3.5 w-3.5 ${
                               star <= rev.rating
                                 ? 'fill-amber-400 text-amber-400'
-                                : 'text-neutral-600'
+                                : 'text-neutral-500/80 stroke-[1.5]'
                             }`}
                           />
                         ))}

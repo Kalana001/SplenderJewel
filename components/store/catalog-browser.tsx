@@ -276,20 +276,24 @@ export function CatalogBrowser({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-luxury-card p-4 rounded-md border border-luxury-border">
         {/* Search Input with Form Submission & URL Synchronization */}
         <form onSubmit={handleSearchSubmit} className="relative flex-grow max-w-md">
+          <label htmlFor="catalog-search-input" className="sr-only">
+            Search jewelry catalog
+          </label>
           <Search className="h-4 w-4 absolute left-3 top-3 text-neutral-400 pointer-events-none" />
           <Input
+            id="catalog-search-input"
             type="search"
             placeholder="Search jewellery by name or collection..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-9 pr-9 bg-luxury-surface border-neutral-700 text-white text-sm"
+            className="pl-9 pr-10 bg-luxury-surface border-neutral-700 text-white text-sm"
             aria-label="Search jewelry catalog"
           />
           {searchTerm && (
             <button
               type="button"
               onClick={handleClearSearch}
-              className="absolute right-3 top-2.5 p-0.5 text-neutral-400 hover:text-white transition-colors"
+              className="absolute right-0 top-0 h-full w-10 min-h-[44px] min-w-[40px] flex items-center justify-center text-neutral-400 hover:text-white transition-colors"
               aria-label="Clear search query"
             >
               <X className="h-4 w-4" />
@@ -324,6 +328,9 @@ export function CatalogBrowser({
           </div>
         </div>
       </div>
+
+      {/* Accessible intermediate heading to preserve sequential hierarchy */}
+      <h2 className="sr-only">Catalog Navigation and Filters</h2>
 
       {/* Main Content Layout: Sidebar + Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
@@ -468,8 +475,15 @@ export function CatalogBrowser({
 
             {/* Custom Min / Max Price Inputs */}
             <form onSubmit={handleApplyCustomPrice} className="pt-2 space-y-2">
+              <label htmlFor="desktop-min-price" className="sr-only">
+                Minimum price in LKR
+              </label>
+              <label htmlFor="desktop-max-price" className="sr-only">
+                Maximum price in LKR
+              </label>
               <div className="flex items-center gap-1.5 text-xs">
                 <input
+                  id="desktop-min-price"
                   type="number"
                   min="0"
                   step="100"
@@ -481,6 +495,7 @@ export function CatalogBrowser({
                 />
                 <span className="text-neutral-500">–</span>
                 <input
+                  id="desktop-max-price"
                   type="number"
                   min="0"
                   step="100"
@@ -495,7 +510,7 @@ export function CatalogBrowser({
                 type="submit"
                 variant="outline"
                 size="sm"
-                className="w-full text-[11px] h-7 border-neutral-700 hover:border-luxury-gold hover:text-luxury-gold"
+                className="w-full text-[11px] h-8 min-h-[36px] border-neutral-700 hover:border-luxury-gold hover:text-luxury-gold"
               >
                 Apply Price Filter
               </Button>
@@ -803,8 +818,15 @@ export function CatalogBrowser({
 
                 {/* Custom Min / Max Price Inputs */}
                 <form onSubmit={handleApplyCustomPrice} className="pt-2 space-y-2">
+                  <label htmlFor="mobile-min-price" className="sr-only">
+                    Minimum price in LKR
+                  </label>
+                  <label htmlFor="mobile-max-price" className="sr-only">
+                    Maximum price in LKR
+                  </label>
                   <div className="flex items-center gap-1.5 text-xs">
                     <input
+                      id="mobile-min-price"
                       type="number"
                       min="0"
                       step="100"
@@ -816,6 +838,7 @@ export function CatalogBrowser({
                     />
                     <span className="text-neutral-500">–</span>
                     <input
+                      id="mobile-max-price"
                       type="number"
                       min="0"
                       step="100"
@@ -830,7 +853,7 @@ export function CatalogBrowser({
                     type="submit"
                     variant="outline"
                     size="sm"
-                    className="w-full text-[11px] h-7 border-neutral-700 hover:border-luxury-gold hover:text-luxury-gold"
+                    className="w-full text-[11px] h-9 min-h-[40px] border-neutral-700 hover:border-luxury-gold hover:text-luxury-gold"
                   >
                     Apply Price Filter
                   </Button>

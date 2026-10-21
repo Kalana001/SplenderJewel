@@ -350,7 +350,7 @@ export function ProductImageGallery({
               e.stopPropagation();
               handlePrev();
             }}
-            className="absolute left-3 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-black/60 hover:bg-black/90 text-white hover:text-luxury-gold border border-white/10 hover:border-luxury-gold/50 flex items-center justify-center transition-all opacity-80 md:opacity-0 md:group-hover:opacity-100 backdrop-blur-sm z-10"
+            className="absolute left-3 top-1/2 -translate-y-1/2 h-11 w-11 min-h-[44px] min-w-[44px] rounded-full bg-black/60 hover:bg-black/90 text-white hover:text-luxury-gold border border-white/10 hover:border-luxury-gold/50 flex items-center justify-center transition-all opacity-80 md:opacity-0 md:group-hover:opacity-100 backdrop-blur-sm z-10"
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
@@ -365,7 +365,7 @@ export function ProductImageGallery({
               e.stopPropagation();
               handleNext();
             }}
-            className="absolute right-3 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-black/60 hover:bg-black/90 text-white hover:text-luxury-gold border border-white/10 hover:border-luxury-gold/50 flex items-center justify-center transition-all opacity-80 md:opacity-0 md:group-hover:opacity-100 backdrop-blur-sm z-10"
+            className="absolute right-3 top-1/2 -translate-y-1/2 h-11 w-11 min-h-[44px] min-w-[44px] rounded-full bg-black/60 hover:bg-black/90 text-white hover:text-luxury-gold border border-white/10 hover:border-luxury-gold/50 flex items-center justify-center transition-all opacity-80 md:opacity-0 md:group-hover:opacity-100 backdrop-blur-sm z-10"
           >
             <ChevronRight className="h-5 w-5" />
           </button>
@@ -386,9 +386,9 @@ export function ProductImageGallery({
               e.stopPropagation();
               setLightboxOpen(true);
             }}
-            className="h-7 w-7 rounded-sm bg-black/75 hover:bg-black text-neutral-300 hover:text-luxury-gold border border-neutral-800 flex items-center justify-center transition-colors backdrop-blur-sm shadow-md"
+            className="h-10 w-10 min-h-[44px] min-w-[44px] rounded-sm bg-black/75 hover:bg-black text-neutral-300 hover:text-luxury-gold border border-neutral-800 flex items-center justify-center transition-colors backdrop-blur-sm shadow-md"
           >
-            <Maximize2 className="h-3.5 w-3.5" />
+            <Maximize2 className="h-4 w-4" />
           </button>
         </div>
       </div>

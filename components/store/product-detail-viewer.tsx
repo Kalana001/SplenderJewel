@@ -493,7 +493,7 @@ export function ProductDetailViewer({
                           className={`h-3.5 w-3.5 ${
                             star <= Math.round(reviewsSummary.averageRating)
                               ? 'fill-amber-400 text-amber-400'
-                              : 'text-neutral-600'
+                              : 'text-neutral-500/80 stroke-[1.5]'
                           }`}
                         />
                       ))}
