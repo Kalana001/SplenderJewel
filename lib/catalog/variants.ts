@@ -79,6 +79,17 @@ export async function createVariantAction(input: CreateVariantInput): Promise<Va
 
     const purchaseCost = typeof input.purchaseCost === 'number' && input.purchaseCost >= 0 ? input.purchaseCost : 0;
     const stockQuantity = typeof input.stockQuantity === 'number' && input.stockQuantity >= 0 ? input.stockQuantity : 0;
+
+    // Business rule: NO PURCHASE = NO ITEM TO SELL
+    // New variations must strictly be created with 0 initial stock.
+    // Sellable units must be transferred from a verified purchase batch via transferPurchaseStockAction.
+    if (stockQuantity > 0) {
+      return {
+        success: false,
+        error: `NO PURCHASE = NO ITEM TO SELL: New variant "${sku}" cannot be created with initial positive stock (${stockQuantity}) without purchase provenance. New variants must be created with 0 stock and restocked from a verified purchase batch.`,
+      };
+    }
+
     const lowStockThreshold = typeof input.lowStockThreshold === 'number' && input.lowStockThreshold >= 0 ? input.lowStockThreshold : 5;
     const stockStatus = computeStockStatus(stockQuantity, lowStockThreshold);
     const attributes = input.attributes || {};
@@ -323,6 +334,31 @@ export async function adjustVariantStockAction(
         success: false,
         error: `Invalid manual adjustment reason: "${input.reason}". Only manual inventory adjustment reasons ('stock_added', 'manual_adjustment', 'correction') may be submitted directly by administrators.`,
       };
+    }
+
+    // Business rule: NO PURCHASE = NO ITEM TO SELL
+    // Positive manual stock adjustments are strictly prohibited across all reasons.
+    // Restocking must occur through verified purchase batch transfers (transfer_purchase_stock_to_variant).
+    // Arbitrary string keys or browser-supplied notes cannot authorize unbacked positive stock increases.
+    if (input.quantityChange > 0) {
+      return {
+        success: false,
+        error:
+          'NO PURCHASE = NO ITEM TO SELL: Positive inventory adjustments are prohibited. All sellable inventory must originate from a verified purchase batch. Please use "Restock from Purchase" to link received batch inventory. Manual positive stock additions are disabled.',
+      };
+    }
+
+    // Negative adjustments (shrinkage, damaged jewelry, inspection defects, loss)
+    // require explanatory notes for audit integrity.
+    if (input.quantityChange < 0) {
+      const notes = input.notes?.trim() || '';
+      if (notes.length < 3) {
+        return {
+          success: false,
+          error:
+            'Negative inventory adjustments (damage, shrinkage, defect, loss) require audit notes explaining the stock reduction.',
+        };
+      }
     }
 
     // Call atomic stored procedure with row-level locking (FOR UPDATE)

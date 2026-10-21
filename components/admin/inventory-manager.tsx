@@ -17,11 +17,13 @@ import {
   ArrowRight,
   History,
   RotateCcw,
+  Truck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { formatCurrency } from '@/lib/config/store';
+import { PurchaseRestockModal } from '@/components/admin/purchases/purchase-restock-modal.tsx';
 import {
   searchAdminInventoryProductsAction,
   adjustVariantStockAction,
@@ -67,6 +69,7 @@ export function InventoryManager({
 
   // Adjustment Modal State
   const [modalOpen, setModalOpen] = useState(false);
+  const [isRestockModalOpen, setIsRestockModalOpen] = useState(false);
   const [confirmationStep, setConfirmationStep] = useState(false);
   const [adjustmentInput, setAdjustmentInput] = useState<string>('');
   const [adjustmentError, setAdjustmentError] = useState<string | null>(null);
@@ -687,15 +690,26 @@ export function InventoryManager({
                       </p>
                     </div>
 
-                    <Button
-                      variant="gold"
-                      size="sm"
-                      onClick={handleOpenAdjustment}
-                      className="shrink-0 flex items-center gap-2"
-                    >
-                      <Edit2 className="h-3.5 w-3.5" />
-                      <span>Adjust Stock</span>
-                    </Button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Button
+                        variant="gold"
+                        size="sm"
+                        onClick={() => setIsRestockModalOpen(true)}
+                        className="flex items-center gap-1.5"
+                      >
+                        <Truck className="h-3.5 w-3.5" />
+                        <span>Restock from Purchase</span>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleOpenAdjustment}
+                        className="flex items-center gap-1.5 border-neutral-700 text-neutral-300 hover:text-white"
+                      >
+                        <Edit2 className="h-3.5 w-3.5" />
+                        <span>Manual Adjust</span>
+                      </Button>
+                    </div>
                   </div>
 
                   {/* Stock Metrics Grid */}
@@ -988,6 +1002,44 @@ export function InventoryManager({
             )}
           </div>
         </div>
+      )}
+
+      {/* Purchase-Based Restock Modal */}
+      {selectedVariant && (
+        <PurchaseRestockModal
+          isOpen={isRestockModalOpen}
+          onClose={() => setIsRestockModalOpen(false)}
+          targetVariant={{
+            id: selectedVariant.id,
+            title: selectedVariant.title,
+            sku: selectedVariant.sku,
+            stockQuantity: selectedVariant.stockQuantity,
+            purchaseCost: selectedVariant.purchaseCost,
+            productTitle: selectedProduct?.name || 'Product',
+          }}
+          onSuccess={(newStock, blendedCost) => {
+            setProducts((prev) =>
+              prev.map((p) => {
+                if (p.id !== selectedProductId) return p;
+                return {
+                  ...p,
+                  variants: p.variants.map((v) => {
+                    if (v.id !== selectedVariant.id) return v;
+                    return {
+                      ...v,
+                      stockQuantity: newStock,
+                      purchaseCost: blendedCost,
+                    };
+                  }),
+                };
+              })
+            );
+            fetchMovements(selectedVariant.id);
+            setSuccessMessage(
+              `Successfully restocked ${selectedVariant.title} (${selectedVariant.sku}) from purchase batch. New stock: ${newStock}, Blended WAC: Rs. ${blendedCost.toFixed(2)}.`
+            );
+          }}
+        />
       )}
     </div>
   );

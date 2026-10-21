@@ -29,6 +29,14 @@ import { createProductAction, generateProductSlug } from '@/lib/catalog/products
 import { deleteUnattachedProductImageAction } from '@/lib/catalog/storage';
 import { uploadProductImageFile } from '@/lib/catalog/upload-client';
 import type { Category } from '@/types/product';
+import { 
+  PurchaseSourceSelector, 
+  type SelectedPurchaseLink 
+} from '@/components/admin/purchases/purchase-source-selector.tsx';
+import { 
+  linkTransferredStockToNewProductAction,
+  createProductFromPurchaseBatchAction
+} from '@/lib/purchases/admin-actions.ts';
 
 export interface FormVariantItem {
   id: string;
@@ -41,6 +49,7 @@ export interface FormVariantItem {
   lowStockThreshold: string;
   attributes: Array<{ key: string; value: string }>;
   imageUrls: string[];
+  batchVariationId?: string;
 }
 
 interface ProductFormProps {
@@ -92,8 +101,59 @@ export function ProductForm({ categories }: ProductFormProps) {
   const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [uploadingImage, setUploadingImage] = useState(false);
 
+  // Purchase Source Provenance state
+  const [purchaseLink, setPurchaseLink] = useState<SelectedPurchaseLink | null>(null);
+
   // Feedback alerts
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  async function handleSelectPurchaseSource(link: SelectedPurchaseLink) {
+    setPurchaseLink(link);
+    setName(link.itemName);
+    const generated = await generateProductSlug(link.itemName);
+    setSlug(generated);
+
+    // Try matching category
+    if (link.itemCategoryHint && categories.length > 0) {
+      const matched = categories.find(
+        (c) => c.name.toLowerCase() === link.itemCategoryHint?.toLowerCase()
+      );
+      if (matched) {
+        setCategoryId(matched.id);
+      }
+    }
+
+    // Default newly linked products to unpublished draft per Stage 3 publication rules
+    setIsActive(false);
+
+    // Map variations 1:1 with explicit landed costs and chosen stock quantities
+    const prefix = link.itemName.replace(/[^A-Za-z0-9]/g, '').substring(0, 4).toUpperCase() || 'JWL';
+    const mappedVariants: FormVariantItem[] = link.variations.map((v, idx) => {
+      const cleanTitle = v.variationTitle.replace(/[^A-Za-z0-9]/g, '').toUpperCase() || `V${idx + 1}`;
+      const skuSuffix = cleanTitle.length > 6 ? cleanTitle.substring(0, 6) : cleanTitle;
+      return {
+        id: `var-${v.batchVariationId}`,
+        title: v.variationTitle,
+        sku: `SJ-${prefix}-${skuSuffix}`,
+        price: '', // selling price must be manually entered by admin
+        discountPrice: '',
+        purchaseCost: v.unitLandedCostLkr.toFixed(2),
+        stockQuantity: v.allocatedQuantity.toString(),
+        lowStockThreshold: '5',
+        attributes: Object.entries(v.attributes).map(([key, value]) => ({ key, value })),
+        imageUrls: [],
+        batchVariationId: v.batchVariationId,
+      };
+    });
+
+    if (mappedVariants.length > 0) {
+      setVariants(mappedVariants);
+    }
+  }
+
+  function handleClearPurchaseSource() {
+    setPurchaseLink(null);
+  }
 
   async function handleNameChange(val: string) {
     setName(val);
@@ -395,7 +455,94 @@ export function ProductForm({ categories }: ProductFormProps) {
       }
     }
 
+    // Stage 3 Publication controls: Sellable products require valid pricing and verified provenance
+    if (isActive) {
+      for (const v of variants) {
+        const numPrice = Number(v.price);
+        if (isNaN(numPrice) || numPrice <= 0) {
+          setErrorMessage(`To publish product live, variation "${v.sku}" must have a valid selling price greater than 0.`);
+          return;
+        }
+        if (Number(v.stockQuantity) > 0 && !purchaseLink && !v.batchVariationId) {
+          setErrorMessage(
+            `New sellable products require verified purchase provenance before newly created stock becomes sellable. Please select a purchase source or save as an unpublished draft.`
+          );
+          return;
+        }
+      }
+    }
+
     startTransition(async () => {
+      // ── PATH A: Purchase-Linked Product Creation (Single Atomic Operation) ──
+      if (purchaseLink) {
+        const transferVariants = variants
+          .filter((v) => v.batchVariationId && Number(v.stockQuantity) > 0)
+          .map((v) => ({
+            title: v.title.trim() || 'Default',
+            sku: v.sku.trim().toUpperCase(),
+            price: Number(v.price),
+            discountPrice: v.discountPrice.trim() ? Number(v.discountPrice) : null,
+            lowStockThreshold: Number(v.lowStockThreshold) || 5,
+            attributes: v.attributes.reduce((acc, curr) => {
+              if (curr.key.trim()) acc[curr.key.trim()] = curr.value.trim();
+              return acc;
+            }, {} as Record<string, string>),
+            batchVariationId: v.batchVariationId!,
+            transferQuantity: Number(v.stockQuantity),
+            isActive: true,
+          }));
+
+        if (transferVariants.length === 0) {
+          setErrorMessage('At least one variation must have an allocated quantity greater than zero.');
+          return;
+        }
+
+        const idempotencyKey = `create-prod-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        const result = await createProductFromPurchaseBatchAction({
+          product: {
+            name: name.trim(),
+            slug: slug.trim(),
+            productCode: productCode.trim() || variants[0].sku.trim(),
+            shortDescription: shortDescription.trim() || null,
+            description: description.trim() || null,
+            material: material.trim() || null,
+            gender,
+            categoryId: categoryId || null,
+            isFeatured,
+            isNewArrival,
+            isBestSeller,
+            metaTitle: metaTitle.trim() || null,
+            metaDescription: metaDescription.trim() || null,
+          },
+          variants: transferVariants,
+          images: imageUrls.map((url, idx) => ({
+            url,
+            display_order: idx,
+            is_primary: idx === 0,
+          })),
+          idempotencyKey,
+        });
+
+        if (!result.success || !result.productId) {
+          setErrorMessage(result.error || 'Failed to create product from purchase batch.');
+          return;
+        }
+
+        router.push(`/admin/products/${result.productId}`);
+        return;
+      }
+
+      // ── PATH B: Ordinary Unlinked Product Creation (Zero-Stock Draft) ──
+      // Business rule: NO PURCHASE = NO ITEM TO SELL. Unlinked products must have initial stock of 0.
+      for (const v of variants) {
+        if (Number(v.stockQuantity) > 0) {
+          setErrorMessage(
+            `NO PURCHASE = NO ITEM TO SELL: New products cannot be created with positive stock without purchase batch provenance. Please set stock to 0 or select a purchase source.`
+          );
+          return;
+        }
+      }
+
       const primaryVariant = variants[0];
       const result = await createProductAction({
         name: name.trim(),
@@ -409,7 +556,7 @@ export function ProductForm({ categories }: ProductFormProps) {
         isFeatured,
         isNewArrival,
         isBestSeller,
-        isActive,
+        isActive: false, // unlinked products always default to unpublished draft
         metaTitle: metaTitle.trim() || null,
         metaDescription: metaDescription.trim() || null,
         variants: variants.map((v) => ({
@@ -417,8 +564,8 @@ export function ProductForm({ categories }: ProductFormProps) {
           sku: v.sku.trim().toUpperCase(),
           price: Number(v.price),
           discountPrice: v.discountPrice.trim() ? Number(v.discountPrice) : null,
-          purchaseCost: v.purchaseCost.trim() ? Number(v.purchaseCost) : 0,
-          stockQuantity: Number(v.stockQuantity) || 0,
+          purchaseCost: 0,
+          stockQuantity: 0, // strictly 0 stock
           lowStockThreshold: Number(v.lowStockThreshold) || 5,
           attributes: v.attributes.reduce((acc, curr) => {
             if (curr.key.trim()) acc[curr.key.trim()] = curr.value.trim();
@@ -431,8 +578,8 @@ export function ProductForm({ categories }: ProductFormProps) {
           sku: primaryVariant.sku.trim().toUpperCase(),
           price: Number(primaryVariant.price),
           discountPrice: primaryVariant.discountPrice.trim() ? Number(primaryVariant.discountPrice) : null,
-          purchaseCost: primaryVariant.purchaseCost.trim() ? Number(primaryVariant.purchaseCost) : 0,
-          stockQuantity: Number(primaryVariant.stockQuantity) || 0,
+          purchaseCost: 0,
+          stockQuantity: 0,
           lowStockThreshold: Number(primaryVariant.lowStockThreshold) || 5,
         },
         imageUrls,
@@ -469,7 +616,7 @@ export function ProductForm({ categories }: ProductFormProps) {
           </Link>
           <Button variant="gold" type="submit" disabled={isPending}>
             {isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            Save & Publish
+            {isActive ? 'Save & Publish' : 'Save as Draft'}
           </Button>
         </div>
       </div>
@@ -484,6 +631,13 @@ export function ProductForm({ categories }: ProductFormProps) {
           <button type="button" onClick={() => setErrorMessage(null)} className="text-rose-400 hover:text-white">✕</button>
         </div>
       )}
+
+      {/* Purchase Provenance Source Selector */}
+      <PurchaseSourceSelector
+        onSelectPurchaseItem={handleSelectPurchaseSource}
+        currentLink={purchaseLink}
+        onClearLink={handleClearPurchaseSource}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column (2 Cols): Core Product Details */}

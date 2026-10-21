@@ -438,6 +438,16 @@ export async function createProductAction(
         return { success: false, error: `Discount price for variant "${sku}" must be less than regular price.` };
       }
 
+      // Business rule: NO PURCHASE = NO ITEM TO SELL
+      // Ordinary products without purchase linkage must strictly have initial stock of 0.
+      // Positive stock must be created via atomic purchase batch product creation.
+      if (typeof v.stockQuantity === 'number' && v.stockQuantity > 0) {
+        return {
+          success: false,
+          error: `NO PURCHASE = NO ITEM TO SELL: Variant "${sku}" cannot be created with initial positive stock (${v.stockQuantity}) without purchase provenance. Standard products must be created with 0 initial stock. To create products with sellable stock, use purchase-linked product creation.`,
+        };
+      }
+
       normalizedVariants.push({
         ...v,
         title,
@@ -671,7 +681,26 @@ export async function updateProductAction(
     if (input.isFeatured !== undefined) updatePayload.is_featured = Boolean(input.isFeatured);
     if (input.isNewArrival !== undefined) updatePayload.is_new_arrival = Boolean(input.isNewArrival);
     if (input.isBestSeller !== undefined) updatePayload.is_best_seller = Boolean(input.isBestSeller);
-    if (input.isActive !== undefined) updatePayload.is_active = Boolean(input.isActive);
+    if (input.isActive !== undefined) {
+      if (input.isActive === true) {
+        // Publication guard: all variants must have price > 0
+        const { data: variants } = await (adminClient.from('product_variants') as any)
+          .select('id, sku, price, stock_quantity')
+          .eq('product_id', productId);
+
+        if (variants && variants.length > 0) {
+          for (const v of variants) {
+            if (Number(v.price) <= 0) {
+              return {
+                success: false,
+                error: `Cannot publish product: Variant "${v.sku}" must have a valid selling price greater than 0.`,
+              };
+            }
+          }
+        }
+      }
+      updatePayload.is_active = Boolean(input.isActive);
+    }
     if (input.metaTitle !== undefined) updatePayload.meta_title = input.metaTitle?.trim() || null;
     if (input.metaDescription !== undefined) updatePayload.meta_description = input.metaDescription?.trim() || null;
 

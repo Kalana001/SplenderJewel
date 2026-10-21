@@ -152,7 +152,7 @@ export function ProductEditManager({ initialProduct, categories }: ProductEditMa
       price: product.variants[0]?.price?.toString() || '4500',
       discountPrice: '',
       purchaseCost: product.variants[0]?.purchaseCost?.toString() || '0',
-      stockQuantity: '10',
+      stockQuantity: '0',
       lowStockThreshold: '5',
       isActive: true,
     });

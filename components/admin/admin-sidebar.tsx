@@ -22,6 +22,7 @@ import {
   Store,
   Printer,
   CreditCard,
+  ClipboardList,
   X,
 } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -50,6 +51,9 @@ export function AdminSidebar({ mobileOpen, onCloseMobile }: AdminSidebarProps) {
         { label: 'Products', href: '/admin/products', icon: Package },
         { label: 'Categories', href: '/admin/categories', icon: Layers },
         { label: 'Inventory', href: '/admin/inventory', icon: Archive },
+        ...(process.env.NEXT_PUBLIC_ENABLE_PURCHASE_MANAGEMENT === 'true'
+          ? [{ label: 'Purchases', href: '/admin/purchases', icon: ClipboardList }]
+          : []),
         { label: 'Customers', href: '/admin/customers', icon: Users },
       ],
     },
