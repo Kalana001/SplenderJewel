@@ -834,12 +834,12 @@ export function ProductDetailViewer({
               </p>
             </div>
             <div className="flex flex-col gap-2 pt-2">
-              <Link href={`/login?redirect=/products/${product.slug}`}>
+              <Link href={`/login?redirectTo=/products/${product.slug}`}>
                 <Button variant="gold" size="md" className="w-full font-semibold text-xs uppercase tracking-wider">
                   Sign In to Save
                 </Button>
               </Link>
-              <Link href={`/register?redirect=/products/${product.slug}`}>
+              <Link href={`/register?redirectTo=/products/${product.slug}`}>
                 <Button variant="outline" size="md" className="w-full text-xs">
                   Create New Account
                 </Button>

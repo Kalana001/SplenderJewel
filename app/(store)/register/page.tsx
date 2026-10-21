@@ -14,7 +14,7 @@ import { Eye, EyeOff, Lock, Mail, User, Phone, AlertCircle, CheckCircle2, ArrowR
 function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectTo = searchParams.get('redirectTo');
+  const redirectTo = searchParams.get('redirectTo') || searchParams.get('redirect');
   const safeTargetUrl = getSafeRedirectUrl(redirectTo, '/account');
   const cart = useOptionalCart();
 

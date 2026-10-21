@@ -363,8 +363,12 @@ export async function getCheckoutSavedAddressesAction(): Promise<{
   try {
     user = await getCurrentUser();
   } catch {
-    // Genuine unauthenticated / corrupted session fallback
-    return { isAuthenticated: false, addresses: [] };
+    // Distinguish authentication service failures: do NOT silently classify as a normal guest
+    return {
+      isAuthenticated: false,
+      addresses: [],
+      error: 'Authentication service is temporarily unavailable.',
+    };
   }
 
   // Genuine unauthenticated guest

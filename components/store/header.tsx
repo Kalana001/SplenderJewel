@@ -185,7 +185,7 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
               className="p-1.5 sm:p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
               aria-label="Wishlist"
             >
-              <Heart className="h-4.5 w-4.5 sm:h-5 sm:w-5" />
+              <Heart className="h-5 w-5" />
             </Link>
 
             <Link
@@ -193,7 +193,7 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
               className="p-1.5 sm:p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
               aria-label="Account"
             >
-              <User className="h-4.5 w-4.5 sm:h-5 sm:w-5" />
+              <User className="h-5 w-5" />
             </Link>
 
             <Link
@@ -201,9 +201,9 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
               className="relative p-1.5 sm:p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
               aria-label="Shopping Cart"
             >
-              <ShoppingBag className="h-4.5 w-4.5 sm:h-5 sm:w-5" />
+              <ShoppingBag className="h-5 w-5" />
               {isLoaded && totalCount > 0 && (
-                <span className="absolute 0 top-0.5 right-0.5 sm:top-1 sm:right-1 flex h-4 w-4 items-center justify-center rounded-full bg-luxury-gold text-[10px] font-bold text-luxury-black shadow-sm">
+                <span className="absolute top-0.5 right-0.5 sm:top-1 sm:right-1 flex h-4 w-4 items-center justify-center rounded-full bg-luxury-gold text-[10px] font-bold text-luxury-black shadow-sm">
                   {totalCount > 99 ? '99+' : totalCount}
                 </span>
               )}

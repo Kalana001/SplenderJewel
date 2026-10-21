@@ -209,6 +209,9 @@ function CheckoutContent() {
         } else {
           setSavedAddresses([]);
           setSelectedAddressId('new');
+          if (res.error) {
+            setAddressLoadError(res.error);
+          }
         }
       } catch {
         if (!isMounted || currentSeq !== addressSeqRef.current) return;
@@ -735,8 +738,8 @@ function CheckoutContent() {
                   )}
                 </h2>
 
-                {/* Saved Address Selector for Authenticated Customers */}
-                {isAuthenticatedCustomer && addressLoadError && savedAddresses.length === 0 && (
+                {/* Fallback notice if address loading or auth service failed */}
+                {addressLoadError && savedAddresses.length === 0 && (
                   <div className="p-3 rounded-lg bg-neutral-900/80 border border-neutral-800 text-neutral-300 text-xs flex items-center gap-2 mb-4">
                     <AlertCircle className="h-4 w-4 text-luxury-gold shrink-0" />
                     <span>Could not load saved addresses. You may enter your delivery address manually below.</span>
