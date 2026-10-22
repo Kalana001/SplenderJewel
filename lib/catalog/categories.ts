@@ -1,11 +1,15 @@
 'use server';
 
 import 'server-only';
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { createPublicSupabaseClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireAdminAuth } from '@/lib/auth/server';
 import { DEFAULT_STORE_CATEGORIES } from '@/lib/config/store';
+import {
+  getPublicCategories as getPublicCategoriesQuery,
+  PUBLIC_CATEGORIES_CACHE_TAG,
+} from './public';
 import type { Category } from '@/types/product';
 
 export interface CategoryWithProductCount extends Category {
@@ -95,8 +99,6 @@ export async function getAdminCategories(): Promise<{
   }
 }
 
-import { getPublicCategories as getPublicCategoriesQuery } from './public';
-
 /**
  * Retrieves all active categories for public storefront navigation and filters.
  * Proxies to canonical cached implementation in lib/catalog/public.ts.
@@ -154,6 +156,7 @@ export async function createCategoryAction(input: CategoryFormInput): Promise<Ca
       return { success: false, error: insertError?.message || 'Failed to create category.' };
     }
 
+    revalidateTag(PUBLIC_CATEGORIES_CACHE_TAG);
     revalidatePath('/admin/categories');
     revalidatePath('/', 'layout');
     revalidatePath('/');
@@ -237,6 +240,7 @@ export async function updateCategoryAction(
       return { success: false, error: updateError?.message || 'Failed to update category.' };
     }
 
+    revalidateTag(PUBLIC_CATEGORIES_CACHE_TAG);
     revalidatePath('/admin/categories');
     revalidatePath(`/category/${slug}`);
     revalidatePath('/', 'layout');
@@ -283,6 +287,7 @@ export async function toggleCategoryActiveAction(
       return { success: false, error: error.message };
     }
 
+    revalidateTag(PUBLIC_CATEGORIES_CACHE_TAG);
     revalidatePath('/admin/categories');
     revalidatePath('/', 'layout');
     revalidatePath('/');
@@ -329,6 +334,7 @@ export async function deleteCategoryAction(id: string): Promise<{ success: boole
       return { success: false, error: deleteError.message };
     }
 
+    revalidateTag(PUBLIC_CATEGORIES_CACHE_TAG);
     revalidatePath('/admin/categories');
     revalidatePath('/', 'layout');
     revalidatePath('/');

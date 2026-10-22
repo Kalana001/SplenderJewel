@@ -1,9 +1,13 @@
 import 'server-only';
 import { cache } from 'react';
+import { unstable_cache } from 'next/cache';
 import { createPublicSupabaseClient } from '@/lib/supabase/server';
 import type { ProductPublic, ProductVariantPublic, ProductImage, Category } from '@/types/product';
 import type { StockStatus } from '@/lib/config/constants';
 import { DEFAULT_DEV_STORE_CONFIG, DEFAULT_STORE_CATEGORIES } from '@/lib/config/store';
+
+export const PUBLIC_CATEGORIES_CACHE_TAG = 'public-categories';
+export const PUBLIC_CATEGORIES_REVALIDATE_SECONDS = 300;
 
 export interface PublicProductsFilter {
   categorySlug?: string;
@@ -35,7 +39,8 @@ export interface PublicProductsResult {
  * - NEVER retrieves or exposes `purchase_cost`
  */
 export const getPublicProducts = cache(async function getPublicProducts(
-  filters?: PublicProductsFilter
+  filters?: PublicProductsFilter,
+  client?: any
 ): Promise<PublicProductsResult> {
   const rawPage = Number(filters?.page);
   const page = Number.isInteger(rawPage) && rawPage >= 1 ? rawPage : 1;
@@ -78,24 +83,26 @@ export const getPublicProducts = cache(async function getPublicProducts(
   };
 
   try {
-    const supabase = createPublicSupabaseClient();
+    const supabase = client !== undefined ? client : createPublicSupabaseClient();
     if (!supabase) return emptyResult;
 
     const offset = (page - 1) * limit;
 
-    // If filtering by categorySlug, first resolve category ID
+    // If filtering by categorySlug, resolve active category ID from cached public categories
+    // to eliminate a sequential database waterfall before querying products.
     let categoryId: string | null = null;
     if (filters?.categorySlug?.trim()) {
-      const { data: catData } = await (supabase.from('categories') as any)
-        .select('id')
-        .eq('slug', filters.categorySlug.trim())
-        .eq('is_active', true)
-        .maybeSingle();
+      const normalizedCategorySlug = filters.categorySlug.trim().toLowerCase();
+      const activeCategories =
+        client !== undefined ? await getPublicCategories(client) : await getPublicCategories();
+      const matchedCategory = activeCategories.find(
+        (c) => (c.slug || '').trim().toLowerCase() === normalizedCategorySlug && c.isActive !== false
+      );
 
-      if (!catData) {
+      if (!matchedCategory || !matchedCategory.id) {
         return emptyResult; // Category not found or inactive
       }
-      categoryId = catData.id;
+      categoryId = matchedCategory.id;
     }
 
     let query = (supabase.from('products') as any)
@@ -641,42 +648,73 @@ export const getPublicCategoryBySlug = cache(async function getPublicCategoryByS
   const normalizedSlug = slug?.trim().toLowerCase();
   if (!normalizedSlug) return null;
 
-  const supabase = client !== undefined ? client : createPublicSupabaseClient();
+  // Custom-client path preserved for deterministic unit test injection
+  if (client !== undefined) {
+    if (!client) {
+      const fallback = DEFAULT_STORE_CATEGORIES.find((c) => c.slug === normalizedSlug);
+      return fallback || null;
+    }
+
+    const { data, error } = await (client.from('categories') as any)
+      .select('id, name, slug, description, image_url, display_order, is_active, created_at')
+      .eq('slug', normalizedSlug)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (error) {
+      console.error(`[getPublicCategoryBySlug] Database error querying category "${normalizedSlug}":`, error.message);
+      const dbError = new Error(`Database error querying category: ${error.message}`);
+      (dbError as any).code = error.code;
+      (dbError as any).details = error.details;
+      throw dbError;
+    }
+
+    if (data) {
+      return {
+        id: data.id,
+        name: data.name,
+        slug: data.slug,
+        description: data.description,
+        imageUrl: data.image_url,
+        displayOrder: data.display_order,
+        isActive: data.is_active,
+        createdAt: data.created_at,
+      };
+    }
+
+    const fallback = DEFAULT_STORE_CATEGORIES.find((c) => c.slug === normalizedSlug);
+    return fallback || null;
+  }
+
+  const supabase = createPublicSupabaseClient();
   if (!supabase) {
     // Supabase client is genuinely unconfigured (e.g. offline development without credentials)
     const fallback = DEFAULT_STORE_CATEGORIES.find((c) => c.slug === normalizedSlug);
     return fallback || null;
   }
 
-  // Execute query on Supabase. Any unexpected exception during execution will propagate.
-  const { data, error } = await (supabase.from('categories') as any)
-    .select('id, name, slug, description, image_url, display_order, is_active, created_at')
-    .eq('slug', normalizedSlug)
-    .eq('is_active', true)
-    .maybeSingle();
-
-  if (error) {
-    console.error(`[getPublicCategoryBySlug] Database error querying category "${normalizedSlug}":`, error.message);
-    const dbError = new Error(`Database error querying category: ${error.message}`);
-    (dbError as any).code = error.code;
-    (dbError as any).details = error.details;
+  // Reuse the shared public category cache rather than issuing a redundant category query
+  let activeCategories: Category[];
+  try {
+    activeCategories = await getPublicCategories();
+  } catch (err: any) {
+    const rawMessage = err instanceof Error ? err.message : String(err);
+    const cleanMessage = rawMessage.replace(/^Database error querying categories:\s*/, '');
+    console.error(`[getPublicCategoryBySlug] Database error querying category "${normalizedSlug}":`, cleanMessage);
+    const dbError = new Error(`Database error querying category: ${cleanMessage}`);
+    (dbError as any).code = err?.code;
+    (dbError as any).details = err?.details;
     throw dbError;
   }
 
-  if (data) {
-    return {
-      id: data.id,
-      name: data.name,
-      slug: data.slug,
-      description: data.description,
-      imageUrl: data.image_url,
-      displayOrder: data.display_order,
-      isActive: data.is_active,
-      createdAt: data.created_at,
-    };
+  const matched = activeCategories.find(
+    (c) => (c.slug || '').trim().toLowerCase() === normalizedSlug && c.isActive !== false
+  );
+  if (matched) {
+    return matched;
   }
 
-  // The query succeeded without error, confirming no category exists in the database.
+  // The query succeeded without error, confirming no active category exists in the database.
   // Check if it matches one of the recognized curated fallback categories:
   const fallback = DEFAULT_STORE_CATEGORIES.find((c) => c.slug === normalizedSlug);
   return fallback || null;
@@ -705,26 +743,10 @@ export const getStoreWhatsAppNumber = cache(async function getStoreWhatsAppNumbe
 });
 
 /**
- * Retrieves all active categories for public storefront navigation, homepage display, and filters.
- *
- * Rules:
- * 1. Queries public.categories with is_active = true.
- * 2. Primary sort: display_order ASC.
- * 3. Stable secondary sort: name ASC.
- * 4. Deduplicates records by normalized slug to prevent duplicate navigation entries.
- * 5. Handles empty category lists and database errors correctly.
- * 6. Only uses development fallbacks (DEFAULT_STORE_CATEGORIES) when the database is genuinely unconfigured
- *    (e.g., createPublicSupabaseClient() returns null in offline dev environment).
+ * Internal helper that queries active public categories from a provided Supabase client.
+ * Preserves ordering (display_order ASC, name ASC), slug deduplication, and error propagation.
  */
-export const getPublicCategories = cache(async function getPublicCategories(
-  client?: any
-): Promise<Category[]> {
-  const supabase = client !== undefined ? client : createPublicSupabaseClient();
-  if (!supabase) {
-    // Database is genuinely unconfigured (e.g. offline dev without credentials)
-    return DEFAULT_STORE_CATEGORIES;
-  }
-
+async function queryPublicCategoriesFromClient(supabase: any): Promise<Category[]> {
   const { data, error } = await (supabase.from('categories') as any)
     .select('id, name, slug, description, image_url, display_order, is_active, created_at')
     .eq('is_active', true)
@@ -747,6 +769,7 @@ export const getPublicCategories = cache(async function getPublicCategories(
   const categories: Category[] = [];
 
   for (const row of data) {
+    if (row.is_active === false) continue;
     const slug = (row.slug || '').trim().toLowerCase();
     if (!slug || seenSlugs.has(slug)) continue;
     seenSlugs.add(slug);
@@ -764,6 +787,62 @@ export const getPublicCategories = cache(async function getPublicCategories(
   }
 
   return categories;
+}
+
+/**
+ * Next.js 15 cross-request Data Cache wrapper for public categories.
+ * Tagged with `public-categories` and bounded to 300 seconds revalidation.
+ * Throws on unconfigured client or DB error so fallback/error states are never persisted in the shared cache.
+ */
+const getCachedPublicCategoriesNext = unstable_cache(
+  async (): Promise<Category[]> => {
+    const supabase = createPublicSupabaseClient();
+    if (!supabase) {
+      throw new Error('SUPABASE_UNCONFIGURED');
+    }
+    return queryPublicCategoriesFromClient(supabase);
+  },
+  ['public-categories'],
+  {
+    revalidate: PUBLIC_CATEGORIES_REVALIDATE_SECONDS,
+    tags: [PUBLIC_CATEGORIES_CACHE_TAG],
+  }
+);
+
+/**
+ * Retrieves all active categories for public storefront navigation, homepage display, and filters.
+ *
+ * Rules:
+ * 1. Queries public.categories with is_active = true.
+ * 2. Primary sort: display_order ASC.
+ * 3. Stable secondary sort: name ASC.
+ * 4. Deduplicates records by normalized slug to prevent duplicate navigation entries.
+ * 5. Handles empty category lists and database errors correctly.
+ * 6. Only uses development fallbacks (DEFAULT_STORE_CATEGORIES) when the database is genuinely unconfigured
+ *    (e.g., createPublicSupabaseClient() returns null in offline dev environment) without persisting
+ *    that fallback in the shared Data Cache.
+ * 7. Combines React.cache (request-scoped deduplication) with Next.js unstable_cache (`public-categories` tag,
+ *    300s TTL) for serverless-safe cross-request caching.
+ */
+export const getPublicCategories = cache(async function getPublicCategories(
+  client?: any
+): Promise<Category[]> {
+  // Custom-client path for deterministic unit testing
+  if (client !== undefined) {
+    if (!client) {
+      return DEFAULT_STORE_CATEGORIES;
+    }
+    return queryPublicCategoriesFromClient(client);
+  }
+
+  const supabase = createPublicSupabaseClient();
+  if (!supabase) {
+    // Database is genuinely unconfigured (e.g. offline dev without credentials).
+    // Return fallback directly without persisting in the shared Data Cache.
+    return DEFAULT_STORE_CATEGORIES;
+  }
+
+  return getCachedPublicCategoriesNext();
 });
 
 /**

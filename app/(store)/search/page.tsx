@@ -1,7 +1,6 @@
 import React, { Suspense } from 'react';
 import type { Metadata } from 'next';
-import { getPublicProducts, getPublicMaterials } from '@/lib/catalog/public';
-import { getPublicCategories } from '@/lib/catalog/categories';
+import { getPublicProducts, getPublicMaterials, getPublicCategories } from '@/lib/catalog/public';
 import { CatalogBrowser } from '@/components/store/catalog-browser';
 import { Container } from '@/components/ui/container';
 
