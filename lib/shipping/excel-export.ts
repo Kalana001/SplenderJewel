@@ -209,22 +209,51 @@ export async function generateCodExcel(
 
 /**
  * High-level export dispatcher that validates orders and generates the appropriate workbook.
+ * Supports administrator postal city overrides for orders where the customer left City/Town optional during checkout.
+ * Does NOT mutate original order objects or persistent database records.
  */
 export async function exportShippingOrdersToExcel(
   orders: ShippingOrderRecord[],
-  paymentMethod: 'bank_transfer' | 'cod'
+  paymentMethod: 'bank_transfer' | 'cod',
+  postalCityOverrides?: Record<string, string>
 ): Promise<ExcelExportResult> {
   try {
     // 1. Filter orders strictly for the specified payment method
-    const targetOrders = orders.filter((o) => o.payment_method === paymentMethod);
-    if (targetOrders.length === 0) {
+    const matchingOrders = orders.filter((o) => o.payment_method === paymentMethod);
+    if (matchingOrders.length === 0) {
       return {
         success: false,
         error: `No eligible orders found for payment method: ${paymentMethod === 'bank_transfer' ? 'Bank Transfer' : 'Cash on Delivery'}.`,
       };
     }
 
-    // 2. Validate mandatory shipping info completeness
+    // 2. Prepare export representations incorporating administrator postal city overrides
+    // CRITICAL: Does NOT mutate original order objects or database records!
+    const targetOrders: ShippingOrderRecord[] = matchingOrders.map((order) => {
+      const explicitCity =
+        (order.city && order.city.trim()) ||
+        (postalCityOverrides && postalCityOverrides[order.id]?.trim()) ||
+        (postalCityOverrides && postalCityOverrides[order.order_number]?.trim()) ||
+        null;
+
+      if (explicitCity === order.city) {
+        return order;
+      }
+
+      return {
+        ...order,
+        city: explicitCity,
+        validation: validateOrderForShipping({
+          customer_name: order.customer_name,
+          address_line: order.address_line,
+          city: explicitCity,
+          district: order.district,
+          phone1: order.phone1,
+        }),
+      };
+    });
+
+    // 3. Validate mandatory shipping info completeness
     const validation = validateOrdersForExport(targetOrders);
     if (!validation.valid) {
       const errorDetails = validation.errors

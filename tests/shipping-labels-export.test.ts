@@ -408,3 +408,98 @@ describe('8. Non-Mutation & Security Guarantees', () => {
     assert.strictEqual(JSON.stringify(mockBtOrder1), originalJson, 'Order object must remain untouched');
   });
 });
+
+describe('9. Postal City Admin Overrides & Checkout Optionality Guarantees', () => {
+  const mockOrderWithoutCity: ShippingOrderRecord = {
+    id: 'ord-no-city-001',
+    order_number: 'SJ-NOCITY-001',
+    customer_name: 'Sunil Perera',
+    address_line: 'No 15, Station Road',
+    city: null, // Customer left optional during checkout!
+    district: 'Gampaha',
+    phone1: '0712345678',
+    phone2: null,
+    total_amount: 8500,
+    payment_method: 'bank_transfer',
+    payment_status: 'verified',
+    order_status: 'confirmed',
+    confirmation_date: '2026-10-21T06:00:00.000Z',
+    created_at: '2026-10-21T05:30:00.000Z',
+    validation: {
+      isValid: false,
+      missingFields: ['City'],
+      hasMissingCity: true,
+      hasMissingAddress: false,
+      hasMissingPhone: false,
+      hasMissingName: false,
+    },
+  };
+
+  const mockCodOrderWithoutCity: ShippingOrderRecord = {
+    ...mockOrderWithoutCity,
+    id: 'ord-cod-no-city-002',
+    order_number: 'SJ-NOCITY-002',
+    payment_method: 'cod',
+    total_amount: 14200,
+  };
+
+  test('blocks export when order has no city and no admin override is supplied', async () => {
+    const res = await exportShippingOrdersToExcel([mockOrderWithoutCity], 'bank_transfer');
+    assert.strictEqual(res.success, false);
+    assert.ok(res.error?.includes('missing mandatory shipping details') || res.error?.includes('City'));
+  });
+
+  test('successfully exports Bank Transfer order when admin supplies postalCityOverrides by id', async () => {
+    const res = await exportShippingOrdersToExcel([mockOrderWithoutCity], 'bank_transfer', {
+      [mockOrderWithoutCity.id]: 'Negombo',
+    });
+    assert.strictEqual(res.success, true);
+    assert.ok(res.base64);
+
+    // Verify cell E2 in generated workbook contains the admin supplied postal city
+    const wb = new ExcelJS.Workbook();
+    const buf = Buffer.from(res.base64!, 'base64');
+    await wb.xlsx.load(bufferToArrayBuffer(buf));
+    const ws = wb.getWorksheet('Sheet2')!;
+    assert.strictEqual(ws.getRow(2).getCell(5).value, 'Negombo', 'Column E (City1) must contain override city');
+  });
+
+  test('successfully exports COD order when admin supplies postalCityOverrides by order_number', async () => {
+    const res = await exportShippingOrdersToExcel([mockCodOrderWithoutCity], 'cod', {
+      [mockCodOrderWithoutCity.order_number]: 'Ja-Ela',
+    });
+    assert.strictEqual(res.success, true);
+    assert.ok(res.base64);
+
+    const wb = new ExcelJS.Workbook();
+    const buf = Buffer.from(res.base64!, 'base64');
+    await wb.xlsx.load(bufferToArrayBuffer(buf));
+    const ws = wb.getWorksheet('Customer Given')!;
+    assert.strictEqual(ws.getRow(2).getCell(5).value, 'Ja-Ela', 'Column E (Postal City) must contain override city');
+  });
+
+  test('admin override does NOT mutate original order object (remains city: null)', async () => {
+    const copy = { ...mockOrderWithoutCity };
+    assert.strictEqual(copy.city, null);
+
+    const res = await exportShippingOrdersToExcel([copy], 'bank_transfer', {
+      [copy.id]: 'Wattala',
+    });
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(copy.city, null, 'Original order city must remain null without in-place mutation');
+  });
+
+  test('existing order city is preserved if already non-empty', async () => {
+    // mockBtOrder1 has city: 'Battaramulla'. Passing an override should not replace an already non-empty city.
+    const res = await exportShippingOrdersToExcel([mockBtOrder1], 'bank_transfer', {
+      [mockBtOrder1.id]: 'Different City',
+    });
+    assert.strictEqual(res.success, true);
+
+    const wb = new ExcelJS.Workbook();
+    const buf = Buffer.from(res.base64!, 'base64');
+    await wb.xlsx.load(bufferToArrayBuffer(buf));
+    const ws = wb.getWorksheet('Sheet2')!;
+    assert.strictEqual(ws.getRow(2).getCell(5).value, 'Battaramulla', 'Original valid city must be preserved');
+  });
+});

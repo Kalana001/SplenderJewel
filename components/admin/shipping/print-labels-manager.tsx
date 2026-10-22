@@ -18,6 +18,8 @@ import {
   CreditCard,
   Banknote,
   Info,
+  MapPin,
+  Edit2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,6 +35,7 @@ import {
 } from '@/lib/shipping/utils';
 import { exportPostalExcelAction } from '@/lib/shipping/admin-actions';
 import { PrintPreviewModal } from './print-preview-modal';
+import { PostalCityDialog } from './postal-city-dialog';
 
 interface PrintLabelsManagerProps {
   initialOrders: ShippingOrderRecord[];
@@ -56,7 +59,26 @@ export function PrintLabelsManager({ initialOrders }: PrintLabelsManagerProps) {
   const [isExportingCOD, setIsExportingCOD] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
+  // In-memory postal city overrides for export (does NOT mutate DB records)
+  const [postalCityOverrides, setPostalCityOverrides] = useState<Record<string, string>>({});
+  const [cityDialogOpen, setCityDialogOpen] = useState(false);
+  const [dialogOrders, setDialogOrders] = useState<ShippingOrderRecord[]>([]);
+  const [dialogActionTitle, setDialogActionTitle] = useState('Save & Continue Export');
+  const [pendingAction, setPendingAction] = useState<((overrides: Record<string, string>) => void) | null>(null);
+
   const todaySLT = useMemo(() => getSriLankaDateString(), []);
+
+  // Helper to determine effective city for an order
+  const getEffectiveCity = React.useCallback(
+    (order: ShippingOrderRecord, overrides: Record<string, string> = postalCityOverrides): string | null => {
+      return (
+        (order.city && order.city.trim()) ||
+        (overrides[order.id] && overrides[order.id].trim()) ||
+        null
+      );
+    },
+    [postalCityOverrides]
+  );
 
   // Filter orders
   const filteredOrders = useMemo(() => {
@@ -88,7 +110,7 @@ export function PrintLabelsManager({ initialOrders }: PrintLabelsManagerProps) {
         const matchesName = order.customer_name.toLowerCase().includes(q);
         const matchesPhone1 = order.phone1.toLowerCase().includes(q);
         const matchesPhone2 = (order.phone2 || '').toLowerCase().includes(q);
-        const matchesCity = (order.city || '').toLowerCase().includes(q);
+        const matchesCity = (getEffectiveCity(order) || '').toLowerCase().includes(q);
         const matchesDistrict = order.district.toLowerCase().includes(q);
 
         if (!matchesNum && !matchesName && !matchesPhone1 && !matchesPhone2 && !matchesCity && !matchesDistrict) {
@@ -98,7 +120,7 @@ export function PrintLabelsManager({ initialOrders }: PrintLabelsManagerProps) {
 
       return true;
     });
-  }, [initialOrders, todayOnly, startDate, endDate, paymentMethodFilter, searchQuery, todaySLT]);
+  }, [initialOrders, todayOnly, startDate, endDate, paymentMethodFilter, searchQuery, todaySLT, getEffectiveCity]);
 
   // Selected orders list
   const selectedOrders = useMemo(() => {
@@ -115,8 +137,8 @@ export function PrintLabelsManager({ initialOrders }: PrintLabelsManagerProps) {
   }, [selectedOrders]);
 
   const selectedIncompleteCount = useMemo(() => {
-    return selectedOrders.filter((o) => !o.validation.isValid).length;
-  }, [selectedOrders]);
+    return selectedOrders.filter((o) => !getEffectiveCity(o)).length;
+  }, [selectedOrders, getEffectiveCity]);
 
   // Selection handlers
   function handleToggleOrder(id: string) {
@@ -152,6 +174,29 @@ export function PrintLabelsManager({ initialOrders }: PrintLabelsManagerProps) {
     setSearchQuery('');
   }
 
+  // Open Postal City Dialog
+  function openCityDialog(
+    orders: ShippingOrderRecord[],
+    onConfirmCallback?: (overrides: Record<string, string>) => void,
+    actionTitle = 'Save & Continue Export'
+  ) {
+    setDialogOrders(orders);
+    setDialogActionTitle(actionTitle);
+    setPendingAction(() => onConfirmCallback || null);
+    setCityDialogOpen(true);
+  }
+
+  function handleCityDialogConfirm(newOverrides: Record<string, string>) {
+    const updated = { ...postalCityOverrides, ...newOverrides };
+    setPostalCityOverrides(updated);
+    setCityDialogOpen(false);
+    if (pendingAction) {
+      const act = pendingAction;
+      setPendingAction(null);
+      act(updated);
+    }
+  }
+
   // Helper to trigger browser download from base64 string
   function triggerBase64Download(base64: string, filename: string) {
     const binary = atob(base64);
@@ -172,17 +217,24 @@ export function PrintLabelsManager({ initialOrders }: PrintLabelsManagerProps) {
     URL.revokeObjectURL(url);
   }
 
-  // Export handlers
-  async function handleExportBankTransfer() {
-    const btIds = selectedOrders.filter((o) => o.payment_method === 'bank_transfer').map((o) => o.id);
-    if (btIds.length === 0) return;
+  // Export handlers with automatic postal city prompt if any selected order lacks a city
+  async function executeExportBT(currentOverrides: Record<string, string>) {
+    const btOrders = selectedOrders.filter((o) => o.payment_method === 'bank_transfer');
+    if (btOrders.length === 0) return;
+
+    const missing = btOrders.filter((o) => !getEffectiveCity(o, currentOverrides));
+    if (missing.length > 0) {
+      openCityDialog(missing, (updated) => executeExportBT(updated), 'Save & Export Bank Transfer');
+      return;
+    }
 
     setIsExportingBT(true);
     setExportError(null);
     try {
       const res = await exportPostalExcelAction({
-        orderIds: btIds,
+        orderIds: btOrders.map((o) => o.id),
         paymentMethod: 'bank_transfer',
+        postalCityOverrides: currentOverrides,
       });
 
       if (res.success && res.base64 && res.filename) {
@@ -197,16 +249,27 @@ export function PrintLabelsManager({ initialOrders }: PrintLabelsManagerProps) {
     }
   }
 
-  async function handleExportCOD() {
-    const codIds = selectedOrders.filter((o) => o.payment_method === 'cod').map((o) => o.id);
-    if (codIds.length === 0) return;
+  function handleExportBankTransfer() {
+    executeExportBT(postalCityOverrides);
+  }
+
+  async function executeExportCOD(currentOverrides: Record<string, string>) {
+    const codOrders = selectedOrders.filter((o) => o.payment_method === 'cod');
+    if (codOrders.length === 0) return;
+
+    const missing = codOrders.filter((o) => !getEffectiveCity(o, currentOverrides));
+    if (missing.length > 0) {
+      openCityDialog(missing, (updated) => executeExportCOD(updated), 'Save & Export COD');
+      return;
+    }
 
     setIsExportingCOD(true);
     setExportError(null);
     try {
       const res = await exportPostalExcelAction({
-        orderIds: codIds,
+        orderIds: codOrders.map((o) => o.id),
         paymentMethod: 'cod',
+        postalCityOverrides: currentOverrides,
       });
 
       if (res.success && res.base64 && res.filename) {
@@ -221,16 +284,29 @@ export function PrintLabelsManager({ initialOrders }: PrintLabelsManagerProps) {
     }
   }
 
-  async function handleExportBoth() {
+  function handleExportCOD() {
+    executeExportCOD(postalCityOverrides);
+  }
+
+  async function executeExportBoth(currentOverrides: Record<string, string>) {
+    const missing = selectedOrders.filter((o) => !getEffectiveCity(o, currentOverrides));
+    if (missing.length > 0) {
+      openCityDialog(missing, (updated) => executeExportBoth(updated), 'Save & Download Both');
+      return;
+    }
+
     if (selectedBtCount > 0) {
-      await handleExportBankTransfer();
+      await executeExportBT(currentOverrides);
     }
     if (selectedCodCount > 0) {
-      // Small timeout so browser can initiate both downloads
       setTimeout(() => {
-        handleExportCOD();
+        executeExportCOD(currentOverrides);
       }, 600);
     }
+  }
+
+  function handleExportBoth() {
+    executeExportBoth(postalCityOverrides);
   }
 
   const allVisibleSelected =
@@ -578,13 +654,29 @@ export function PrintLabelsManager({ initialOrders }: PrintLabelsManagerProps) {
 
       {/* ── Warning on Incomplete Selected Records ── */}
       {selectedIncompleteCount > 0 && !exportError && (
-        <div className="bg-amber-950/30 border border-amber-800/40 text-amber-200 px-4 py-3 rounded-xl text-xs flex items-center justify-between gap-3 print:hidden">
+        <div className="bg-amber-950/30 border border-amber-800/40 text-amber-200 px-4 py-3 rounded-xl text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 print:hidden">
           <div className="flex items-center gap-2.5">
             <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
             <span>
-              <strong>Warning:</strong> {selectedIncompleteCount} selected order{selectedIncompleteCount === 1 ? ' is' : 's are'} missing mandatory city information. Physical labels will print district fallback, but postal Excel export requires verified cities.
+              <strong>Note:</strong> {selectedIncompleteCount} selected order{selectedIncompleteCount === 1 ? ' is' : 's are'} missing city information. You can supply postal cities for this export batch without modifying customer orders.
             </span>
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              openCityDialog(
+                selectedOrders.filter((o) => !getEffectiveCity(o)),
+                undefined,
+                'Save Postal Cities'
+              )
+            }
+            className="text-xs h-7 shrink-0 border-amber-700/60 bg-amber-950/40 text-amber-300 hover:bg-amber-900/60 hover:text-amber-100"
+          >
+            <MapPin className="h-3 w-3 mr-1" />
+            Set Postal Cities ({selectedIncompleteCount})
+          </Button>
         </div>
       )}
 
@@ -676,9 +768,36 @@ export function PrintLabelsManager({ initialOrders }: PrintLabelsManagerProps) {
                         <div className="flex items-center gap-1.5">
                           {order.city ? (
                             <span className="font-medium text-neutral-200">{order.city}</span>
+                          ) : postalCityOverrides[order.id] ? (
+                            <span className="inline-flex items-center gap-1 text-luxury-gold bg-luxury-gold/10 border border-luxury-gold/30 px-1.5 py-0.5 rounded text-[10px] font-mono">
+                              <MapPin className="h-2.5 w-2.5 shrink-0" />
+                              <span>{postalCityOverrides[order.id]}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openCityDialog([order], undefined, 'Update Postal City');
+                                }}
+                                className="text-neutral-400 hover:text-white ml-0.5"
+                                title="Edit postal city override"
+                              >
+                                <Edit2 className="h-2.5 w-2.5" />
+                              </button>
+                            </span>
                           ) : (
-                            <span className="text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded text-[10px] font-mono">
-                              Missing City
+                            <span className="inline-flex items-center gap-1 text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded text-[10px] font-mono">
+                              <span>Missing City</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openCityDialog([order], undefined, 'Set Postal City');
+                                }}
+                                className="text-luxury-gold hover:underline font-sans ml-0.5"
+                                title="Supply postal hub city for export"
+                              >
+                                Set
+                              </button>
                             </span>
                           )}
                           <span className="text-neutral-500">/</span>
@@ -752,7 +871,29 @@ export function PrintLabelsManager({ initialOrders }: PrintLabelsManagerProps) {
           setPreviewModalOpen(false);
           setSinglePreviewOrder(null);
         }}
-        selectedOrders={singlePreviewOrder ? [singlePreviewOrder] : selectedOrders}
+        selectedOrders={(singlePreviewOrder ? [singlePreviewOrder] : selectedOrders).map((o) => {
+          const overrideCity = postalCityOverrides[o.id];
+          if (overrideCity && !o.city) {
+            return {
+              ...o,
+              city: overrideCity,
+            };
+          }
+          return o;
+        })}
+      />
+
+      {/* ── Postal City Dialog (Sri Lanka Post hub city resolution) ── */}
+      <PostalCityDialog
+        isOpen={cityDialogOpen}
+        onClose={() => {
+          setCityDialogOpen(false);
+          setPendingAction(null);
+        }}
+        orders={dialogOrders}
+        initialOverrides={postalCityOverrides}
+        onConfirm={handleCityDialogConfirm}
+        actionTitle={dialogActionTitle}
       />
     </div>
   );

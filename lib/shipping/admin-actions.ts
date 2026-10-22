@@ -238,10 +238,11 @@ export async function getEligibleShippingOrdersAction(
 export async function exportPostalExcelAction(params: {
   orderIds: string[];
   paymentMethod: 'bank_transfer' | 'cod';
+  postalCityOverrides?: Record<string, string>;
 }): Promise<ExcelExportResult> {
   await requireAdminAuth();
 
-  const { orderIds, paymentMethod } = params;
+  const { orderIds, paymentMethod, postalCityOverrides } = params;
   if (!Array.isArray(orderIds) || orderIds.length === 0) {
     return {
       success: false,
@@ -338,7 +339,7 @@ export async function exportPostalExcelAction(params: {
       };
     });
 
-    return await exportShippingOrdersToExcel(mappedOrders, paymentMethod);
+    return await exportShippingOrdersToExcel(mappedOrders, paymentMethod, postalCityOverrides);
   } catch (err: any) {
     console.error('[ShippingAdminActions] Export failed:', err);
     return {
