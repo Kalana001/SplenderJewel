@@ -180,7 +180,6 @@ export function PrintPreviewModal({
               <ShippingLabelPair
                 order={order}
                 dimensions={dimensions}
-                showOrderRefBadge={true}
               />
             </div>
           ))}

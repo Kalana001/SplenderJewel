@@ -241,6 +241,90 @@ describe('4. Shipping Label Layout & Details Specifications', () => {
     assert.ok(DEFAULT_LABEL_DIMENSIONS.paddingMm > 0);
     assert.ok(DEFAULT_LABEL_DIMENSIONS.borderWidthPx > 0);
   });
+
+  test('ShippingLabelPair enforces uniform 13px typography, bold names/phones, regular addresses, no separator lines, and no order numbers', () => {
+    const labelComponentPath = path.join(
+      process.cwd(),
+      'components/admin/shipping/shipping-label-pair.tsx'
+    );
+    const code = fs.readFileSync(labelComponentPath, 'utf8');
+
+    // 1. Order number completely removed from printed shipping labels
+    assert.ok(
+      !code.includes('order.order_number') && !code.includes('showOrderRefBadge'),
+      'ShippingLabelPair must not display order_number or showOrderRefBadge anywhere inside either label'
+    );
+
+    // 2. Separator lines and bottom footer layout removed
+    assert.ok(
+      !code.includes('border-t') && !code.includes('justify-between'),
+      'Horizontal separator lines (border-t) and bottom-pinned footer layout (justify-between) must be completely removed'
+    );
+
+    // 3. Outer rectangular borders and top-aligned left-aligned flow preserved
+    assert.ok(
+      code.includes('border-solid border-black') &&
+        code.includes('justify-start') &&
+        code.includes('text-left') &&
+        code.includes('space-y-1'),
+      'Outer rectangular borders, top-aligned flow (justify-start), left alignment (text-left), and consistent spacing (space-y-1) must be preserved'
+    );
+
+    // 4. Font size uniformity: Name, Address, and Contact Number all use text-[13px]
+    assert.ok(
+      !code.includes('text-[11px]') &&
+        !code.includes('text-[12px]') &&
+        !code.includes('text-[9px]'),
+      'Smaller font sizes (11px, 12px, 9px) must not be used for address, phone, or badge text'
+    );
+
+    const font13Matches = code.match(/text-\[13px\]/g) || [];
+    assert.strictEqual(
+      font13Matches.length,
+      8,
+      'All 8 text lines across Sender (Name, Address1, Address2, Phone) and Recipient (Name, Address, City/District, Phone) must use text-[13px]'
+    );
+
+    // 5. Font weights: Names bold, Addresses regular (font-normal), Contact numbers bold
+    assert.ok(
+      code.includes('text-[13px] font-bold leading-snug uppercase text-black break-words') &&
+        code.includes('text-[13px] font-bold leading-snug text-black break-words') &&
+        code.includes('text-[13px] font-normal leading-snug text-black break-words'),
+      'Names and contact numbers must be font-bold and address lines must be font-normal'
+    );
+
+    // 6. Strict ordering: Name -> Address -> Contact Number in both labels
+    const senderNameIdx = code.indexOf('{SPLENDER_JEWEL_SENDER.name}');
+    const senderAddr1Idx = code.indexOf('{SPLENDER_JEWEL_SENDER.addressLine1}');
+    const senderAddr2Idx = code.indexOf('{SPLENDER_JEWEL_SENDER.addressLine2}');
+    const senderPhoneIdx = code.indexOf('{SPLENDER_JEWEL_SENDER.phone}');
+    assert.ok(
+      senderNameIdx < senderAddr1Idx &&
+        senderAddr1Idx < senderAddr2Idx &&
+        senderAddr2Idx < senderPhoneIdx,
+      'Sender label must strictly follow Name -> AddressLine1 -> AddressLine2 -> Phone order'
+    );
+
+    const recNameIdx = code.indexOf('{order.customer_name}');
+    const recAddrIdx = code.indexOf('{order.address_line}');
+    const recCityIdx = code.indexOf('{cityDistrictDisplay}');
+    const recPhoneIdx = code.indexOf('{contactDisplay}');
+    assert.ok(
+      recNameIdx < recAddrIdx &&
+        recAddrIdx < recCityIdx &&
+        recCityIdx < recPhoneIdx,
+      'Recipient label must strictly follow Name -> Address -> City/District -> Contact Number order'
+    );
+
+    // 7. A4 print compatibility and long-address wrapping preserved
+    assert.ok(
+      code.includes('print:flex-row') &&
+        code.includes('break-inside-avoid') &&
+        code.includes('page-break-inside-avoid') &&
+        code.includes('break-words'),
+      'A4 horizontal side-by-side layout, page-break avoidance, and long-text wrapping (break-words) must be preserved'
+    );
+  });
 });
 
 describe('5. Extensible Field Mappings Architecture', () => {
