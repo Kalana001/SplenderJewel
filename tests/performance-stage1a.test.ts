@@ -363,20 +363,19 @@ test('Task 3.1: Order History and Order Details loading skeletons exist, match d
   }
 });
 
-test('Task 3.2: AccountLayout and AccountNav provide active indicators, immediate pending feedback, and avoid aggressive private prefetching', () => {
+test('Task 3.2: AccountLayout preserves clean layout without duplicate horizontal navigation bar and preserves existing account links', () => {
   const layoutSource = readSource('app/(store)/account/layout.tsx');
-  const navSource = readSource('components/store/account-nav.tsx');
+  const dashboardSource = readSource('app/(store)/account/page.tsx');
 
-  // AccountLayout renders AccountNav and preserves robots noindex/nofollow
-  assert.match(layoutSource, /<AccountNav\s*\/>/);
+  // AccountLayout must not render an additional horizontal AccountNav bar
+  assert.doesNotMatch(layoutSource, /AccountNav/, 'AccountLayout must not render duplicate AccountNav bar');
+  assert.equal(existsSync(join(WORKSPACE_DIR, 'components/store/account-nav.tsx')), false, 'Unused account-nav.tsx must be removed');
   assert.match(layoutSource, /index:\s*false/);
   assert.match(layoutSource, /follow:\s*false/);
 
-  // AccountNav includes key customer routes, aria-current, pending state, and prefetch={false}
-  assert.match(navSource, /aria-label="Customer account navigation"/);
-  assert.match(navSource, /href:\s*['"]\/account\/orders['"]/);
-  assert.match(navSource, /href:\s*['"]\/account\/wishlist['"]/);
-  assert.match(navSource, /aria-current=\{isCurrent \? 'page' : undefined\}/);
-  assert.match(navSource, /aria-busy=\{isPending \? 'true' : undefined\}/);
-  assert.match(navSource, /prefetch=\{false\}/, 'Must disable aggressive background prefetching of private account pages');
+  // Existing Account Dashboard cards and links remain accessible
+  assert.match(dashboardSource, /href="\/account\/orders"/);
+  assert.match(dashboardSource, /href="\/account\/profile"/);
+  assert.match(dashboardSource, /href="\/account\/addresses"/);
+  assert.match(dashboardSource, /href="\/account\/wishlist"/);
 });
