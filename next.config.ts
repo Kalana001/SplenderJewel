@@ -4,7 +4,6 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   outputFileTracingIncludes: {
     '/admin/print-labels': ['./lib/shipping/templates/**/*'],
-    '/**': ['./lib/shipping/templates/**/*'],
   },
   images: {
     remotePatterns: [
