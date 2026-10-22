@@ -196,7 +196,7 @@ test('Wishlist Count Action: lib/wishlist/actions.ts exports getCustomerWishlist
   // Uses head: true / exact count query for peak performance
   assert.match(
     content,
-    /select\(['"]id['"],\s*\{\s*count:\s*['"]exact['"],\s*head:\s*true\s*\}\)/,
+    /select\(['"]id(?:,\s*wishlists!inner\(user_id\))?['"],\s*\{\s*count:\s*['"]exact['"],\s*head:\s*true\s*\}\)/,
     'Wishlist count query must use { count: "exact", head: true }'
   );
 });

@@ -2,6 +2,7 @@ import React from 'react';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { getCurrentUser } from '@/lib/auth/server';
 import { Container } from '@/components/ui/container';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -45,9 +46,7 @@ export default async function AccountOrderDetailPage({ params }: AccountOrderDet
     redirect('/login?error=Database%20service%20unavailable');
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
 
   if (!user) {
     redirect(`/login?redirectTo=/account/orders/${orderId}`);

@@ -2,12 +2,43 @@ import React from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { getCurrentUser } from '@/lib/auth/server';
+import {
+  CUSTOMER_ORDERS_PAGE_SIZE,
+  parseOrdersPageParam,
+  calculateOrdersPaginationRange,
+  buildOrdersPaginationMeta,
+} from '@/lib/orders/customer-orders';
 import { Container } from '@/components/ui/container';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatCurrency } from '@/lib/config/store';
-import { Package, ArrowLeft, Clock, Truck, Gem, ArrowRight } from 'lucide-react';
+import { Package, ArrowLeft, Clock, Truck, Gem, ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react';
+
+interface AccountOrdersPageProps {
+  searchParams?: Promise<{ page?: string | string[] }>;
+}
+
+const CUSTOMER_ORDERS_SELECT = `
+  id,
+  order_number,
+  user_id,
+  customer_name,
+  phone1,
+  address_line,
+  district,
+  city,
+  delivery_fee,
+  subtotal,
+  discount_amount,
+  total_amount,
+  payment_method,
+  payment_status,
+  order_status,
+  tracking_number,
+  created_at
+`;
 
 export const metadata = {
   title: 'Order History',
@@ -34,43 +65,46 @@ function getStatusBadgeVariant(status: string) {
   }
 }
 
-export default async function AccountOrdersPage() {
+export default async function AccountOrdersPage({ searchParams }: AccountOrdersPageProps) {
   const supabase = await createServerSupabaseClient();
 
   if (!supabase) {
     redirect('/login?error=Database%20service%20unavailable');
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
 
   if (!user) {
     redirect('/login?redirectTo=/account/orders');
   }
 
-  const { data: orders } = await (supabase.from('orders') as any)
-    .select(`
-      id,
-      order_number,
-      user_id,
-      customer_name,
-      phone1,
-      address_line,
-      district,
-      city,
-      delivery_fee,
-      subtotal,
-      discount_amount,
-      total_amount,
-      payment_method,
-      payment_status,
-      order_status,
-      tracking_number,
-      created_at
-    `)
+  const resolvedParams = searchParams ? await searchParams : undefined;
+  const requestedPage = parseOrdersPageParam(resolvedParams?.page);
+  const { from, to } = calculateOrdersPaginationRange(requestedPage, CUSTOMER_ORDERS_PAGE_SIZE);
+
+  let { data: orders, count: totalOrdersCount } = await (supabase.from('orders') as any)
+    .select(CUSTOMER_ORDERS_SELECT, { count: 'exact' })
     .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .range(from, to);
+
+  // If a customer requested a page beyond the last page of their existing orders,
+  // clamp to the last valid page so older orders are never hidden behind an empty screen.
+  const pagination = buildOrdersPaginationMeta(totalOrdersCount, requestedPage, CUSTOMER_ORDERS_PAGE_SIZE);
+  if (
+    requestedPage > 1 &&
+    (!orders || orders.length === 0) &&
+    pagination.totalCount > 0 &&
+    pagination.currentPage !== requestedPage
+  ) {
+    const clampedRange = calculateOrdersPaginationRange(pagination.currentPage, CUSTOMER_ORDERS_PAGE_SIZE);
+    const clampedResult = await (supabase.from('orders') as any)
+      .select(CUSTOMER_ORDERS_SELECT, { count: 'exact' })
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .range(clampedRange.from, clampedRange.to);
+    orders = clampedResult.data;
+  }
 
   return (
     <div className="py-8 sm:py-12 bg-neutral-50/50 dark:bg-neutral-950/30 min-h-[80vh]">
@@ -191,6 +225,68 @@ export default async function AccountOrdersPage() {
               </Link>
             </Button>
           </Card>
+        )}
+
+        {pagination.totalPages > 1 && (
+          <nav
+            aria-label="Order history pagination"
+            className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-neutral-200 dark:border-neutral-800 pt-6"
+          >
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              Showing <span className="font-semibold text-foreground">{pagination.startItem}</span>
+              &ndash;
+              <span className="font-semibold text-foreground">{pagination.endItem}</span> of{' '}
+              <span className="font-semibold text-foreground">{pagination.totalCount}</span> orders
+            </p>
+
+            <div className="flex items-center gap-2">
+              {pagination.hasPreviousPage ? (
+                <Link
+                  href={
+                    pagination.currentPage - 1 <= 1
+                      ? '/account/orders'
+                      : `/account/orders?page=${pagination.currentPage - 1}`
+                  }
+                  prefetch={false}
+                  className="inline-flex items-center gap-1.5 rounded-sm border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-luxury-surface px-3.5 py-2 text-xs font-medium text-foreground hover:border-luxury-gold hover:text-luxury-gold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-luxury-gold"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  <span>Newer Orders</span>
+                </Link>
+              ) : (
+                <span
+                  aria-disabled="true"
+                  className="inline-flex items-center gap-1.5 rounded-sm border border-neutral-200 dark:border-neutral-800 px-3.5 py-2 text-xs font-medium text-neutral-400 dark:text-neutral-600 cursor-not-allowed"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  <span>Newer Orders</span>
+                </span>
+              )}
+
+              <span className="px-2 text-xs font-medium text-neutral-500 dark:text-neutral-400">
+                Page {pagination.currentPage} of {pagination.totalPages}
+              </span>
+
+              {pagination.hasNextPage ? (
+                <Link
+                  href={`/account/orders?page=${pagination.currentPage + 1}`}
+                  prefetch={false}
+                  className="inline-flex items-center gap-1.5 rounded-sm border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-luxury-surface px-3.5 py-2 text-xs font-medium text-foreground hover:border-luxury-gold hover:text-luxury-gold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-luxury-gold"
+                >
+                  <span>Older Orders</span>
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Link>
+              ) : (
+                <span
+                  aria-disabled="true"
+                  className="inline-flex items-center gap-1.5 rounded-sm border border-neutral-200 dark:border-neutral-800 px-3.5 py-2 text-xs font-medium text-neutral-400 dark:text-neutral-600 cursor-not-allowed"
+                >
+                  <span>Older Orders</span>
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </span>
+              )}
+            </div>
+          </nav>
         )}
       </Container>
     </div>

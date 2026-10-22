@@ -107,6 +107,92 @@ export function removeWishlistItem<T extends { id: string }>(items: T[], itemId:
 }
 
 // -----------------------------------------------------------------------------
+// Server row mapping & customer ownership isolation
+// -----------------------------------------------------------------------------
+
+export interface RawWishlistRow {
+  id: string;
+  created_at: string;
+  wishlists?: { user_id?: string } | Array<{ user_id?: string }> | null;
+  products?: {
+    id?: string;
+    name?: string;
+    slug?: string;
+    product_images?: Array<{ url?: string; is_primary?: boolean }> | null;
+  } | null;
+  product_variants?: {
+    id?: string;
+    title?: string | null;
+    sku?: string | null;
+    price?: number | string | null;
+    discount_price?: number | string | null;
+    stock_status?: WishlistProduct['stockStatus'] | null;
+  } | null;
+}
+
+/**
+ * Defense-in-depth check verifying that a joined `wishlist_items -> wishlists` row
+ * belongs to the authenticated `userId`. Works alongside PostgreSQL RLS and
+ * PostgREST `.eq('wishlists.user_id', user.id)`.
+ */
+export function isWishlistRowOwnedByUser(
+  row: Pick<RawWishlistRow, 'wishlists'> | null | undefined,
+  userId: string
+): boolean {
+  if (!row || !userId) return false;
+  const relation = row.wishlists;
+  if (!relation) return false;
+  const ownerId = Array.isArray(relation) ? relation[0]?.user_id : relation.user_id;
+  return typeof ownerId === 'string' && ownerId === userId;
+}
+
+/**
+ * Maps joined `wishlist_items` rows from PostgREST into `WishlistProduct[]`,
+ * enforcing strict customer isolation (`wishlists.user_id === userId`) and
+ * deduplicating by `row.id`.
+ */
+export function mapWishlistRowsForUser(
+  rows: RawWishlistRow[] | null | undefined,
+  userId: string
+): WishlistProduct[] {
+  if (!Array.isArray(rows) || !userId) return [];
+
+  const seenIds = new Set<string>();
+  const result: WishlistProduct[] = [];
+
+  for (const row of rows) {
+    if (!row || typeof row.id !== 'string' || !row.id) continue;
+    if (!isWishlistRowOwnedByUser(row, userId)) continue;
+    if (seenIds.has(row.id)) continue;
+    seenIds.add(row.id);
+
+    const prod = row.products;
+    const variant = row.product_variants;
+    const primaryImg =
+      prod?.product_images?.find((img) => img.is_primary)?.url ||
+      prod?.product_images?.[0]?.url ||
+      null;
+
+    result.push({
+      id: row.id,
+      productId: prod?.id || '',
+      variantId: variant?.id || null,
+      productName: prod?.name || 'Jewelry Piece',
+      slug: prod?.slug || '',
+      variantTitle: variant?.title || null,
+      sku: variant?.sku || null,
+      price: Number(variant?.price || 0),
+      discountPrice: variant?.discount_price ? Number(variant.discount_price) : null,
+      imageUrl: primaryImg,
+      stockStatus: variant?.stock_status || 'in_stock',
+      addedAt: row.created_at,
+    });
+  }
+
+  return result;
+}
+
+// -----------------------------------------------------------------------------
 // Cart eligibility
 // -----------------------------------------------------------------------------
 

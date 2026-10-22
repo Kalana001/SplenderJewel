@@ -3,11 +3,13 @@
 import 'server-only';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getCurrentUser, requireCustomerAuth } from '@/lib/auth/server';
+import { isWishlistRowOwnedByUser, mapWishlistRowsForUser } from '@/lib/wishlist/wishlist-view';
 import type { WishlistProduct } from '@/types/wishlist';
 
 /**
  * Check whether a specific product is in the currently authenticated customer's wishlist.
  * Used for client-side wishlist status hydration on ISR product detail pages.
+ * Executes a single RLS-protected query joining `wishlists!inner(user_id)`.
  */
 export async function checkProductWishlistStatus(productId: string): Promise<{
   isAuthenticated: boolean;
@@ -24,25 +26,20 @@ export async function checkProductWishlistStatus(productId: string): Promise<{
       return { isAuthenticated: true, isWishlisted: false };
     }
 
-    const { data: wishlist } = await (supabase.from('wishlists') as any)
-      .select('id')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    if (!wishlist) {
-      return { isAuthenticated: true, isWishlisted: false };
-    }
-
-    const { data: item } = await (supabase.from('wishlist_items') as any)
-      .select('id')
-      .eq('wishlist_id', wishlist.id)
+    const { data: item, error } = await (supabase.from('wishlist_items') as any)
+      .select('id, wishlists!inner(user_id)')
+      .eq('wishlists.user_id', user.id)
       .eq('product_id', productId)
       .limit(1)
       .maybeSingle();
 
+    if (error || !item) {
+      return { isAuthenticated: true, isWishlisted: false };
+    }
+
     return {
       isAuthenticated: true,
-      isWishlisted: Boolean(item),
+      isWishlisted: isWishlistRowOwnedByUser(item, user.id),
     };
   } catch {
     return { isAuthenticated: false, isWishlisted: false };
@@ -52,6 +49,8 @@ export async function checkProductWishlistStatus(productId: string): Promise<{
 /**
  * Retrieve total item count in the authenticated customer's wishlist.
  * Used for the header wishlist counter badge.
+ * Executes a single RLS-protected HEAD count query joining `wishlists!inner(user_id)`
+ * without creating empty wishlist rows.
  * Strictly isolated per customer; returns count: 0 for guests.
  */
 export async function getCustomerWishlistCount(): Promise<{
@@ -69,18 +68,9 @@ export async function getCustomerWishlistCount(): Promise<{
       return { isAuthenticated: true, count: 0 };
     }
 
-    const { data: wishlist } = await (supabase.from('wishlists') as any)
-      .select('id')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    if (!wishlist) {
-      return { isAuthenticated: true, count: 0 };
-    }
-
     const { count, error } = await (supabase.from('wishlist_items') as any)
-      .select('id', { count: 'exact', head: true })
-      .eq('wishlist_id', wishlist.id);
+      .select('id, wishlists!inner(user_id)', { count: 'exact', head: true })
+      .eq('wishlists.user_id', user.id);
 
     if (error || typeof count !== 'number') {
       return { isAuthenticated: true, count: 0 };
@@ -92,6 +82,12 @@ export async function getCustomerWishlistCount(): Promise<{
   }
 }
 
+/**
+ * Retrieve all saved wishlist items for the authenticated customer in a single
+ * RLS-protected PostgREST query via `wishlists!inner(user_id)`.
+ * Does NOT insert an empty wishlist record on read; wishlist creation only occurs
+ * when a customer explicitly saves a product via `addToWishlist()`.
+ */
 export async function getCustomerWishlist(): Promise<{
   success: boolean;
   items: WishlistProduct[];
@@ -108,30 +104,13 @@ export async function getCustomerWishlist(): Promise<{
       return { success: false, items: [], error: 'Database service is currently unavailable.' };
     }
 
-    // 1. Get user wishlist record
-    let { data: wishlist } = await (supabase.from('wishlists') as any)
-      .select('id')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    if (!wishlist) {
-      // Create empty wishlist record
-      const { data: newWishlist, error: createError } = await (supabase.from('wishlists') as any)
-        .insert({ user_id: user.id })
-        .select('id')
-        .single();
-
-      if (createError) {
-        return { success: false, items: [], error: createError.message };
-      }
-      wishlist = newWishlist;
-    }
-
-    // 2. Fetch wishlist items with products and variants
     const { data: items, error: itemsError } = await (supabase.from('wishlist_items') as any)
       .select(`
         id,
         created_at,
+        wishlists!inner (
+          user_id
+        ),
         products (
           id,
           name,
@@ -147,35 +126,14 @@ export async function getCustomerWishlist(): Promise<{
           stock_status
         )
       `)
-      .eq('wishlist_id', wishlist.id)
+      .eq('wishlists.user_id', user.id)
       .order('created_at', { ascending: false });
 
     if (itemsError) {
       return { success: false, items: [], error: itemsError.message };
     }
 
-    const wishlistProducts: WishlistProduct[] = (items || []).map((row: any) => {
-      const prod = row.products;
-      const variant = row.product_variants;
-      const primaryImg = prod?.product_images?.find((img: any) => img.is_primary)?.url
-        || prod?.product_images?.[0]?.url
-        || null;
-
-      return {
-        id: row.id,
-        productId: prod?.id || '',
-        variantId: variant?.id || null,
-        productName: prod?.name || 'Jewelry Piece',
-        slug: prod?.slug || '',
-        variantTitle: variant?.title || null,
-        sku: variant?.sku || null,
-        price: Number(variant?.price || 0),
-        discountPrice: variant?.discount_price ? Number(variant.discount_price) : null,
-        imageUrl: primaryImg,
-        stockStatus: variant?.stock_status || 'in_stock',
-        addedAt: row.created_at,
-      };
-    });
+    const wishlistProducts = mapWishlistRowsForUser(items, user.id);
 
     return { success: true, items: wishlistProducts };
   } catch (err: any) {
