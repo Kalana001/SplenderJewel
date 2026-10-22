@@ -83,6 +83,7 @@ export async function getAdminSalesReport(timeRange: ReportTimeRange = '30d'): P
       [ORDER_STATUSES.SHIPPED]: 0,
       [ORDER_STATUSES.DELIVERED]: 0,
       [ORDER_STATUSES.CANCELLED]: 0,
+      [ORDER_STATUSES.REFUNDED]: 0,
     };
 
     const revenueByPaymentMethod = {
@@ -97,18 +98,21 @@ export async function getAdminSalesReport(timeRange: ReportTimeRange = '30d'): P
     > = {};
 
     for (const order of orders || []) {
-      const isCancelled = order.order_status === ORDER_STATUSES.CANCELLED;
+      const isCancelledOrRefunded =
+        order.order_status === ORDER_STATUSES.CANCELLED ||
+        order.order_status === ORDER_STATUSES.REFUNDED ||
+        order.payment_status === PAYMENT_STATUSES.REFUNDED;
       const orderTotal = Number(order.total_amount) || 0;
 
-      // Status counter
+      // Preserve lifetime order-count tracking across all order statuses (including cancelled & refunded)
       if (orderCountByStatus[order.order_status] !== undefined) {
         orderCountByStatus[order.order_status]++;
       } else {
         orderCountByStatus[order.order_status] = 1;
       }
 
-      // If cancelled, do not count towards revenue, metrics, or profit
-      if (isCancelled) continue;
+      // Exclude cancelled and refunded orders from active sales volume, revenue, profit, payment methods, districts, and products
+      if (isCancelledOrRefunded) continue;
 
       totalOrders++;
       totalRevenue += orderTotal;
@@ -116,8 +120,7 @@ export async function getAdminSalesReport(timeRange: ReportTimeRange = '30d'): P
       // Payment verification / collected calculations (CRITICAL: Delivered does NOT mean Paid)
       const isVerified =
         order.payment_status === PAYMENT_STATUSES.VERIFIED &&
-        order.order_status !== ORDER_STATUSES.CANCELLED &&
-        order.order_status !== ORDER_STATUSES.REFUNDED;
+        !isCancelledOrRefunded;
 
       if (isVerified) {
         totalCollected += orderTotal;

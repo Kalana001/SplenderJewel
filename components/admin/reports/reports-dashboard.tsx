@@ -91,7 +91,7 @@ export function ReportsDashboard({ initialMetrics }: ReportsDashboardProps) {
           <p className="text-2xl font-serif font-bold text-white tracking-tight">
             {formatCurrency(metrics.totalRevenue)}
           </p>
-          <span className="text-[11px] text-neutral-500">Excludes cancelled orders</span>
+          <span className="text-[11px] text-neutral-500">Excludes cancelled &amp; refunded orders</span>
         </div>
 
         {/* Collected / Verified Cash */}
