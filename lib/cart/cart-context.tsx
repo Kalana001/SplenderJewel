@@ -53,6 +53,41 @@ interface CartContextType {
 const CART_STORAGE_KEY = 'splender_cart_v1';
 const GUEST_CART_FLAG = 'splender_guest_cart_active';
 const GUEST_MERGE_TOKEN = 'splender_guest_merge_token';
+export const CART_FOCUS_THROTTLE_MS = 30_000;
+
+/**
+ * Pure deep equality check for CartItem arrays.
+ * Prevents replacing cart state, writing to localStorage, and dispatching
+ * cart-updated events when a server refresh returns identical cart contents.
+ */
+export function areCartItemsEqual(a: CartItem[], b: CartItem[]): boolean {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+
+  for (let i = 0; i < a.length; i++) {
+    const left = a[i];
+    const right = b[i];
+    if (!left || !right) return false;
+    if (
+      left.variantId !== right.variantId ||
+      left.productId !== right.productId ||
+      left.productName !== right.productName ||
+      (left.slug ?? '') !== (right.slug ?? '') ||
+      (left.variantTitle ?? '') !== (right.variantTitle ?? '') ||
+      (left.sku ?? '') !== (right.sku ?? '') ||
+      Number(left.price) !== Number(right.price) ||
+      (left.discountPrice ?? null) !== (right.discountPrice ?? null) ||
+      (left.imageUrl ?? null) !== (right.imageUrl ?? null) ||
+      Number(left.quantity) !== Number(right.quantity) ||
+      (left.maxStock ?? undefined) !== (right.maxStock ?? undefined)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
@@ -134,17 +169,35 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   );
 
 
+  const refreshSeqRef = useRef(0);
+  const activeMergePromiseRef = useRef<Promise<CartItem[]> | null>(null);
+  const activeRefreshPromiseRef = useRef<Promise<CartItem[]> | null>(null);
+  const activeRefreshSeqRef = useRef(0);
+
   // Atomically persist cart to React state and localStorage
   const persistItems = useCallback(
     (newItems: CartItem[]) => {
+      // Any local cart mutation invalidates older in-flight server reads so stale responses cannot overwrite new changes
+      ++refreshSeqRef.current;
+      activeRefreshPromiseRef.current = null;
+
+      const isUnchanged = areCartItemsEqual(itemsRef.current, newItems);
       itemsRef.current = newItems;
-      setItems(newItems);
+
+      if (!isUnchanged) {
+        setItems(newItems);
+      }
+
       try {
-        localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(newItems));
+        if (!isUnchanged) {
+          localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(newItems));
+        }
         if (!isAuthenticatedRef.current && newItems.length > 0) {
           localStorage.setItem(GUEST_CART_FLAG, 'true');
         }
-        window.dispatchEvent(new Event('splender:cart-updated'));
+        if (!isUnchanged) {
+          window.dispatchEvent(new Event('splender:cart-updated'));
+        }
       } catch (e) {
         console.warn('[Cart] Failed to persist cart to localStorage:', e);
       }
@@ -178,17 +231,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const refreshSeqRef = useRef(0);
-  const activeMergePromiseRef = useRef<Promise<CartItem[]> | null>(null);
-
   // Authoritative server cart fetch and cross-device synchronization
   const refreshCart = useCallback(async (): Promise<CartItem[]> => {
     // If a guest cart merge is already in progress, await the existing merge to avoid racing
     if (activeMergePromiseRef.current) {
       return await activeMergePromiseRef.current;
     }
-
-    const seq = ++refreshSeqRef.current;
 
     // Check if there is a pending guest bag in localStorage or memory
     const hasActiveGuestBag =
@@ -219,6 +267,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     // CASE 1: Pending guest cart needs to be merged into authenticated account
     if (hasActiveGuestBag && local && local.length > 0) {
+      const seq = ++refreshSeqRef.current;
+      activeRefreshPromiseRef.current = null;
+
       const mergePromise = (async (): Promise<CartItem[]> => {
         try {
           let mergeToken = localStorage.getItem(GUEST_MERGE_TOKEN);
@@ -233,19 +284,26 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           const isMounted = true;
           const res = await mergeGuestCartAction(local, { mergeToken });
 
+          if (seq !== refreshSeqRef.current) return itemsRef.current;
+
           if (isMounted && res.success && res.items) {
             localStorage.removeItem(GUEST_CART_FLAG);
             localStorage.removeItem(GUEST_MERGE_TOKEN);
             setSyncError(null);
+            const changed = !areCartItemsEqual(itemsRef.current, res.items);
             itemsRef.current = res.items;
-            setItems(res.items);
+            if (changed) {
+              setItems(res.items);
+            }
             localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(res.items));
             isAuthenticatedRef.current = true;
             setIsAuthenticated(true);
             if (res.userId) {
               currentUserIdRef.current = res.userId;
             }
-            window.dispatchEvent(new Event('splender:cart-updated'));
+            if (changed) {
+              window.dispatchEvent(new Event('splender:cart-updated'));
+            }
             return res.items;
           } else {
             // Preservation on merge failure: keep GUEST_CART_FLAG and local items intact
@@ -277,47 +335,69 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
 
     // CASE 2: Normal synchronization (no pending guest merge)
-    try {
-      const res = await getAuthenticatedCartAction();
-      if (seq !== refreshSeqRef.current) return itemsRef.current;
-
-      if (!res.success) {
-        if (res.authenticated) {
-          setSyncError(res.error || 'Unable to retrieve your shopping bag from the server.');
-        }
-        return itemsRef.current;
-      }
-
-      if (res.authenticated) {
-        isAuthenticatedRef.current = true;
-        setIsAuthenticated(true);
-
-        // Account switching detection: if authenticated user changed, clear stale tracked mutations
-        if (res.userId && currentUserIdRef.current && currentUserIdRef.current !== res.userId) {
-          failedMutationsRef.current.clear();
-        }
-        if (res.userId) {
-          currentUserIdRef.current = res.userId;
-        }
-
-        if (res.items) {
-          setSyncError(null);
-          itemsRef.current = res.items;
-          setItems(res.items);
-          localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(res.items));
-          window.dispatchEvent(new Event('splender:cart-updated'));
-          return res.items;
-        }
-      } else {
-        // Unauthenticated session: do NOT overwrite local items with empty array
-        isAuthenticatedRef.current = false;
-        setIsAuthenticated(false);
-        currentUserIdRef.current = null;
-      }
-    } catch (err) {
-      console.warn('[Cart] Failed to refresh cart from server:', err);
+    // Deduplicate overlapping in-flight refreshes when no newer mutation or auth change occurred
+    if (
+      activeRefreshPromiseRef.current &&
+      activeRefreshSeqRef.current === refreshSeqRef.current
+    ) {
+      return await activeRefreshPromiseRef.current;
     }
-    return itemsRef.current;
+
+    const seq = ++refreshSeqRef.current;
+    activeRefreshSeqRef.current = seq;
+
+    const refreshPromise = (async (): Promise<CartItem[]> => {
+      try {
+        const res = await getAuthenticatedCartAction();
+        if (seq !== refreshSeqRef.current) return itemsRef.current;
+
+        if (!res.success) {
+          if (res.authenticated) {
+            setSyncError(res.error || 'Unable to retrieve your shopping bag from the server.');
+          }
+          return itemsRef.current;
+        }
+
+        if (res.authenticated) {
+          isAuthenticatedRef.current = true;
+          setIsAuthenticated(true);
+
+          // Account switching detection: if authenticated user changed, clear stale tracked mutations
+          if (res.userId && currentUserIdRef.current && currentUserIdRef.current !== res.userId) {
+            failedMutationsRef.current.clear();
+          }
+          if (res.userId) {
+            currentUserIdRef.current = res.userId;
+          }
+
+          if (res.items) {
+            setSyncError(null);
+            if (!areCartItemsEqual(itemsRef.current, res.items)) {
+              itemsRef.current = res.items;
+              setItems(res.items);
+              localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(res.items));
+              window.dispatchEvent(new Event('splender:cart-updated'));
+            }
+            return itemsRef.current;
+          }
+        } else {
+          // Unauthenticated session: do NOT overwrite local items with empty array
+          isAuthenticatedRef.current = false;
+          setIsAuthenticated(false);
+          currentUserIdRef.current = null;
+        }
+      } catch (err) {
+        console.warn('[Cart] Failed to refresh cart from server:', err);
+      } finally {
+        if (activeRefreshSeqRef.current === seq) {
+          activeRefreshPromiseRef.current = null;
+        }
+      }
+      return itemsRef.current;
+    })();
+
+    activeRefreshPromiseRef.current = refreshPromise;
+    return await refreshPromise;
   }, []);
 
   // Non-destructive retry: retries pending guest merge or tracked failed item mutations
@@ -389,6 +469,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     if (!supabase) return;
 
     let isMounted = true;
+    let initialSessionHandled = false;
 
     const handleAuthenticatedSession = async () => {
       await refreshCart();
@@ -399,26 +480,78 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       setIsAuthenticated(false);
     };
 
-    // 1. Check existing session on mount
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!isMounted) return;
+    const applyInitialSession = (session: { user?: { id?: string } } | null | undefined) => {
+      if (!isMounted || initialSessionHandled) return;
+      initialSessionHandled = true;
       if (session?.user) {
-        handleAuthenticatedSession();
+        isAuthenticatedRef.current = true;
+        setIsAuthenticated(true);
+        if (session.user.id) {
+          currentUserIdRef.current = session.user.id;
+        }
+        void handleAuthenticatedSession();
       } else {
         handleUnauthenticatedSession();
       }
+    };
+
+    // 1. Check existing session on mount
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      applyInitialSession(session);
     });
 
-    // 2. Listen for auth changes (SIGNED_IN, SIGNED_OUT, etc.)
+    // 2. Listen for auth changes (INITIAL_SESSION, SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED, USER_UPDATED)
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!isMounted) return;
+
+      if (event === 'INITIAL_SESSION') {
+        applyInitialSession(session);
+        return;
+      }
+
       if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+        initialSessionHandled = true;
         if (session?.user) {
+          const wasUnauthenticated = !isAuthenticatedRef.current;
+          const userChanged = Boolean(
+            currentUserIdRef.current &&
+              session.user.id &&
+              currentUserIdRef.current !== session.user.id
+          );
+          isAuthenticatedRef.current = true;
+          setIsAuthenticated(true);
+          if (userChanged) {
+            failedMutationsRef.current.clear();
+          }
+          if (session.user.id) {
+            currentUserIdRef.current = session.user.id;
+          }
+          if (wasUnauthenticated || userChanged || event === 'USER_UPDATED') {
+            activeRefreshPromiseRef.current = null;
+          }
           await handleAuthenticatedSession();
         }
+      } else if (event === 'TOKEN_REFRESHED') {
+        initialSessionHandled = true;
+        if (session?.user) {
+          const wasUnauthenticated = !isAuthenticatedRef.current;
+          isAuthenticatedRef.current = true;
+          setIsAuthenticated(true);
+          if (session.user.id) {
+            currentUserIdRef.current = session.user.id;
+          }
+          if (wasUnauthenticated) {
+            await handleAuthenticatedSession();
+          }
+        } else {
+          handleUnauthenticatedSession();
+        }
       } else if (event === 'SIGNED_OUT') {
+        initialSessionHandled = true;
+        ++refreshSeqRef.current;
+        activeRefreshPromiseRef.current = null;
         handleUnauthenticatedSession();
         // On logout: cancel queue, wipe in-memory state and localStorage to prevent cross-account leak
         mutationQueueRef.current = Promise.resolve();
@@ -438,6 +571,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     // 3. Listen for custom sign-out event from SignOutButton
     const handleCustomSignOut = () => {
+      ++refreshSeqRef.current;
+      activeRefreshPromiseRef.current = null;
       handleUnauthenticatedSession();
       mutationQueueRef.current = Promise.resolve();
       failedMutationsRef.current.clear();
@@ -456,7 +591,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     // 4. Listen for custom sign-in event from customer login / registration
     const handleCustomSignIn = () => {
-      refreshCart();
+      if (!isAuthenticatedRef.current) {
+        activeRefreshPromiseRef.current = null;
+      }
+      void refreshCart();
     };
     window.addEventListener('splender:auth-signed-in', handleCustomSignIn);
 
@@ -472,9 +610,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let lastFocusTime = 0;
     const handleTabFocus = async () => {
+      // Prevent unnecessary guest cart server requests on tab focus
+      if (!isAuthenticatedRef.current) return;
       const now = Date.now();
-      // Throttle rapid duplicate events (e.g. visibilitychange + focus firing together) to at most once per 1000ms
-      if (document.visibilityState === 'visible' && now - lastFocusTime > 1000) {
+      // Throttle rapid duplicate events (upgraded from legacy now - lastFocusTime > 1000 to 30s CART_FOCUS_THROTTLE_MS)
+      if (document.visibilityState === 'visible' && now - lastFocusTime >= CART_FOCUS_THROTTLE_MS) {
         lastFocusTime = now;
         await refreshCart();
       }
@@ -737,6 +877,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   // Clear entire cart (e.g., when customer explicitly empties shopping bag)
   const clearCart = useCallback(() => {
+    ++refreshSeqRef.current;
+    activeRefreshPromiseRef.current = null;
     itemsRef.current = [];
     setItems([]);
     try {
@@ -769,6 +911,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       if (orderNumber) {
         lastDeductedOrderRef.current = orderNumber;
       }
+
+      ++refreshSeqRef.current;
+      activeRefreshPromiseRef.current = null;
 
       // Normalize input
       const normalizedItems: { variantId: string; quantity: number }[] = purchasedInput.map((p) => {

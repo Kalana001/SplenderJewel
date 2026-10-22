@@ -112,7 +112,11 @@ export function StoreFooter({ categories = [] }: FooterProps = {}) {
                 </Link>
               </li>
               <li>
-                <Link href="/account/orders" className="block py-1 sm:py-0.5 hover:text-luxury-gold transition-colors">
+                <Link
+                  href="/account/orders"
+                  prefetch={false}
+                  className="block py-1 sm:py-0.5 hover:text-luxury-gold transition-colors"
+                >
                   Order History (Account)
                 </Link>
               </li>

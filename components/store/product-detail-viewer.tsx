@@ -62,47 +62,99 @@ export function ProductDetailViewer({
   // Client-side wishlist hydration: fetch status for currently active user without blocking page ISR
   useEffect(() => {
     let isMounted = true;
+    let initialSessionHandled = false;
+    let inFlightPromise: Promise<void> | null = null;
+    let inFlightSeq = 0;
 
-    async function loadWishlistStatus() {
+    async function loadWishlistStatus(options?: { force?: boolean }) {
+      if (!options?.force && inFlightPromise && inFlightSeq === wishlistSeq.current) {
+        return inFlightPromise;
+      }
+
       const currentSeq = ++wishlistSeq.current;
-      try {
-        const res = await checkProductWishlistStatus(product.id);
-        if (!isMounted || currentSeq !== wishlistSeq.current) return;
-        setIsAuthenticated(res.isAuthenticated);
-        setIsWishlisted(res.isWishlisted);
-      } catch {
-        if (!isMounted || currentSeq !== wishlistSeq.current) return;
+      inFlightSeq = currentSeq;
+
+      const requestPromise = (async () => {
+        try {
+          const res = await checkProductWishlistStatus(product.id);
+          if (!isMounted || currentSeq !== wishlistSeq.current) return;
+          setIsAuthenticated(res.isAuthenticated);
+          setIsWishlisted(res.isWishlisted);
+        } catch {
+          if (!isMounted || currentSeq !== wishlistSeq.current) return;
+          setIsAuthenticated(false);
+          setIsWishlisted(false);
+        } finally {
+          if (inFlightSeq === currentSeq) {
+            inFlightPromise = null;
+          }
+        }
+      })();
+
+      inFlightPromise = requestPromise;
+      return requestPromise;
+    }
+
+    const applyInitialSession = (session: { user?: unknown } | null | undefined) => {
+      if (!isMounted || initialSessionHandled) return;
+      initialSessionHandled = true;
+      if (session?.user) {
+        setIsAuthenticated(true);
+        void loadWishlistStatus();
+      } else {
+        // Confirmed unauthenticated visitor: avoid unnecessary server action request
+        ++wishlistSeq.current;
+        inFlightPromise = null;
         setIsAuthenticated(false);
         setIsWishlisted(false);
       }
-    }
+    };
 
-    loadWishlistStatus();
-
-    // Listen to Supabase client session changes
+    // Listen to Supabase client session changes & check initial session locally first
     const supabase = createClient();
     let subscription: { unsubscribe: () => void } | null = null;
     if (supabase) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        applyInitialSession(session);
+      });
+
       const authListener = supabase.auth.onAuthStateChange((event, session) => {
         if (!isMounted) return;
+        if (event === 'INITIAL_SESSION') {
+          applyInitialSession(session);
+          return;
+        }
         if (event === 'SIGNED_OUT' || !session?.user) {
+          initialSessionHandled = true;
+          ++wishlistSeq.current;
+          inFlightPromise = null;
           setIsAuthenticated(false);
           setIsWishlisted(false);
         } else if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
-          loadWishlistStatus();
+          initialSessionHandled = true;
+          setIsAuthenticated(true);
+          void loadWishlistStatus();
         }
       });
       subscription = authListener?.data?.subscription || null;
+    } else if (initialIsAuthenticated) {
+      void loadWishlistStatus();
+    } else {
+      setIsAuthenticated(false);
+      setIsWishlisted(false);
     }
 
     const handleCustomSignOut = () => {
       if (!isMounted) return;
+      ++wishlistSeq.current;
+      inFlightPromise = null;
       setIsAuthenticated(false);
       setIsWishlisted(false);
     };
     const handleCustomSignIn = () => {
       if (!isMounted) return;
-      loadWishlistStatus();
+      setIsAuthenticated(true);
+      void loadWishlistStatus();
     };
 
     window.addEventListener('splender:auth-signed-out', handleCustomSignOut);
@@ -114,7 +166,7 @@ export function ProductDetailViewer({
       window.removeEventListener('splender:auth-signed-out', handleCustomSignOut);
       window.removeEventListener('splender:auth-signed-in', handleCustomSignIn);
     };
-  }, [product.id]);
+  }, [product.id, initialIsAuthenticated]);
 
   // Variant selection: default to first active variant
   const [selectedVariant, setSelectedVariant] = useState<ProductVariantPublic>(

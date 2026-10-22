@@ -2,7 +2,7 @@
 
 import 'server-only';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { requireCustomerAuth } from '@/lib/auth/server';
+import { requireCustomerAuth, getCurrentUser } from '@/lib/auth/server';
 import type { CustomerReviewItem, EligibleReviewItem, SubmitReviewInput } from '@/types/customer-review';
 
 export async function getCustomerReviews(): Promise<{
@@ -11,7 +11,10 @@ export async function getCustomerReviews(): Promise<{
   error?: string;
 }> {
   try {
-    const profile = await requireCustomerAuth();
+    const user = await getCurrentUser();
+    if (!user) {
+      throw new Error('UNAUTHORIZED_CUSTOMER');
+    }
     const supabase = await createServerSupabaseClient();
     if (!supabase) {
       return { success: false, reviews: [], error: 'Database service is currently unavailable.' };
@@ -40,7 +43,7 @@ export async function getCustomerReviews(): Promise<{
           order_number
         )
       `)
-      .eq('user_id', profile.id)
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -87,7 +90,10 @@ export async function getEligibleReviewProducts(): Promise<{
   error?: string;
 }> {
   try {
-    const profile = await requireCustomerAuth();
+    const user = await getCurrentUser();
+    if (!user) {
+      throw new Error('UNAUTHORIZED_CUSTOMER');
+    }
     const supabase = await createServerSupabaseClient();
     if (!supabase) {
       return { success: false, eligibleItems: [], error: 'Database service is currently unavailable.' };
@@ -109,7 +115,7 @@ export async function getEligibleReviewProducts(): Promise<{
           total_price
         )
       `)
-      .eq('user_id', profile.id)
+      .eq('user_id', user.id)
       .eq('order_status', 'delivered')
       .order('updated_at', { ascending: false });
 
@@ -124,7 +130,7 @@ export async function getEligibleReviewProducts(): Promise<{
     // 2. Fetch existing reviews to exclude already reviewed order items
     const { data: existingReviews } = await (supabase.from('reviews') as any)
       .select('order_item_id')
-      .eq('user_id', profile.id);
+      .eq('user_id', user.id);
 
     const reviewedItemIds = new Set((existingReviews || []).map((r: any) => r.order_item_id));
 

@@ -36,47 +36,83 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
     if (!supabase) return;
 
     let isMounted = true;
+    let initialSessionHandled = false;
+    let inFlightPromise: Promise<void> | null = null;
+    let inFlightSeq = 0;
 
-    const refreshWishlistCount = async () => {
+    const refreshWishlistCount = async (options?: { force?: boolean }) => {
+      if (!options?.force && inFlightPromise && inFlightSeq === countSeq.current) {
+        return inFlightPromise;
+      }
+
       const currentSeq = ++countSeq.current;
-      try {
-        const res = await getCustomerWishlistCount();
-        if (isMounted && currentSeq === countSeq.current) {
-          setIsAuthenticated(res.isAuthenticated);
-          setWishlistCount(res.isAuthenticated ? res.count : 0);
+      inFlightSeq = currentSeq;
+
+      const requestPromise = (async () => {
+        try {
+          const res = await getCustomerWishlistCount();
+          if (isMounted && currentSeq === countSeq.current) {
+            setIsAuthenticated(res.isAuthenticated);
+            setWishlistCount(res.isAuthenticated ? res.count : 0);
+          }
+        } catch {
+          if (isMounted && currentSeq === countSeq.current) {
+            setWishlistCount(0);
+          }
+        } finally {
+          if (inFlightSeq === currentSeq) {
+            inFlightPromise = null;
+          }
         }
-      } catch {
-        if (isMounted && currentSeq === countSeq.current) {
-          setWishlistCount(0);
-        }
+      })();
+
+      inFlightPromise = requestPromise;
+      return requestPromise;
+    };
+
+    const applyInitialSession = (session: { user?: unknown } | null | undefined) => {
+      if (!isMounted || initialSessionHandled) return;
+      initialSessionHandled = true;
+      const hasUser = Boolean(session?.user);
+      setIsAuthenticated(hasUser);
+      if (hasUser) {
+        void refreshWishlistCount();
+      } else {
+        ++countSeq.current;
+        inFlightPromise = null;
+        setWishlistCount(0);
       }
     };
 
     // Check existing customer session on mount
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (isMounted) {
-        setIsAuthenticated(!!session?.user);
-        if (session?.user) {
-          refreshWishlistCount();
-        } else {
-          ++countSeq.current;
-          setWishlistCount(0);
-        }
-      }
+      applyInitialSession(session);
     });
 
     // Listen to Supabase auth events (sign in, sign out, token refresh)
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (isMounted) {
-        setIsAuthenticated(!!session?.user);
-        if (session?.user) {
-          refreshWishlistCount();
-        } else {
-          ++countSeq.current;
-          setWishlistCount(0);
-        }
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!isMounted) return;
+
+      if (event === 'INITIAL_SESSION') {
+        applyInitialSession(session);
+        return;
+      }
+
+      if (event === 'SIGNED_OUT' || !session?.user) {
+        initialSessionHandled = true;
+        ++countSeq.current;
+        inFlightPromise = null;
+        setIsAuthenticated(false);
+        setWishlistCount(0);
+        return;
+      }
+
+      if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
+        initialSessionHandled = true;
+        setIsAuthenticated(true);
+        void refreshWishlistCount();
       }
     });
 
@@ -85,17 +121,18 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
         ++countSeq.current;
         setIsAuthenticated(false);
         setWishlistCount(0);
+        inFlightPromise = null;
       }
     };
     const handleCustomSignIn = () => {
       if (isMounted) {
         setIsAuthenticated(true);
-        refreshWishlistCount();
+        void refreshWishlistCount();
       }
     };
     const handleWishlistUpdated = () => {
       if (isMounted) {
-        refreshWishlistCount();
+        void refreshWishlistCount({ force: true });
       }
     };
 
@@ -228,6 +265,7 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
           <div className="flex items-center justify-end space-x-0 sm:space-x-1 z-10 shrink-0">
             <Link
               href="/account/wishlist"
+              prefetch={false}
               className="relative min-h-[44px] min-w-[38px] sm:min-w-[44px] flex items-center justify-center p-1.5 sm:p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
               aria-label={wishlistCount > 0 ? `Wishlist (${wishlistCount} items)` : 'Wishlist'}
             >
@@ -241,6 +279,7 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
 
             <Link
               href="/account"
+              prefetch={false}
               className="min-h-[44px] min-w-[38px] sm:min-w-[44px] flex items-center justify-center p-1.5 sm:p-2 text-neutral-300 hover:text-luxury-gold transition-colors"
               aria-label="Account"
             >
@@ -317,6 +356,7 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
           <div className="pt-3 border-t border-neutral-800/80 flex flex-col space-y-2">
             <Link
               href="/account"
+              prefetch={false}
               onClick={() => setMobileMenuOpen(false)}
               className="inline-flex items-center space-x-2 text-xs text-neutral-400 hover:text-luxury-gold transition-colors py-1 px-2"
             >
@@ -326,6 +366,7 @@ export function StoreHeader({ logoUrl, categories = [] }: HeaderProps) {
 
             <Link
               href="/account/wishlist"
+              prefetch={false}
               onClick={() => setMobileMenuOpen(false)}
               className="inline-flex items-center justify-between text-xs text-neutral-400 hover:text-luxury-gold transition-colors py-1 px-2"
             >

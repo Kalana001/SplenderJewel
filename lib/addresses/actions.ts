@@ -64,7 +64,10 @@ export async function getCustomerAddresses(): Promise<{
   error?: string;
 }> {
   try {
-    const profile = await requireCustomerAuth();
+    const user = await getCurrentUser();
+    if (!user) {
+      throw new Error('UNAUTHORIZED_CUSTOMER');
+    }
     const supabase = await createServerSupabaseClient();
     if (!supabase) {
       return { success: false, addresses: [], error: 'Database service is currently unavailable.' };
@@ -72,7 +75,7 @@ export async function getCustomerAddresses(): Promise<{
 
     const { data, error } = await (supabase.from('addresses') as any)
       .select('*')
-      .eq('user_id', profile.id)
+      .eq('user_id', user.id)
       .order('is_default', { ascending: false })
       .order('created_at', { ascending: false });
 

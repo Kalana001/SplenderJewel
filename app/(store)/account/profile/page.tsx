@@ -2,6 +2,7 @@ import React from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { getCurrentUser } from '@/lib/auth/server';
 import { Container } from '@/components/ui/container';
 import { ProfileEditor } from '@/components/store/profile-editor';
 import { ArrowLeft, UserCircle } from 'lucide-react';
@@ -22,9 +23,7 @@ export default async function AccountProfilePage() {
     redirect('/login?error=Database%20service%20unavailable');
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
 
   if (!user) {
     redirect('/login?redirectTo=/account/profile');

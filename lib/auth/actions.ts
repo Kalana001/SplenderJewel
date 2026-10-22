@@ -2,6 +2,7 @@
 
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { getCurrentUser } from '@/lib/auth/server';
 import { revalidatePath } from 'next/cache';
 import { getPasswordResetRedirectUrl, getCanonicalSiteUrl } from '@/lib/auth/redirect';
 
@@ -285,9 +286,7 @@ export async function updateCustomerProfile(formData: {
     return { success: false, error: 'Database service is currently unavailable.' };
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
 
   if (!user) {
     return { success: false, error: 'Unauthorized. Please sign in to update your profile.' };
