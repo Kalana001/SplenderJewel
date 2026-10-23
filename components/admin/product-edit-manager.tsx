@@ -1163,6 +1163,7 @@ export function ProductEditManager({ initialProduct, categories }: ProductEditMa
                     onChange={(e) => setVariantForm({ ...variantForm, price: e.target.value })}
                     required
                     min={0}
+                    step="0.01"
                     className="bg-luxury-surface border-neutral-700 text-white font-mono text-sm"
                   />
                 </div>
@@ -1176,6 +1177,7 @@ export function ProductEditManager({ initialProduct, categories }: ProductEditMa
                     value={variantForm.discountPrice}
                     onChange={(e) => setVariantForm({ ...variantForm, discountPrice: e.target.value })}
                     min={0}
+                    step="0.01"
                     placeholder="Optional"
                     className="bg-luxury-surface border-neutral-700 text-white font-mono text-sm"
                   />
@@ -1191,6 +1193,7 @@ export function ProductEditManager({ initialProduct, categories }: ProductEditMa
                     value={variantForm.purchaseCost}
                     onChange={(e) => setVariantForm({ ...variantForm, purchaseCost: e.target.value })}
                     min={0}
+                    step="0.01"
                     className="bg-luxury-surface border-luxury-gold/40 text-luxury-gold-light font-mono text-sm"
                   />
                 </div>

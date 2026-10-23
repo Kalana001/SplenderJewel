@@ -904,7 +904,7 @@ export function ProductForm({ categories }: ProductFormProps) {
                         value={v.price}
                         onChange={(e) => handleUpdateVariant(index, 'price', e.target.value)}
                         min={0}
-                        step={10}
+                        step="0.01"
                         required
                         className="bg-luxury-surface border-neutral-700 text-white font-mono text-sm"
                       />
@@ -919,7 +919,7 @@ export function ProductForm({ categories }: ProductFormProps) {
                         value={v.discountPrice}
                         onChange={(e) => handleUpdateVariant(index, 'discountPrice', e.target.value)}
                         min={0}
-                        step={10}
+                        step="0.01"
                         placeholder="Optional promo price"
                         className="bg-luxury-surface border-neutral-700 text-white font-mono text-sm"
                       />
@@ -936,7 +936,7 @@ export function ProductForm({ categories }: ProductFormProps) {
                         value={v.purchaseCost}
                         onChange={(e) => handleUpdateVariant(index, 'purchaseCost', e.target.value)}
                         min={0}
-                        step={10}
+                        step="0.01"
                         className="bg-luxury-surface border-luxury-gold/40 text-luxury-gold-light font-mono text-sm"
                       />
                       <span className="text-[10px] text-neutral-500 mt-1 block">
