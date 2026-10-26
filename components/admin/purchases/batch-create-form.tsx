@@ -32,7 +32,7 @@ import {
   LineCostInput 
 } from '@/lib/purchases/calculations';
 import { createPurchaseBatchAction, CreateBatchPayload } from '@/lib/purchases/admin-actions';
-import { searchAdminInventoryProductsAction } from '@/lib/catalog/variants';
+import { searchAdminInventoryProductsAction, type AdminInventoryProductSummary } from '@/lib/catalog/variants';
 import type { PurchaseExpenseType } from '@/lib/purchases/types';
 
 export type PurchaseItemType = 'new' | 'existing';
@@ -107,8 +107,14 @@ export function BatchCreateForm() {
 
   // Search state for existing products (mapped by itemId)
   const [searchQueries, setSearchQueries] = useState<Record<string, string>>({});
-  const [searchResults, setSearchResults] = useState<Record<string, any[]>>({});
+  const [searchResults, setSearchResults] = useState<Record<string, AdminInventoryProductSummary[]>>({});
   const [isSearchingMap, setIsSearchingMap] = useState<Record<string, boolean>>({});
+  const [searchErrors, setSearchErrors] = useState<Record<string, string | null>>({});
+  const [searchHasSearched, setSearchHasSearched] = useState<Record<string, boolean>>({});
+
+  // Sequence ref and debounce timer ref per item to prevent race conditions and out-of-order stale overwrites
+  const searchSeqRef = useRef<Record<string, number>>({});
+  const searchDebounceTimers = useRef<Record<string, NodeJS.Timeout>>({});
 
   // Submission state
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -125,6 +131,14 @@ export function BatchCreateForm() {
       setFocusItemId(null);
     }
   }, [focusItemId]);
+
+  // Cleanup pending search debounce timers on unmount
+  useEffect(() => {
+    const timers = searchDebounceTimers.current;
+    return () => {
+      Object.values(timers).forEach((timer) => clearTimeout(timer));
+    };
+  }, []);
 
   // Add Item Handler: Prepends to top and sets focus
   const handleAddItem = (type: PurchaseItemType = 'new') => {
@@ -154,6 +168,9 @@ export function BatchCreateForm() {
   // Safe ID-based item operations to prevent index-shifting bugs
   const handleRemoveItem = (itemId: string) => {
     if (items.length <= 1) return;
+    if (searchDebounceTimers.current[itemId]) {
+      clearTimeout(searchDebounceTimers.current[itemId]);
+    }
     setItems((prev) => prev.filter((item) => item.id !== itemId));
   };
 
@@ -236,81 +253,126 @@ export function BatchCreateForm() {
     );
   };
 
-  // Search existing catalog products for an item
-  const handleSearchExistingProducts = async (itemId: string, query: string) => {
+  // Execute catalog search with sequence guard against race conditions
+  const executeProductSearch = async (itemId: string, query: string) => {
+    const seq = (searchSeqRef.current[itemId] || 0) + 1;
+    searchSeqRef.current[itemId] = seq;
+
+    setIsSearchingMap((prev) => ({ ...prev, [itemId]: true }));
+    setSearchErrors((prev) => ({ ...prev, [itemId]: null }));
+
+    try {
+      const res = await searchAdminInventoryProductsAction({
+        query,
+        limit: 8,
+      });
+
+      // Discard stale out-of-order response
+      if (seq !== searchSeqRef.current[itemId]) {
+        return;
+      }
+
+      if (res.success && res.products) {
+        setSearchResults((prev) => ({ ...prev, [itemId]: res.products }));
+        setSearchErrors((prev) => ({ ...prev, [itemId]: null }));
+      } else {
+        setSearchResults((prev) => ({ ...prev, [itemId]: [] }));
+        if (res.error) {
+          setSearchErrors((prev) => ({ ...prev, [itemId]: res.error ?? 'Failed to search inventory.' }));
+        }
+      }
+    } catch (err) {
+      if (seq !== searchSeqRef.current[itemId]) return;
+      setSearchResults((prev) => ({ ...prev, [itemId]: [] }));
+      setSearchErrors((prev) => ({
+        ...prev,
+        [itemId]: err instanceof Error ? err.message : 'Failed to search inventory.',
+      }));
+    } finally {
+      if (seq === searchSeqRef.current[itemId]) {
+        setIsSearchingMap((prev) => ({ ...prev, [itemId]: false }));
+        setSearchHasSearched((prev) => ({ ...prev, [itemId]: true }));
+      }
+    }
+  };
+
+  // Search input handler with immediate feedback and 300ms debounce
+  const handleSearchInputChange = (itemId: string, query: string) => {
+    // 1. Immediate input feedback
     setSearchQueries((prev) => ({ ...prev, [itemId]: query }));
+    setSearchErrors((prev) => ({ ...prev, [itemId]: null }));
+
+    // Clear active timer for this item
+    if (searchDebounceTimers.current[itemId]) {
+      clearTimeout(searchDebounceTimers.current[itemId]);
+    }
 
     if (!query.trim()) {
       setSearchResults((prev) => ({ ...prev, [itemId]: [] }));
+      setIsSearchingMap((prev) => ({ ...prev, [itemId]: false }));
+      setSearchHasSearched((prev) => ({ ...prev, [itemId]: false }));
       return;
     }
 
     setIsSearchingMap((prev) => ({ ...prev, [itemId]: true }));
 
-    try {
-      const res = await searchAdminInventoryProductsAction({
-        query: query.trim(),
-        limit: 6,
-      });
-
-      if (res.success && res.products) {
-        setSearchResults((prev) => ({ ...prev, [itemId]: res.products }));
-      } else {
-        setSearchResults((prev) => ({ ...prev, [itemId]: [] }));
-      }
-    } catch {
-      setSearchResults((prev) => ({ ...prev, [itemId]: [] }));
-    } finally {
-      setIsSearchingMap((prev) => ({ ...prev, [itemId]: false }));
-    }
+    // 2. Debounce by 300ms (within 250-350ms specification)
+    searchDebounceTimers.current[itemId] = setTimeout(() => {
+      executeProductSearch(itemId, query.trim());
+    }, 300);
   };
 
-  // Selecting an existing product populates its variations and metadata
-  const handleSelectExistingProduct = (itemId: string, product: any) => {
-    const productVariants = Array.isArray(product.product_variants) ? product.product_variants : [];
+  // Selecting an existing product populates its variations and metadata from typed AdminInventoryProductSummary
+  const handleSelectExistingProduct = (itemId: string, product: AdminInventoryProductSummary) => {
+    if (searchDebounceTimers.current[itemId]) {
+      clearTimeout(searchDebounceTimers.current[itemId]);
+    }
+
+    const variants = Array.isArray(product.variants) ? product.variants : [];
     
-    const formVariations: FormVariation[] = productVariants.length > 0 
-      ? productVariants.map((pv: any, idx: number) => ({
-          id: `var-${Date.now()}-${pv.id || idx}`,
-          variationTitle: pv.title || 'Default',
-          attributes: {
-            existing_product_id: product.id,
-            existing_variant_id: pv.id,
-            target_sku: pv.sku,
-          },
-          supplierSku: pv.sku || '',
-          quantityPurchased: 1,
-          supplierUnitPriceLkr: Number(pv.purchase_cost || 0),
-          existingVariantId: pv.id,
-          existingCurrentStock: Number(pv.stock_quantity || 0),
-          existingCurrentCost: Number(pv.purchase_cost || 0),
-        }))
-      : [
-          {
-            id: `var-${Date.now()}-1`,
-            variationTitle: 'Default',
-            attributes: { existing_product_id: product.id },
-            supplierSku: product.product_code || '',
-            quantityPurchased: 1,
-            supplierUnitPriceLkr: 0,
-          }
-        ];
+    // Map each saved variation accurately; do NOT create a fake Default variation if product has saved variations
+    const formVariations: FormVariation[] = variants.map((pv, idx) => ({
+      id: `var-${Date.now()}-${pv.id || idx}`,
+      variationTitle: pv.title || 'Default',
+      attributes: {
+        existing_product_id: product.id,
+        existing_variant_id: pv.id,
+        target_sku: pv.sku,
+        is_restock: 'true',
+      },
+      supplierSku: pv.sku || '',
+      quantityPurchased: 1,
+      supplierUnitPriceLkr: 0, // Starts at 0 for independent entry; reference WAC is preserved in existingCurrentCost
+      existingVariantId: pv.id,
+      existingCurrentStock: typeof pv.stockQuantity === 'number' ? pv.stockQuantity : 0,
+      existingCurrentCost: typeof pv.purchaseCost === 'number' ? pv.purchaseCost : 0,
+    }));
 
     handleUpdateItem(itemId, {
       itemName: product.name,
-      itemCategoryHint: product.categories?.name || 'Jewelry',
+      itemCategoryHint: product.categoryName || 'Jewelry',
       existingProductId: product.id,
-      existingProductCode: product.product_code || '',
+      existingProductCode: product.sku || '',
       variations: formVariations,
     });
 
-    // Clear search results for this item
+    // Clear search state for this item
     setSearchQueries((prev) => ({ ...prev, [itemId]: '' }));
     setSearchResults((prev) => ({ ...prev, [itemId]: [] }));
+    setSearchErrors((prev) => ({ ...prev, [itemId]: null }));
+    setSearchHasSearched((prev) => ({ ...prev, [itemId]: false }));
   };
 
   // Clear existing product selection
   const handleClearExistingProduct = (itemId: string) => {
+    if (searchDebounceTimers.current[itemId]) {
+      clearTimeout(searchDebounceTimers.current[itemId]);
+    }
+    setSearchQueries((prev) => ({ ...prev, [itemId]: '' }));
+    setSearchResults((prev) => ({ ...prev, [itemId]: [] }));
+    setSearchErrors((prev) => ({ ...prev, [itemId]: null }));
+    setSearchHasSearched((prev) => ({ ...prev, [itemId]: false }));
+
     handleUpdateItem(itemId, {
       itemName: '',
       itemCategoryHint: 'Jewelry',
@@ -430,6 +492,18 @@ export function BatchCreateForm() {
       setSubmitError('Supplier name is required.');
       return;
     }
+
+    for (const item of items) {
+      if (item.itemType === 'existing' && item.existingProductId && item.variations.length === 0) {
+        setSubmitError(`Product "${item.itemName}" has no variations in the catalog. Please configure variations in Catalog before restocking or remove this item.`);
+        return;
+      }
+      if (item.variations.length === 0) {
+        setSubmitError(`Item "${item.itemName || 'Untitled'}" must have at least one variation.`);
+        return;
+      }
+    }
+
     if (!calculationPreview.isValid) {
       setSubmitError(calculationPreview.error || 'Please correct line item quantities and costs.');
       return;
@@ -785,30 +859,41 @@ export function BatchCreateForm() {
                 /* Mode 2: Existing Product Search and Selection */
                 <div className="space-y-3">
                   {item.existingProductId ? (
-                    <div className="p-3 rounded-sm bg-neutral-900 border border-amber-500/30 flex items-center justify-between gap-3">
-                      <div>
-                        <div className="font-semibold text-white text-xs flex items-center gap-2">
-                          <span>{item.itemName}</span>
-                          {item.existingProductCode && (
-                            <span className="font-mono text-[10px] text-luxury-gold px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800">
-                              {item.existingProductCode}
-                            </span>
-                          )}
+                    <div className="space-y-3">
+                      <div className="p-3 rounded-sm bg-neutral-900 border border-amber-500/30 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="font-semibold text-white text-xs flex items-center gap-2">
+                            <span>{item.itemName}</span>
+                            {item.existingProductCode && (
+                              <span className="font-mono text-[10px] text-luxury-gold px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800">
+                                {item.existingProductCode}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-neutral-400 mt-0.5">
+                            Category: <span className="text-neutral-300">{item.itemCategoryHint || 'Jewelry'}</span> • Variations below will blend into this existing product without creating duplicates.
+                          </div>
                         </div>
-                        <div className="text-[11px] text-neutral-400 mt-0.5">
-                          Category: <span className="text-neutral-300">{item.itemCategoryHint || 'Jewelry'}</span> • Variations below will blend into this existing product without creating duplicates.
-                        </div>
+
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleClearExistingProduct(item.id)}
+                          className="h-7 text-[11px] text-neutral-400 hover:text-white"
+                        >
+                          Change Product
+                        </Button>
                       </div>
 
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleClearExistingProduct(item.id)}
-                        className="h-7 text-[11px] text-neutral-400 hover:text-white"
-                      >
-                        Change Product
-                      </Button>
+                      {item.variations.length === 0 && (
+                        <div className="p-3.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
+                          <AlertCircle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                          <div>
+                            <span className="font-semibold">No Variations Found:</span> This product has no active variations in catalog. Please configure variations in Catalog before restocking.
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -816,34 +901,68 @@ export function BatchCreateForm() {
                         <Search className="w-3.5 h-3.5 text-luxury-gold" />
                         Search Existing Product to Restock *
                       </Label>
-                      <Input
-                        id={`focus-target-${item.id}`}
-                        placeholder="Search by product name, code (e.g. RNG-001), or variant SKU..."
-                        value={searchQueries[item.id] || ''}
-                        onChange={(e) => handleSearchExistingProducts(item.id, e.target.value)}
-                        className="bg-neutral-900 border-neutral-800 text-white text-xs"
-                      />
+                      <div className="relative">
+                        <Input
+                          id={`focus-target-${item.id}`}
+                          placeholder="Search by product name, code (e.g. RNG-001), or variant SKU..."
+                          value={searchQueries[item.id] || ''}
+                          onChange={(e) => handleSearchInputChange(item.id, e.target.value)}
+                          className="bg-neutral-900 border-neutral-800 text-white text-xs pr-8"
+                        />
+                        {isSearchingMap[item.id] && (
+                          <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none">
+                            <div className="w-3.5 h-3.5 border-2 border-luxury-gold border-t-transparent rounded-full animate-spin" />
+                          </div>
+                        )}
+                      </div>
 
                       {isSearchingMap[item.id] && (
-                        <div className="text-[11px] text-neutral-400 py-1">Searching existing inventory...</div>
+                        <div className="text-[11px] text-luxury-gold/80 py-1 flex items-center gap-1.5">
+                          <span>Searching existing inventory...</span>
+                        </div>
+                      )}
+
+                      {searchErrors[item.id] && (
+                        <div className="p-2.5 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center justify-between">
+                          <span>{searchErrors[item.id]}</span>
+                          <button
+                            type="button"
+                            onClick={() => executeProductSearch(item.id, searchQueries[item.id] || '')}
+                            className="text-luxury-gold hover:underline text-[11px] ml-2 shrink-0 font-medium"
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      )}
+
+                      {!isSearchingMap[item.id] && searchHasSearched[item.id] && searchQueries[item.id]?.trim() && (!searchResults[item.id] || searchResults[item.id].length === 0) && !searchErrors[item.id] && (
+                        <div className="text-xs text-neutral-400 py-1.5 italic">
+                          No products found matching &quot;{searchQueries[item.id]}&quot;.
+                        </div>
                       )}
 
                       {searchResults[item.id] && searchResults[item.id].length > 0 && (
-                        <div className="space-y-1.5 max-h-48 overflow-y-auto pt-1">
+                        <div className="space-y-1.5 max-h-56 overflow-y-auto pt-1">
                           {searchResults[item.id].map((p) => (
                             <div
                               key={p.id}
-                              className="p-2.5 rounded bg-neutral-900/90 hover:bg-neutral-800/80 border border-neutral-800 flex items-center justify-between gap-3 transition-colors"
+                              className="p-3 rounded bg-neutral-900/95 hover:bg-neutral-800/90 border border-neutral-800 flex items-center justify-between gap-3 transition-colors"
                             >
-                              <div>
+                              <div className="space-y-1">
                                 <div className="font-medium text-white text-xs flex items-center gap-2">
                                   <span>{p.name}</span>
-                                  {p.product_code && (
-                                    <span className="font-mono text-[10px] text-neutral-400">{p.product_code}</span>
+                                  {p.sku && (
+                                    <span className="font-mono text-[10px] text-luxury-gold px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800">
+                                      {p.sku}
+                                    </span>
                                   )}
                                 </div>
-                                <div className="text-[10px] text-neutral-400 mt-0.5">
-                                  Category: {p.categories?.name || 'Jewelry'} • {p.product_variants?.length || 0} variant(s)
+                                <div className="text-[11px] text-neutral-400 flex flex-wrap items-center gap-x-2.5 gap-y-0.5">
+                                  <span>Category: <span className="text-neutral-300">{p.categoryName || 'Jewelry'}</span></span>
+                                  <span>•</span>
+                                  <span>{p.variants?.length ?? p.variantCount ?? 0} variation{(p.variants?.length ?? p.variantCount) === 1 ? '' : 's'}</span>
+                                  <span>•</span>
+                                  <span>Total Stock: <span className="font-mono text-neutral-300">{p.totalStock ?? 0}</span></span>
                                 </div>
                               </div>
 
@@ -852,7 +971,7 @@ export function BatchCreateForm() {
                                 variant="gold"
                                 size="sm"
                                 onClick={() => handleSelectExistingProduct(item.id, p)}
-                                className="h-6 text-[10px] px-2.5"
+                                className="h-7 text-xs px-3 shrink-0"
                               >
                                 Select Product
                               </Button>
@@ -866,24 +985,25 @@ export function BatchCreateForm() {
               )}
 
               {/* Variations Table */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="text-neutral-400 border-b border-neutral-800 text-[11px]">
-                      <th className="py-2 px-2 font-medium">Variation Title / Size</th>
-                      <th className="py-2 px-2 font-medium">Supplier / Target SKU</th>
-                      {item.itemType === 'existing' && (
-                        <th className="py-2 px-2 font-medium text-center w-28">Current Stock</th>
-                      )}
-                      <th className="py-2 px-2 font-medium w-24">Qty *</th>
-                      <th className="py-2 px-2 font-medium w-36">Supplier Cost (LKR) *</th>
-                      <th className="py-2 px-2 font-medium text-right w-32">Allocated Exp.</th>
-                      <th className="py-2 px-2 font-medium text-right w-32">Unit Landed</th>
-                      <th className="py-2 px-2 font-medium text-right w-32">Line Landed</th>
-                      <th className="py-2 px-2 text-right w-10"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-800/40">
+              {item.variations.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="text-neutral-400 border-b border-neutral-800 text-[11px]">
+                        <th className="py-2 px-2 font-medium">Variation Title / Size</th>
+                        <th className="py-2 px-2 font-medium">Supplier / Target SKU</th>
+                        {item.itemType === 'existing' && (
+                          <th className="py-2 px-2 font-medium text-center w-28">Current Stock</th>
+                        )}
+                        <th className="py-2 px-2 font-medium w-24">Qty *</th>
+                        <th className="py-2 px-2 font-medium w-36">Supplier Cost (LKR) *</th>
+                        <th className="py-2 px-2 font-medium text-right w-32">Allocated Exp.</th>
+                        <th className="py-2 px-2 font-medium text-right w-32">Unit Landed</th>
+                        <th className="py-2 px-2 font-medium text-right w-32">Line Landed</th>
+                        <th className="py-2 px-2 text-right w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-800/40">
                     {item.variations.map((v) => {
                       const alloc = calculationPreview.allocMap.get(v.id);
                       const allocExpenseLkr = alloc ? centsToDecimalLkr(alloc.lineAllocatedExpenseCents) : 0;
@@ -912,11 +1032,15 @@ export function BatchCreateForm() {
                             <td className="py-2 px-2 text-center">
                               {v.existingCurrentStock !== undefined ? (
                                 <div className="flex flex-col items-center">
-                                  <span className="font-mono text-[11px] text-neutral-300 bg-neutral-900 px-2 py-0.5 rounded border border-neutral-800">
+                                  <span className={`font-mono text-[11px] px-2 py-0.5 rounded border ${
+                                    v.existingCurrentStock === 0
+                                      ? 'text-rose-400 bg-rose-500/10 border-rose-500/20'
+                                      : 'text-neutral-300 bg-neutral-900 border-neutral-800'
+                                  }`}>
                                     {v.existingCurrentStock} units
                                   </span>
                                   {v.existingCurrentCost !== undefined && (
-                                    <span className="text-[10px] text-neutral-500 font-mono mt-0.5">
+                                    <span className="text-[10px] text-neutral-400 font-mono mt-0.5">
                                       Ref: Rs. {v.existingCurrentCost.toFixed(2)}
                                     </span>
                                   )}
@@ -983,8 +1107,9 @@ export function BatchCreateForm() {
                   </tbody>
                 </table>
               </div>
-            </div>
-          ))}
+            ) : null}
+          </div>
+        ))}
         </CardContent>
       </Card>
 
