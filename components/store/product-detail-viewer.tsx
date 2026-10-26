@@ -168,16 +168,20 @@ export function ProductDetailViewer({
     };
   }, [product.id, initialIsAuthenticated]);
 
-  // Variant selection: default to first active variant
-  const [selectedVariant, setSelectedVariant] = useState<ProductVariantPublic>(
-    product.variants[0] || null
+  const hasSelectableVariants = Boolean(product.variants && product.variants.length > 1);
+
+  // Variant selection: start unselected if multiple variations exist so customer consciously chooses,
+  // or preselect the single variant if product has no selectable variations.
+  const [selectedVariant, setSelectedVariant] = useState<ProductVariantPublic | null>(
+    hasSelectableVariants ? null : product.variants[0] || null
   );
 
   const [quantity, setQuantity] = useState(1);
   const [addedToBag, setAddedToBag] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
   const [serverStock, setServerStock] = useState<number | null>(null);
-  const [isLoadingAvailability, setIsLoadingAvailability] = useState(true);
+  // Only check availability initially if a variant is pre-selected (products without selectable variations)
+  const [isLoadingAvailability, setIsLoadingAvailability] = useState(!hasSelectableVariants);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const availabilitySeq = useRef(0);
 
@@ -199,6 +203,7 @@ export function ProductDetailViewer({
     setServerStock(null);
 
     async function loadAvailability() {
+      if (!selectedVariant) return;
       try {
         const res = await checkVariantAvailabilityAction(selectedVariant.id);
         if (!isMounted || currentSeq !== availabilitySeq.current) return;
@@ -237,17 +242,17 @@ export function ProductDetailViewer({
     });
   }, []);
 
-  // Compute pricing for selected variant
+  // Compute pricing for selected variant (or base price if no variant chosen)
   const currentPrice = selectedVariant
     ? selectedVariant.discountPrice != null && selectedVariant.discountPrice > 0
       ? selectedVariant.discountPrice
       : selectedVariant.price
-    : product.basePrice;
+    : product.baseDiscountPrice || product.basePrice;
 
   const originalPrice = selectedVariant ? selectedVariant.price : product.basePrice;
   const hasDiscount = selectedVariant
     ? selectedVariant.discountPrice != null && selectedVariant.discountPrice < originalPrice
-    : false;
+    : Boolean(product.baseDiscountPrice && product.baseDiscountPrice < product.basePrice);
   const discountPercent = hasDiscount
     ? Math.round(((originalPrice - currentPrice) / originalPrice) * 100)
     : 0;
@@ -266,11 +271,13 @@ export function ProductDetailViewer({
 
   const isOutOfStock =
     !isLoadingAvailability &&
-    ((selectedVariant ? selectedVariant.stockStatus === 'out_of_stock' : false) ||
-      availableStock === 0);
-  const isMaxInBag = !isOutOfStock && remainingAvailable === 0 && alreadyInCart > 0;
+    selectedVariant !== null &&
+    (selectedVariant.stockStatus === 'out_of_stock' || availableStock === 0);
+  const isMaxInBag = selectedVariant !== null && !isOutOfStock && remainingAvailable === 0 && alreadyInCart > 0;
   const isLowStock =
-    !isOutOfStock && (selectedVariant?.stockStatus === 'low_stock' || (availableStock > 0 && availableStock <= 5));
+    selectedVariant !== null &&
+    !isOutOfStock &&
+    (selectedVariant.stockStatus === 'low_stock' || (availableStock > 0 && availableStock <= 5));
 
   // Handler: Change variant and auto-switch image if variant has associated image
   function handleSelectVariant(variant: ProductVariantPublic) {
@@ -343,7 +350,10 @@ export function ProductDetailViewer({
 
   function handleAddToBag() {
     setStockError(null);
-    if (!selectedVariant) return;
+    if (!selectedVariant) {
+      setStockError('Please select a variation first.');
+      return;
+    }
 
     if (isLoadingAvailability) {
       setStockError('Please wait while inventory availability is verified.');
@@ -413,7 +423,10 @@ export function ProductDetailViewer({
 
   function handleBuyNow() {
     setStockError(null);
-    if (!selectedVariant) return;
+    if (!selectedVariant) {
+      setStockError('Please select a variation first.');
+      return;
+    }
 
     if (isLoadingAvailability) {
       setStockError('Please wait while inventory availability is verified.');
@@ -496,7 +509,7 @@ export function ProductDetailViewer({
       </nav>
 
       {/* Main Product Showcase (2 Columns) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-14">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8 lg:gap-14">
         {/* LEFT COLUMN: IMAGE GALLERY */}
         <ProductImageGallery
           images={product.images}
@@ -510,7 +523,7 @@ export function ProductDetailViewer({
 
 
         {/* RIGHT COLUMN: PRODUCT DETAILS & PURCHASE ACTIONS */}
-        <div className="space-y-6 flex flex-col justify-start">
+        <div className="space-y-4 sm:space-y-6 flex flex-col justify-start">
           {/* Header Info */}
           <div>
             <div className="flex items-start justify-between gap-4">
@@ -529,7 +542,7 @@ export function ProductDetailViewer({
                   )}
                 </div>
 
-                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-serif text-white leading-tight">
+                <h1 className="text-xl sm:text-2xl lg:text-3xl font-serif text-white leading-snug">
                   {product.name}
                 </h1>
 
@@ -608,14 +621,14 @@ export function ProductDetailViewer({
           </div>
 
           {/* Price Section */}
-          <div className="p-4 bg-luxury-card border border-luxury-border rounded-sm flex items-baseline justify-between">
-            <div className="flex items-baseline gap-3">
-              <span className="text-2xl sm:text-3xl font-serif font-bold text-luxury-gold">
+          <div className="p-3 sm:p-4 bg-luxury-card border border-luxury-border rounded-sm flex items-center justify-between">
+            <div className="flex items-baseline gap-2.5 sm:gap-3">
+              <span className="text-xl sm:text-2xl lg:text-3xl font-serif font-bold text-luxury-gold">
                 {formatCurrency(currentPrice)}
               </span>
 
               {hasDiscount && (
-                <span className="text-base text-neutral-500 line-through">
+                <span className="text-sm sm:text-base text-neutral-500 line-through">
                   {formatCurrency(originalPrice)}
                 </span>
               )}
@@ -623,7 +636,12 @@ export function ProductDetailViewer({
 
             {/* Stock Availability Indicator */}
             <div>
-              {isLoadingAvailability ? (
+              {!selectedVariant && hasSelectableVariants ? (
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-400 bg-neutral-900 border border-neutral-700 px-2.5 py-1 rounded">
+                  <Layers className="h-3 w-3 text-luxury-gold" />
+                  Choose a variation
+                </span>
+              ) : isLoadingAvailability ? (
                 <span className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-400 bg-neutral-900 border border-neutral-800 px-2.5 py-1 rounded">
                   <Loader2 className="h-3 w-3 animate-spin text-luxury-gold" />
                   Checking Stock...
@@ -647,21 +665,18 @@ export function ProductDetailViewer({
             </div>
           </div>
 
-          {/* Short Description */}
-          {product.shortDescription && (
-            <p className="text-sm text-neutral-300 leading-relaxed">
-              {product.shortDescription}
-            </p>
-          )}
-
-          {/* Variant Selector */}
-          {product.variants.length > 1 && (
-            <div className="space-y-3 pt-2">
+          {/* Variant Selector - Positioned directly after price section */}
+          {hasSelectableVariants && (
+            <div className="space-y-2.5 pt-1">
               <label className="block text-xs uppercase tracking-wider text-neutral-300 font-semibold">
-                Select Option / Variant: <span className="text-luxury-gold font-normal">{selectedVariant?.title}</span>
+                {selectedVariant ? (
+                  <>Select Option / Variant: <span className="text-luxury-gold font-normal">{selectedVariant.title}</span></>
+                ) : (
+                  <span className="text-luxury-gold">Choose a Colour / Variation</span>
+                )}
               </label>
 
-              <div className="flex flex-wrap gap-2.5">
+              <div className="flex flex-wrap gap-2">
                 {product.variants.map((variant) => {
                   const isSelected = selectedVariant?.id === variant.id;
                   const isVarOut = variant.stockStatus === 'out_of_stock';
@@ -671,11 +686,12 @@ export function ProductDetailViewer({
                       key={variant.id}
                       type="button"
                       onClick={() => handleSelectVariant(variant)}
-                      className={`px-4 py-2.5 rounded-sm text-xs font-medium transition-all border flex items-center gap-2 ${
+                      className={`px-3 py-2 sm:px-4 sm:py-2.5 rounded-sm text-xs font-medium transition-all border flex items-center gap-1.5 sm:gap-2 min-h-[40px] touch-manipulation ${
                         isSelected
-                          ? 'bg-luxury-gold text-luxury-black border-luxury-gold font-bold shadow-md'
-                          : 'bg-luxury-surface text-neutral-300 border-neutral-700 hover:border-neutral-500'
+                          ? 'bg-luxury-gold text-luxury-black border-luxury-gold font-bold shadow-md ring-1 ring-luxury-gold'
+                          : 'bg-luxury-surface text-neutral-300 border-neutral-700 hover:border-luxury-gold/50 hover:text-white'
                       } ${isVarOut ? 'opacity-60 line-through' : ''}`}
+                      aria-pressed={isSelected}
                     >
                       <span>{variant.title}</span>
                       <span className="text-[11px] opacity-80">
@@ -689,14 +705,21 @@ export function ProductDetailViewer({
           )}
 
           {/* Shopping Bag & WhatsApp Actions */}
-          <div className="space-y-3 pt-3">
+          <div className="space-y-3 pt-2">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
               {/* Quantity Selector */}
               <div className="flex items-center justify-between sm:justify-center border border-neutral-700 rounded bg-neutral-900/80 h-12 px-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                  disabled={quantity <= 1 || isLoadingAvailability || Boolean(availabilityError) || isOutOfStock || availableStock <= 0}
+                  disabled={
+                    (hasSelectableVariants && !selectedVariant) ||
+                    quantity <= 1 ||
+                    isLoadingAvailability ||
+                    Boolean(availabilityError) ||
+                    isOutOfStock ||
+                    availableStock <= 0
+                  }
                   className="p-1.5 text-neutral-400 hover:text-white disabled:opacity-30 transition-colors"
                   aria-label="Decrease quantity"
                 >
@@ -708,7 +731,14 @@ export function ProductDetailViewer({
                 <button
                   type="button"
                   onClick={() => setQuantity((q) => Math.min(availableStock, q + 1))}
-                  disabled={isLoadingAvailability || Boolean(availabilityError) || isOutOfStock || availableStock <= 0 || quantity >= availableStock}
+                  disabled={
+                    (hasSelectableVariants && !selectedVariant) ||
+                    isLoadingAvailability ||
+                    Boolean(availabilityError) ||
+                    isOutOfStock ||
+                    availableStock <= 0 ||
+                    quantity >= availableStock
+                  }
                   className="p-1.5 text-neutral-400 hover:text-white disabled:opacity-30 transition-colors"
                   aria-label="Increase quantity"
                   title={
@@ -728,7 +758,11 @@ export function ProductDetailViewer({
                   type="button"
                   variant="primary"
                   size="lg"
-                  disabled={isLoadingAvailability || Boolean(availabilityError) || isOutOfStock || isMaxInBag || remainingAvailable <= 0}
+                  disabled={
+                    isLoadingAvailability ||
+                    Boolean(availabilityError) ||
+                    (selectedVariant ? isOutOfStock || isMaxInBag || remainingAvailable <= 0 : false)
+                  }
                   onClick={handleAddToBag}
                   className="w-full h-12 min-h-[44px] text-sm sm:text-base font-semibold flex items-center justify-center gap-2 border-luxury-gold/50 text-white hover:border-luxury-gold hover:text-luxury-gold bg-neutral-900/90 transition-all disabled:opacity-50"
                   aria-label="Add to shopping bag"
@@ -747,9 +781,9 @@ export function ProductDetailViewer({
                     <>
                       <ShoppingBag className="h-5 w-5 text-luxury-gold" />
                       <span>
-                        {isOutOfStock
+                        {selectedVariant && isOutOfStock
                           ? 'Out of Stock'
-                          : isMaxInBag
+                          : selectedVariant && isMaxInBag
                           ? 'All in Bag'
                           : 'Add to Bag'}
                       </span>
@@ -762,7 +796,12 @@ export function ProductDetailViewer({
                   type="button"
                   variant="gold"
                   size="lg"
-                  disabled={isLoadingAvailability || Boolean(availabilityError) || isOutOfStock || availableStock <= 0 || isNavigatingBuyNow}
+                  disabled={
+                    isLoadingAvailability ||
+                    Boolean(availabilityError) ||
+                    (selectedVariant ? isOutOfStock || availableStock <= 0 : false) ||
+                    isNavigatingBuyNow
+                  }
                   onClick={handleBuyNow}
                   className="w-full h-12 min-h-[44px] text-sm sm:text-base font-semibold flex items-center justify-center gap-2 shadow-lg shadow-luxury-gold/15 hover:shadow-luxury-gold/25 transition-all disabled:opacity-50"
                   aria-label="Buy now with instant checkout"
@@ -775,7 +814,7 @@ export function ProductDetailViewer({
                   ) : (
                     <>
                       <Sparkles className="h-5 w-5 text-luxury-black" />
-                      <span>{isOutOfStock ? 'Out of Stock' : 'Buy Now'}</span>
+                      <span>{selectedVariant && isOutOfStock ? 'Out of Stock' : 'Buy Now'}</span>
                     </>
                   )}
                 </Button>
@@ -820,6 +859,15 @@ export function ProductDetailViewer({
               </div>
             )}
 
+            {/* Short Description - Below purchasing controls */}
+            {product.shortDescription && (
+              <div className="pt-2 border-t border-luxury-border/50">
+                <p className="text-xs sm:text-sm text-neutral-300 leading-relaxed">
+                  {product.shortDescription}
+                </p>
+              </div>
+            )}
+
             {/* Concierge WhatsApp Enquiry Button */}
             <a
               href={whatsAppLink}
@@ -831,7 +879,7 @@ export function ProductDetailViewer({
                 type="button"
                 variant="outline"
                 size="lg"
-                disabled={isOutOfStock}
+                disabled={Boolean(selectedVariant && isOutOfStock)}
                 className="w-full text-xs py-3 font-medium flex items-center justify-center gap-2 border-neutral-800 bg-neutral-900/60 text-neutral-300 hover:text-luxury-gold hover:border-luxury-gold/40 transition-colors"
               >
                 <MessageCircle className="h-4 w-4 text-emerald-400 shrink-0" />

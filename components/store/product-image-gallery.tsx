@@ -44,7 +44,11 @@ export function ProductImageGallery({
     return filterGalleryImages(images, selectedVariantId);
   }, [images, selectedVariantId]);
 
-  const [activeIndex, setActiveIndex] = useState<number>(0);
+  const [activeIndex, setActiveIndex] = useState<number>(() => {
+    if (!images || images.length === 0) return 0;
+    const primaryIdx = images.findIndex((img) => img.isPrimary);
+    return primaryIdx !== -1 ? primaryIdx : 0;
+  });
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxZoomed, setLightboxZoomed] = useState(false);
 
@@ -142,6 +146,16 @@ export function ProductImageGallery({
         setActiveIndex(variantIdx);
         return;
       }
+
+      // If new variant has no specific image, retain current image if valid, or fall back to primary
+      setActiveIndex((prev) => {
+        if (prev >= 0 && prev < filteredImages.length) {
+          return prev;
+        }
+        const primaryIdx = filteredImages.findIndex((img) => img.isPrimary);
+        return primaryIdx !== -1 ? primaryIdx : 0;
+      });
+      return;
     }
 
     // If new variant has no specific image, default to primary image or 0
