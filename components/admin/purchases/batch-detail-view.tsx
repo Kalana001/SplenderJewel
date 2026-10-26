@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { BatchStatusBadge } from './batch-status-badge';
+import { PurchaseRestockModal } from './purchase-restock-modal';
 import type { 
   BatchDetailViewDataDTO, 
   PurchaseBatchItemVariationDTO 
@@ -53,6 +54,10 @@ export function BatchDetailView({ data, isMock }: BatchDetailViewProps) {
   const [isCancelling, setIsCancelling] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+
+  // Restock Variant Modal State
+  const [isRestockModalOpen, setIsRestockModalOpen] = useState(false);
+  const [selectedRestockVariation, setSelectedRestockVariation] = useState<any | null>(null);
 
   // Receiving Form State: map variationId -> quantity to receive
   const [receiveQuantities, setReceiveQuantities] = useState<Record<string, number>>({});
@@ -446,10 +451,12 @@ export function BatchDetailView({ data, isMock }: BatchDetailViewProps) {
                 <th className="py-3 px-4 font-medium text-center">Purchased</th>
                 <th className="py-3 px-4 font-medium text-center">Received</th>
                 <th className="py-3 px-4 font-medium text-center">Unreceived</th>
+                <th className="py-3 px-4 font-medium text-center">Unlinked</th>
                 <th className="py-3 px-4 font-medium text-right">Supplier Unit</th>
                 <th className="py-3 px-4 font-medium text-right">Allocated Exp</th>
                 <th className="py-3 px-4 font-medium text-right">Unit Landed</th>
                 <th className="py-3 px-4 font-medium text-right">Line Landed</th>
+                <th className="py-3 px-4 font-medium text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-800/60">
@@ -457,10 +464,12 @@ export function BatchDetailView({ data, isMock }: BatchDetailViewProps) {
                 <React.Fragment key={item.id}>
                   {item.variations.map((v) => {
                     const unreceived = v.quantityPurchased - v.quantityReceived;
+                    const unlinked = Math.max(0, v.quantityReceived - v.quantityLinked);
                     const supplierUnitLkr = centsToDecimalLkr(v.supplierUnitPriceCents);
                     const allocExpenseLkr = centsToDecimalLkr(v.lineAllocatedExpenseCents);
                     const unitLandedLkr = centsToDecimalLkr(v.unitLandedCostCents);
                     const lineLandedLkr = centsToDecimalLkr(v.lineTotalLandedCostCents);
+                    const canRestock = unlinked > 0 && (batch.status === 'received' || batch.status === 'partially_received');
 
                     return (
                       <tr key={v.id} className="hover:bg-neutral-800/20">
@@ -499,6 +508,16 @@ export function BatchDetailView({ data, isMock }: BatchDetailViewProps) {
                           )}
                         </td>
 
+                        <td className="py-3 px-4 text-center font-mono">
+                          {unlinked > 0 ? (
+                            <span className="text-emerald-400 font-semibold">+{unlinked}</span>
+                          ) : v.quantityLinked > 0 ? (
+                            <span className="text-neutral-500 font-normal">0</span>
+                          ) : (
+                            <span className="text-neutral-600">—</span>
+                          )}
+                        </td>
+
                         <td className="py-3 px-4 text-right font-mono text-neutral-300">
                           Rs. {supplierUnitLkr.toFixed(2)}
                         </td>
@@ -513,6 +532,37 @@ export function BatchDetailView({ data, isMock }: BatchDetailViewProps) {
 
                         <td className="py-3 px-4 text-right font-mono text-white font-semibold">
                           Rs. {lineLandedLkr.toFixed(2)}
+                        </td>
+
+                        <td className="py-3 px-4 text-right">
+                          {canRestock ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedRestockVariation({
+                                  id: v.id,
+                                  batchNumber: batch.batchNumber,
+                                  supplierName: batch.supplierName,
+                                  itemName: item.itemName,
+                                  variationTitle: v.variationTitle,
+                                  availableQuantity: unlinked,
+                                  unitLandedCostCents: v.unitLandedCostCents,
+                                  attributes: v.attributes || {},
+                                });
+                                setIsRestockModalOpen(true);
+                              }}
+                              className="h-7 text-[11px] px-2 text-luxury-gold border-luxury-gold/40 hover:bg-luxury-gold/15 flex items-center gap-1 ml-auto"
+                            >
+                              <Truck className="w-3 h-3" />
+                              <span>Restock</span>
+                            </Button>
+                          ) : v.quantityLinked > 0 && unlinked === 0 ? (
+                            <span className="text-[10px] text-emerald-400 font-mono">Transferred</span>
+                          ) : (
+                            <span className="text-[10px] text-neutral-500">Awaiting Delivery</span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -758,6 +808,24 @@ export function BatchDetailView({ data, isMock }: BatchDetailViewProps) {
             </form>
           </Card>
         </div>
+      )}
+
+      {/* Restock Existing Variant Modal */}
+      {isRestockModalOpen && selectedRestockVariation && (
+        <PurchaseRestockModal
+          isOpen={isRestockModalOpen}
+          onClose={() => {
+            setIsRestockModalOpen(false);
+            setSelectedRestockVariation(null);
+          }}
+          sourceBatchVariation={selectedRestockVariation}
+          onSuccess={(newStock, blendedCost) => {
+            setActionSuccess(
+              `Stock successfully transferred to storefront! Variant stock updated to ${newStock} units with blended cost Rs. ${blendedCost.toFixed(2)}.`
+            );
+            router.refresh();
+          }}
+        />
       )}
     </div>
   );

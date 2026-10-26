@@ -764,6 +764,68 @@ export async function getEligiblePurchaseVariationsAction(): Promise<{
   }
 }
 
+/**
+ * Server Action: Fetches storefront variant details by variant ID for restock calculations.
+ */
+export async function getStorefrontVariantDetailsAction(variantId: string): Promise<{
+  success: boolean;
+  variant?: {
+    id: string;
+    title: string;
+    sku: string;
+    stockQuantity: number;
+    purchaseCost: number;
+    productTitle: string;
+  };
+  error?: string;
+}> {
+  try {
+    if (!isFeatureEnabled()) {
+      return { success: false, error: 'Purchase Management is currently disabled.' };
+    }
+
+    await requireAdminAuth();
+    const adminClient = createAdminClient();
+
+    const { data, error } = await (adminClient as any)
+      .from('product_variants')
+      .select(`
+        id,
+        sku,
+        title,
+        stock_quantity,
+        purchase_cost,
+        products (
+          id,
+          name
+        )
+      `)
+      .eq('id', variantId)
+      .single();
+
+    if (error || !data) {
+      return { success: false, error: error?.message || 'Variant not found' };
+    }
+
+    return {
+      success: true,
+      variant: {
+        id: data.id,
+        title: data.title,
+        sku: data.sku,
+        stockQuantity: Number(data.stock_quantity || 0),
+        purchaseCost: Number(data.purchase_cost || 0),
+        productTitle: data.products?.name || 'Jewelry Product',
+      },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to query variant details',
+    };
+  }
+}
+
 export interface PurchaseStockLinkItem {
   batchVariationId: string;
   targetVariantSku: string;
