@@ -31,6 +31,7 @@ import { addToWishlist, removeProductFromWishlist, checkProductWishlistStatus } 
 import { createClient } from '@/lib/supabase/client';
 import type { ProductPublic, ProductVariantPublic, ProductImage } from '@/types/product';
 import { ProductImageGallery } from '@/components/store/product-image-gallery';
+import { getThumbnailImageUrl } from '@/lib/catalog/image-loader';
 
 interface ProductDetailViewerProps {
   product: ProductPublic;
@@ -176,6 +177,10 @@ export function ProductDetailViewer({
     hasSelectableVariants ? null : product.variants[0] || null
   );
 
+  const selectedVariantImage = selectedVariant
+    ? product.images.find((img) => img.variantId === selectedVariant.id) || null
+    : null;
+
   const [quantity, setQuantity] = useState(1);
   const [addedToBag, setAddedToBag] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
@@ -228,6 +233,7 @@ export function ProductDetailViewer({
     return () => {
       isMounted = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedVariant?.id]);
 
   // Gallery image selection: default to primary image or first image
@@ -523,33 +529,34 @@ export function ProductDetailViewer({
 
 
         {/* RIGHT COLUMN: PRODUCT DETAILS & PURCHASE ACTIONS */}
-        <div className="space-y-4 sm:space-y-6 flex flex-col justify-start">
+        <div className="space-y-3 sm:space-y-5 lg:space-y-6 flex flex-col justify-start">
           {/* Header Info */}
           <div>
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start justify-between gap-3 sm:gap-4">
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-2">
+                <div className="flex items-center gap-1.5 sm:gap-2 mb-1 sm:mb-2">
                   {product.category && (
-                    <span className="text-xs uppercase tracking-widest text-luxury-gold font-semibold">
+                    <span className="text-[11px] sm:text-xs uppercase tracking-widest text-luxury-gold font-semibold">
                       {product.category.name}
                     </span>
                   )}
                   {product.gender && (
                     <>
                       <span className="text-neutral-600">•</span>
-                      <span className="text-xs text-neutral-400 capitalize">{product.gender}'s Collection</span>
+                      <span className="text-[11px] sm:text-xs text-neutral-400 capitalize">{product.gender}'s Collection</span>
                     </>
                   )}
                 </div>
 
-                <h1 className="text-xl sm:text-2xl lg:text-3xl font-serif text-white leading-snug">
+                <h1 className="text-[21px] sm:text-2xl lg:text-3xl font-serif text-white leading-snug sm:leading-normal">
                   {product.name}
                 </h1>
 
+                {/* Desktop Reviews Summary */}
                 {reviewsSummary && reviewsSummary.totalReviews > 0 && !reviewsSummary.isUnavailable ? (
                   <a
                     href="#reviews"
-                    className="inline-flex items-center gap-1.5 mt-2 text-xs text-neutral-300 hover:text-luxury-gold transition-colors"
+                    className="hidden lg:inline-flex items-center gap-1.5 mt-2 text-xs text-neutral-300 hover:text-luxury-gold transition-colors"
                   >
                     <div className="flex items-center gap-0.5">
                       {[1, 2, 3, 4, 5].map((star) => (
@@ -573,7 +580,7 @@ export function ProductDetailViewer({
                 ) : (
                   <a
                     href="#reviews"
-                    className="inline-block mt-2 text-xs text-neutral-400 hover:text-luxury-gold transition-colors"
+                    className="hidden lg:inline-block mt-2 text-xs text-neutral-400 hover:text-luxury-gold transition-colors"
                   >
                     No reviews yet &bull; Be the first to review
                   </a>
@@ -609,7 +616,8 @@ export function ProductDetailViewer({
               </p>
             )}
 
-            <div className="flex items-center gap-3 text-xs font-mono text-neutral-400 mt-2">
+            {/* Desktop SKU & Material (Moved into lower Product Details on mobile) */}
+            <div className="hidden lg:flex items-center gap-3 text-xs font-mono text-neutral-400 mt-2">
               <span>SKU: {selectedVariant?.sku || product.productCode || 'SJ-JWL'}</span>
               {product.material && (
                 <>
@@ -621,14 +629,14 @@ export function ProductDetailViewer({
           </div>
 
           {/* Price Section */}
-          <div className="p-3 sm:p-4 bg-luxury-card border border-luxury-border rounded-sm flex items-center justify-between">
-            <div className="flex items-baseline gap-2.5 sm:gap-3">
+          <div className="py-2.5 px-3 sm:p-4 bg-luxury-card border border-luxury-border rounded-sm flex items-center justify-between">
+            <div className="flex items-baseline gap-2 sm:gap-3">
               <span className="text-xl sm:text-2xl lg:text-3xl font-serif font-bold text-luxury-gold">
                 {formatCurrency(currentPrice)}
               </span>
 
               {hasDiscount && (
-                <span className="text-sm sm:text-base text-neutral-500 line-through">
+                <span className="text-xs sm:text-base text-neutral-500 line-through">
                   {formatCurrency(originalPrice)}
                 </span>
               )}
@@ -637,27 +645,27 @@ export function ProductDetailViewer({
             {/* Stock Availability Indicator */}
             <div>
               {!selectedVariant && hasSelectableVariants ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-400 bg-neutral-900 border border-neutral-700 px-2.5 py-1 rounded">
+                <span className="inline-flex items-center gap-1.5 text-[11px] sm:text-xs font-medium text-neutral-400 bg-neutral-900 border border-neutral-700 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded">
                   <Layers className="h-3 w-3 text-luxury-gold" />
                   Choose a variation
                 </span>
               ) : isLoadingAvailability ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-400 bg-neutral-900 border border-neutral-800 px-2.5 py-1 rounded">
+                <span className="inline-flex items-center gap-1.5 text-[11px] sm:text-xs font-medium text-neutral-400 bg-neutral-900 border border-neutral-800 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded">
                   <Loader2 className="h-3 w-3 animate-spin text-luxury-gold" />
                   Checking Stock...
                 </span>
               ) : availabilityError ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-400 bg-amber-950/60 border border-amber-800/40 px-2.5 py-1 rounded">
+                <span className="inline-flex items-center gap-1.5 text-[11px] sm:text-xs font-medium text-amber-400 bg-amber-950/60 border border-amber-800/40 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded">
                   <AlertCircle className="h-3 w-3 text-amber-400" />
                   Stock Unverified
                 </span>
               ) : isOutOfStock ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-rose-400 bg-rose-950/60 border border-rose-800/40 px-2.5 py-1 rounded">
+                <span className="inline-flex items-center gap-1.5 text-[11px] sm:text-xs font-medium text-rose-400 bg-rose-950/60 border border-rose-800/40 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded">
                   <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
                   Out of Stock
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-2.5 py-1 rounded">
+                <span className="inline-flex items-center gap-1.5 text-[11px] sm:text-xs font-medium text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                   In Stock
                 </span>
@@ -667,7 +675,7 @@ export function ProductDetailViewer({
 
           {/* Variant Selector - Positioned directly after price section */}
           {hasSelectableVariants && (
-            <div className="space-y-2.5 pt-1">
+            <div className="space-y-2 pt-0.5">
               <label className="block text-xs uppercase tracking-wider text-neutral-300 font-semibold">
                 {selectedVariant ? (
                   <>Select Option / Variant: <span className="text-luxury-gold font-normal">{selectedVariant.title}</span></>
@@ -676,23 +684,59 @@ export function ProductDetailViewer({
                 )}
               </label>
 
+              {/* Mobile Compact Variation Preview (shown when a variant is selected and has an associated image) */}
+              {selectedVariant && selectedVariantImage && (
+                <div className="lg:hidden flex items-center gap-2.5 p-2 bg-neutral-900/90 border border-luxury-gold/40 rounded-sm animate-fadeIn">
+                  <div className="relative w-11 h-11 shrink-0 rounded overflow-hidden border border-luxury-gold/40 bg-black">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={getThumbnailImageUrl(selectedVariantImage.url)}
+                      alt={selectedVariant.title}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[10px] uppercase tracking-wider text-neutral-400">Selected Style Preview</div>
+                    <div className="text-xs font-semibold text-luxury-gold truncate">{selectedVariant.title}</div>
+                    <div className="text-[11px] text-neutral-300">
+                      {formatCurrency(selectedVariant.discountPrice || selectedVariant.price)}
+                      {selectedVariant.sku ? (
+                        <span className="text-neutral-500 font-mono ml-1.5">• {selectedVariant.sku}</span>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="flex flex-wrap gap-2">
                 {product.variants.map((variant) => {
                   const isSelected = selectedVariant?.id === variant.id;
                   const isVarOut = variant.stockStatus === 'out_of_stock';
+                  const variantImg = product.images.find((img) => img.variantId === variant.id);
 
                   return (
                     <button
                       key={variant.id}
                       type="button"
                       onClick={() => handleSelectVariant(variant)}
-                      className={`px-3 py-2 sm:px-4 sm:py-2.5 rounded-sm text-xs font-medium transition-all border flex items-center gap-1.5 sm:gap-2 min-h-[40px] touch-manipulation ${
+                      className={`px-3 py-2 sm:px-4 sm:py-2.5 rounded-sm text-xs font-medium transition-all border flex items-center gap-2 min-h-[40px] touch-manipulation ${
                         isSelected
                           ? 'bg-luxury-gold text-luxury-black border-luxury-gold font-bold shadow-md ring-1 ring-luxury-gold'
                           : 'bg-luxury-surface text-neutral-300 border-neutral-700 hover:border-luxury-gold/50 hover:text-white'
                       } ${isVarOut ? 'opacity-60 line-through' : ''}`}
                       aria-pressed={isSelected}
                     >
+                      {variantImg && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={getThumbnailImageUrl(variantImg.url)}
+                          alt={variant.title}
+                          className={`w-5 h-5 sm:w-6 sm:h-6 object-cover rounded-full border shrink-0 ${
+                            isSelected ? 'border-luxury-black' : 'border-neutral-600'
+                          }`}
+                          loading="lazy"
+                        />
+                      )}
                       <span>{variant.title}</span>
                       <span className="text-[11px] opacity-80">
                         ({formatCurrency(variant.discountPrice || variant.price)})
@@ -705,10 +749,10 @@ export function ProductDetailViewer({
           )}
 
           {/* Shopping Bag & WhatsApp Actions */}
-          <div className="space-y-3 pt-2">
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <div className="space-y-2.5 sm:space-y-3 pt-1 sm:pt-2">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3">
               {/* Quantity Selector */}
-              <div className="flex items-center justify-between sm:justify-center border border-neutral-700 rounded bg-neutral-900/80 h-12 px-2 shrink-0">
+              <div className="flex items-center justify-between sm:justify-center border border-neutral-700 rounded bg-neutral-900/80 h-11 sm:h-12 px-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setQuantity((q) => Math.max(1, q - 1))}
@@ -752,7 +796,7 @@ export function ProductDetailViewer({
               </div>
 
               {/* Action Buttons: Add to Bag & Buy Now */}
-              <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                 {/* Add to Bag Button */}
                 <Button
                   type="button"
@@ -764,7 +808,7 @@ export function ProductDetailViewer({
                     (selectedVariant ? isOutOfStock || isMaxInBag || remainingAvailable <= 0 : false)
                   }
                   onClick={handleAddToBag}
-                  className="w-full h-12 min-h-[44px] text-sm sm:text-base font-semibold flex items-center justify-center gap-2 border-luxury-gold/50 text-white hover:border-luxury-gold hover:text-luxury-gold bg-neutral-900/90 transition-all disabled:opacity-50"
+                  className="w-full h-11 sm:h-12 min-h-[44px] text-sm sm:text-base font-semibold flex items-center justify-center gap-2 border-luxury-gold/50 text-white hover:border-luxury-gold hover:text-luxury-gold bg-neutral-900/90 transition-all disabled:opacity-50"
                   aria-label="Add to shopping bag"
                 >
                   {addedToBag ? (
@@ -803,7 +847,7 @@ export function ProductDetailViewer({
                     isNavigatingBuyNow
                   }
                   onClick={handleBuyNow}
-                  className="w-full h-12 min-h-[44px] text-sm sm:text-base font-semibold flex items-center justify-center gap-2 shadow-lg shadow-luxury-gold/15 hover:shadow-luxury-gold/25 transition-all disabled:opacity-50"
+                  className="w-full h-11 sm:h-12 min-h-[44px] text-sm sm:text-base font-semibold flex items-center justify-center gap-2 shadow-lg shadow-luxury-gold/15 hover:shadow-luxury-gold/25 transition-all disabled:opacity-50"
                   aria-label="Buy now with instant checkout"
                 >
                   {isNavigatingBuyNow ? (
@@ -859,6 +903,42 @@ export function ProductDetailViewer({
               </div>
             )}
 
+            {/* Mobile Reviews Summary (Positioned below purchasing controls) */}
+            <div className="lg:hidden pt-2 border-t border-luxury-border/40">
+              {reviewsSummary && reviewsSummary.totalReviews > 0 && !reviewsSummary.isUnavailable ? (
+                <a
+                  href="#reviews"
+                  className="inline-flex items-center gap-1.5 text-xs text-neutral-300 hover:text-luxury-gold transition-colors"
+                >
+                  <div className="flex items-center gap-0.5">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <Star
+                        key={star}
+                        className={`h-3.5 w-3.5 ${
+                          star <= Math.round(reviewsSummary.averageRating)
+                            ? 'fill-amber-400 text-amber-400'
+                            : 'text-neutral-500/80 stroke-[1.5]'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  <span className="font-semibold text-white">
+                    {reviewsSummary.averageRating.toFixed(1)}
+                  </span>
+                  <span className="text-neutral-400">
+                    ({reviewsSummary.totalReviews} {reviewsSummary.totalReviews === 1 ? 'review' : 'reviews'})
+                  </span>
+                </a>
+              ) : (
+                <a
+                  href="#reviews"
+                  className="inline-block text-xs text-neutral-400 hover:text-luxury-gold transition-colors"
+                >
+                  No reviews yet &bull; Be the first to review
+                </a>
+              )}
+            </div>
+
             {/* Short Description - Below purchasing controls */}
             {product.shortDescription && (
               <div className="pt-2 border-t border-luxury-border/50">
@@ -880,7 +960,7 @@ export function ProductDetailViewer({
                 variant="outline"
                 size="lg"
                 disabled={Boolean(selectedVariant && isOutOfStock)}
-                className="w-full text-xs py-3 font-medium flex items-center justify-center gap-2 border-neutral-800 bg-neutral-900/60 text-neutral-300 hover:text-luxury-gold hover:border-luxury-gold/40 transition-colors"
+                className="w-full text-xs py-2.5 sm:py-3 font-medium flex items-center justify-center gap-2 border-neutral-800 bg-neutral-900/60 text-neutral-300 hover:text-luxury-gold hover:border-luxury-gold/40 transition-colors"
               >
                 <MessageCircle className="h-4 w-4 text-emerald-400 shrink-0" />
                 <span>Order or Enquire via WhatsApp (+94 76 468 9907)</span>

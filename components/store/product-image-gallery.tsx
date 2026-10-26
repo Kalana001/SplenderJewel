@@ -305,7 +305,7 @@ export function ProductImageGallery({
   const hasMultiple = filteredImages.length > 1;
 
   return (
-    <div className="space-y-4 select-none">
+    <div className="space-y-3 sm:space-y-4 select-none">
       {/* MAIN GALLERY CONTAINER */}
       <div
         ref={containerRef}
@@ -342,20 +342,20 @@ export function ProductImageGallery({
         )}
 
         {/* Badges Overlay (Discount / New Arrival) */}
-        <div className="absolute top-3 left-3 flex flex-col gap-1.5 z-10 pointer-events-none">
+        <div className="absolute top-2.5 left-2.5 sm:top-3 sm:left-3 flex flex-col gap-1.5 z-10 pointer-events-none">
           {hasDiscount && (
-            <span className="bg-luxury-ruby text-white text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-sm shadow-md shadow-luxury-ruby/20 border border-luxury-ruby-light/30">
+            <span className="bg-luxury-ruby text-white text-[11px] sm:text-xs font-bold uppercase tracking-wider px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-sm shadow-md shadow-luxury-ruby/20 border border-luxury-ruby-light/30">
               -{discountPercent}% OFF
             </span>
           )}
           {isNewArrival && (
-            <span className="bg-luxury-black/90 text-luxury-gold border border-luxury-gold/40 text-xs font-semibold uppercase tracking-wider px-2.5 py-1 rounded-sm backdrop-blur-sm">
+            <span className="bg-luxury-black/90 text-luxury-gold border border-luxury-gold/40 text-[11px] sm:text-xs font-semibold uppercase tracking-wider px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-sm backdrop-blur-sm">
               New Arrival
             </span>
           )}
         </div>
 
-        {/* Desktop Navigation Arrow: Previous */}
+        {/* Desktop & Mobile Navigation Arrow: Previous */}
         {hasMultiple && (
           <button
             type="button"
@@ -364,13 +364,13 @@ export function ProductImageGallery({
               e.stopPropagation();
               handlePrev();
             }}
-            className="absolute left-3 top-1/2 -translate-y-1/2 h-11 w-11 min-h-[44px] min-w-[44px] rounded-full bg-black/60 hover:bg-black/90 text-white hover:text-luxury-gold border border-white/10 hover:border-luxury-gold/50 flex items-center justify-center transition-all opacity-80 md:opacity-0 md:group-hover:opacity-100 backdrop-blur-sm z-10"
+            className="absolute left-2.5 sm:left-3 top-1/2 -translate-y-1/2 h-9 w-9 sm:h-11 sm:w-11 min-h-[40px] min-w-[40px] sm:min-h-[44px] sm:min-w-[44px] rounded-full bg-black/60 hover:bg-black/90 text-white hover:text-luxury-gold border border-white/10 hover:border-luxury-gold/50 flex items-center justify-center transition-all opacity-80 md:opacity-0 md:group-hover:opacity-100 backdrop-blur-sm z-10"
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
         )}
 
-        {/* Desktop Navigation Arrow: Next */}
+        {/* Desktop & Mobile Navigation Arrow: Next */}
         {hasMultiple && (
           <button
             type="button"
@@ -379,16 +379,16 @@ export function ProductImageGallery({
               e.stopPropagation();
               handleNext();
             }}
-            className="absolute right-3 top-1/2 -translate-y-1/2 h-11 w-11 min-h-[44px] min-w-[44px] rounded-full bg-black/60 hover:bg-black/90 text-white hover:text-luxury-gold border border-white/10 hover:border-luxury-gold/50 flex items-center justify-center transition-all opacity-80 md:opacity-0 md:group-hover:opacity-100 backdrop-blur-sm z-10"
+            className="absolute right-2.5 sm:right-3 top-1/2 -translate-y-1/2 h-9 w-9 sm:h-11 sm:w-11 min-h-[40px] min-w-[40px] sm:min-h-[44px] sm:min-w-[44px] rounded-full bg-black/60 hover:bg-black/90 text-white hover:text-luxury-gold border border-white/10 hover:border-luxury-gold/50 flex items-center justify-center transition-all opacity-80 md:opacity-0 md:group-hover:opacity-100 backdrop-blur-sm z-10"
           >
             <ChevronRight className="h-5 w-5" />
           </button>
         )}
 
         {/* Image Position Counter Badge & Fullscreen Icon */}
-        <div className="absolute bottom-3 right-3 flex items-center gap-2 z-10">
+        <div className="absolute bottom-2.5 right-2.5 sm:bottom-3 sm:right-3 flex items-center gap-1.5 sm:gap-2 z-10">
           {hasMultiple && (
-            <div className="bg-black/75 backdrop-blur-sm text-neutral-300 font-mono text-xs px-2.5 py-1 rounded-sm border border-neutral-800 tracking-wider shadow-md">
+            <div className="bg-black/75 backdrop-blur-sm text-neutral-300 font-mono text-[11px] sm:text-xs px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-sm border border-neutral-800 tracking-wider shadow-md">
               {safeActiveIndex + 1} / {filteredImages.length}
             </div>
           )}
@@ -400,7 +400,7 @@ export function ProductImageGallery({
               e.stopPropagation();
               setLightboxOpen(true);
             }}
-            className="h-10 w-10 min-h-[44px] min-w-[44px] rounded-sm bg-black/75 hover:bg-black text-neutral-300 hover:text-luxury-gold border border-neutral-800 flex items-center justify-center transition-colors backdrop-blur-sm shadow-md"
+            className="h-9 w-9 sm:h-10 sm:w-10 min-h-[40px] min-w-[40px] sm:min-h-[44px] sm:min-w-[44px] rounded-sm bg-black/75 hover:bg-black text-neutral-300 hover:text-luxury-gold border border-neutral-800 flex items-center justify-center transition-colors backdrop-blur-sm shadow-md"
           >
             <Maximize2 className="h-4 w-4" />
           </button>
@@ -409,7 +409,7 @@ export function ProductImageGallery({
 
       {/* THUMBNAILS CAROUSEL */}
       {hasMultiple && (
-        <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none pt-0.5">
+        <div className="flex gap-2 sm:gap-2.5 md:gap-3 overflow-x-auto pb-1.5 sm:pb-2 scrollbar-none pt-0.5">
           {filteredImages.map((img, idx) => {
             const isActive = idx === safeActiveIndex;
             const imgKey = img.id || img.url;
@@ -425,7 +425,7 @@ export function ProductImageGallery({
                 type="button"
                 aria-label={`View image ${idx + 1} of ${filteredImages.length}`}
                 onClick={() => handleSelectIndex(idx)}
-                className={`relative aspect-square w-20 rounded-sm overflow-hidden border-2 transition-all shrink-0 ${
+                className={`relative aspect-square w-14 sm:w-16 md:w-20 rounded-sm overflow-hidden border-2 transition-all shrink-0 min-h-[44px] min-w-[44px] ${
                   isActive
                     ? 'border-luxury-gold ring-1 ring-luxury-gold scale-105 opacity-100 shadow-md'
                     : 'border-neutral-800 hover:border-neutral-600 opacity-60 hover:opacity-100'
@@ -433,7 +433,7 @@ export function ProductImageGallery({
               >
                 {isMasterFailed ? (
                   <div className="w-full h-full flex items-center justify-center bg-neutral-900 text-neutral-600">
-                    <Package className="h-6 w-6 text-luxury-gold/40" />
+                    <Package className="h-5 w-5 sm:h-6 sm:w-6 text-luxury-gold/40" />
                   </div>
                 ) : (
                   // eslint-disable-next-line @next/next/no-img-element

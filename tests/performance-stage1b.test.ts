@@ -363,6 +363,10 @@ function createTestHarness(customMocks: Record<string, any> = {}) {
       '@/components/store/product-image-gallery': {
         ProductImageGallery: (props: any) => ReactMock.createElement('div', props),
       },
+      '@/lib/catalog/image-loader': {
+        getThumbnailImageUrl: (url: string) => url,
+        getMasterImageUrl: (url: string) => url,
+      },
       '@/lib/config/store': {
         getStoreConfig: () => ({
           storeName: 'Splender Jewel',
