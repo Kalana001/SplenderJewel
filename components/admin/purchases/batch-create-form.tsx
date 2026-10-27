@@ -19,7 +19,9 @@ import {
   Boxes,
   Layers,
   ArrowUp,
-  X
+  X,
+  Check,
+  ExternalLink
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -42,8 +44,9 @@ export interface FormVariation {
   variationTitle: string;
   attributes: Record<string, string>;
   supplierSku: string;
-  quantityPurchased: number;
-  supplierUnitPriceLkr: number;
+  quantityPurchased: number | '';
+  supplierUnitPriceLkr: number | '';
+  isSelected?: boolean;
   existingVariantId?: string;
   existingCurrentStock?: number;
   existingCurrentCost?: number;
@@ -97,6 +100,7 @@ export function BatchCreateForm() {
           supplierSku: '',
           quantityPurchased: 1,
           supplierUnitPriceLkr: 0,
+          isSelected: true,
         }
       ]
     }
@@ -115,6 +119,9 @@ export function BatchCreateForm() {
   // Sequence ref and debounce timer ref per item to prevent race conditions and out-of-order stale overwrites
   const searchSeqRef = useRef<Record<string, number>>({});
   const searchDebounceTimers = useRef<Record<string, NodeJS.Timeout>>({});
+
+  // Guided workflow modal/banner state for adding a new variation to an existing product
+  const [showNewVariationGuideId, setShowNewVariationGuideId] = useState<string | null>(null);
 
   // Submission state
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -154,8 +161,9 @@ export function BatchCreateForm() {
           variationTitle: 'Default',
           attributes: {},
           supplierSku: '',
-          quantityPurchased: 1,
+          quantityPurchased: type === 'new' ? 1 : 0,
           supplierUnitPriceLkr: 0,
+          isSelected: type === 'new',
         }
       ]
     };
@@ -196,6 +204,8 @@ export function BatchCreateForm() {
               existingCurrentStock: undefined,
               existingCurrentCost: undefined,
               attributes: {},
+              quantityPurchased: typeof v.quantityPurchased === 'number' && v.quantityPurchased > 0 ? v.quantityPurchased : 1,
+              isSelected: true,
             })),
           };
         } else {
@@ -209,16 +219,27 @@ export function BatchCreateForm() {
   };
 
   const handleAddVariation = (itemId: string) => {
+    const targetItem = items.find((i) => i.id === itemId);
+    if (!targetItem) return;
+
+    if (targetItem.itemType === 'existing') {
+      // Guide user: new variations under existing products must be registered in Catalog with 0 stock
+      // strictly complying with NO PURCHASE = NO ITEM TO SELL to preserve provenance.
+      setShowNewVariationGuideId(itemId);
+      return;
+    }
+
     setItems((prev) =>
       prev.map((item) => {
         if (item.id !== itemId) return item;
         const newVar: FormVariation = {
           id: `var-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           variationTitle: `Variation ${item.variations.length + 1}`,
-          attributes: item.existingProductId ? { existing_product_id: item.existingProductId } : {},
+          attributes: {},
           supplierSku: '',
           quantityPurchased: 1,
           supplierUnitPriceLkr: 0,
+          isSelected: true,
         };
         return {
           ...item,
@@ -232,7 +253,8 @@ export function BatchCreateForm() {
     setItems((prev) =>
       prev.map((item) => {
         if (item.id !== itemId) return item;
-        if (item.variations.length <= 1) return item;
+        // For new items, keep at least 1 variation
+        if (item.itemType === 'new' && item.variations.length <= 1) return item;
         return {
           ...item,
           variations: item.variations.filter((v) => v.id !== varId),
@@ -248,6 +270,101 @@ export function BatchCreateForm() {
         return {
           ...item,
           variations: item.variations.map((v) => (v.id === varId ? { ...v, ...patch } : v)),
+        };
+      })
+    );
+  };
+
+  // Toggle variation selection for purchase
+  const handleToggleVariationSelection = (itemId: string, varId: string) => {
+    setItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== itemId) return item;
+        return {
+          ...item,
+          variations: item.variations.map((v) => {
+            if (v.id !== varId) return v;
+            const willSelect = !v.isSelected;
+            return {
+              ...v,
+              isSelected: willSelect,
+              // If selecting and quantity was 0 or empty, default to 1 so it is active
+              quantityPurchased: willSelect
+                ? (typeof v.quantityPurchased === 'number' && v.quantityPurchased > 0 ? v.quantityPurchased : 1)
+                : v.quantityPurchased,
+            };
+          }),
+        };
+      })
+    );
+  };
+
+  // Numeric input change handler: allows temporary empty input without resetting to 1
+  const handleQuantityChange = (itemId: string, varId: string, rawVal: string) => {
+    if (rawVal === '') {
+      handleUpdateVariation(itemId, varId, { quantityPurchased: '' });
+      return;
+    }
+    // Only accept non-negative whole integer digits
+    if (/^\d+$/.test(rawVal)) {
+      const num = parseInt(rawVal, 10);
+      handleUpdateVariation(itemId, varId, {
+        quantityPurchased: num,
+        isSelected: num > 0 ? true : false,
+      });
+    }
+  };
+
+  // Normalize quantity on blur
+  const handleQuantityBlur = (itemId: string, varId: string, itemType: PurchaseItemType) => {
+    setItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== itemId) return item;
+        return {
+          ...item,
+          variations: item.variations.map((v) => {
+            if (v.id !== varId) return v;
+            if (v.quantityPurchased === '') {
+              const defaultQty = itemType === 'existing' ? 0 : 1;
+              return {
+                ...v,
+                quantityPurchased: defaultQty,
+                isSelected: defaultQty > 0,
+              };
+            }
+            return v;
+          }),
+        };
+      })
+    );
+  };
+
+  // Decimal price change handler
+  const handlePriceChange = (itemId: string, varId: string, rawVal: string) => {
+    if (rawVal === '') {
+      handleUpdateVariation(itemId, varId, { supplierUnitPriceLkr: '' });
+      return;
+    }
+    if (/^\d*\.?\d*$/.test(rawVal)) {
+      const num = parseFloat(rawVal);
+      handleUpdateVariation(itemId, varId, { supplierUnitPriceLkr: isNaN(num) ? '' : num });
+    }
+  };
+
+  // Normalize price on blur
+  const handlePriceBlur = (itemId: string, varId: string) => {
+    setItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== itemId) return item;
+        return {
+          ...item,
+          variations: item.variations.map((v) => {
+            if (v.id !== varId) return v;
+            if (v.supplierUnitPriceLkr === '') {
+              return { ...v, supplierUnitPriceLkr: 0 };
+            }
+            return v;
+          }),
         };
       })
     );
@@ -330,7 +447,9 @@ export function BatchCreateForm() {
 
     const variants = Array.isArray(product.variants) ? product.variants : [];
     
-    // Map each saved variation accurately; do NOT create a fake Default variation if product has saved variations
+    // Map each saved variation accurately;
+    // Stage 2: Initialize new purchase quantity to 0 and unselected!
+    // Do NOT automatically purchase one unit of every variation!
     const formVariations: FormVariation[] = variants.map((pv, idx) => ({
       id: `var-${Date.now()}-${pv.id || idx}`,
       variationTitle: pv.title || 'Default',
@@ -341,8 +460,9 @@ export function BatchCreateForm() {
         is_restock: 'true',
       },
       supplierSku: pv.sku || '',
-      quantityPurchased: 1,
-      supplierUnitPriceLkr: 0, // Starts at 0 for independent entry; reference WAC is preserved in existingCurrentCost
+      quantityPurchased: 0, // Starts at 0!
+      supplierUnitPriceLkr: 0, // Fresh supplier cost
+      isSelected: false, // Default unselected / Not Purchasing
       existingVariantId: pv.id,
       existingCurrentStock: typeof pv.stockQuantity === 'number' ? pv.stockQuantity : 0,
       existingCurrentCost: typeof pv.purchaseCost === 'number' ? pv.purchaseCost : 0,
@@ -386,6 +506,7 @@ export function BatchCreateForm() {
           supplierSku: '',
           quantityPurchased: 1,
           supplierUnitPriceLkr: 0,
+          isSelected: true,
         }
       ],
     });
@@ -423,8 +544,22 @@ export function BatchCreateForm() {
 
       for (const item of items) {
         for (const v of item.variations) {
-          const qty = Math.max(1, Math.floor(v.quantityPurchased || 0));
-          const unitCostCents = v.supplierUnitPriceLkr > 0 ? decimalLkrToCents(v.supplierUnitPriceLkr) : BigInt(0);
+          const isSelected = v.isSelected !== false;
+          const qty = typeof v.quantityPurchased === 'number' && v.quantityPurchased > 0
+            ? Math.floor(v.quantityPurchased)
+            : 0;
+
+          // Zero-quantity or unselected variations contribute zero units and zero supplier cost,
+          // and receive no expense allocation!
+          if (!isSelected || qty === 0) {
+            continue;
+          }
+
+          const unitCost = typeof v.supplierUnitPriceLkr === 'number' && v.supplierUnitPriceLkr > 0
+            ? v.supplierUnitPriceLkr
+            : 0;
+          const unitCostCents = unitCost > 0 ? decimalLkrToCents(unitCost) : BigInt(0);
+
           totalPurchasedUnits += qty;
           totalSupplierCostCents += BigInt(qty) * unitCostCents;
 
@@ -443,8 +578,11 @@ export function BatchCreateForm() {
           totalSupplierCostLkr: 0,
           totalExpensesLkr: 0,
           totalLandedCostLkr: 0,
+          totalSupplierCostCents: BigInt(0),
+          totalExpensesCents: BigInt(0),
+          totalLandedCostCents: BigInt(0),
           allocMap: new Map(),
-          error: 'At least one variation with quantity >= 1 is required.',
+          error: 'At least one variation must be selected with a quantity greater than zero.',
         };
       }
 
@@ -473,6 +611,9 @@ export function BatchCreateForm() {
         totalSupplierCostLkr: 0,
         totalExpensesLkr: 0,
         totalLandedCostLkr: 0,
+        totalSupplierCostCents: BigInt(0),
+        totalExpensesCents: BigInt(0),
+        totalLandedCostCents: BigInt(0),
         allocMap: new Map(),
         error: err instanceof Error ? err.message : 'Calculation error',
       };
@@ -493,15 +634,34 @@ export function BatchCreateForm() {
       return;
     }
 
+    // Validate catalog variations and ensure at least one variation is being purchased
+    let hasAnyPurchasedVariation = false;
     for (const item of items) {
       if (item.itemType === 'existing' && item.existingProductId && item.variations.length === 0) {
         setSubmitError(`Product "${item.itemName}" has no variations in the catalog. Please configure variations in Catalog before restocking or remove this item.`);
         return;
       }
-      if (item.variations.length === 0) {
-        setSubmitError(`Item "${item.itemName || 'Untitled'}" must have at least one variation.`);
-        return;
+      for (const v of item.variations) {
+        const isSelected = v.isSelected !== false;
+        const qty = typeof v.quantityPurchased === 'number' ? v.quantityPurchased : 0;
+        if (isSelected && qty > 0) {
+          hasAnyPurchasedVariation = true;
+          if (!Number.isInteger(qty) || qty < 1) {
+            setSubmitError(`Purchase quantity for "${v.variationTitle}" must be a positive whole integer.`);
+            return;
+          }
+          const cost = typeof v.supplierUnitPriceLkr === 'number' ? v.supplierUnitPriceLkr : 0;
+          if (cost <= 0) {
+            setSubmitError(`Supplier unit cost is required for included variation "${v.variationTitle}".`);
+            return;
+          }
+        }
       }
+    }
+
+    if (!hasAnyPurchasedVariation) {
+      setSubmitError('At least one variation must be included with a purchase quantity greater than zero.');
+      return;
     }
 
     if (!calculationPreview.isValid) {
@@ -512,34 +672,24 @@ export function BatchCreateForm() {
     setIsSubmitting(true);
 
     try {
-      const payload: CreateBatchPayload = {
-        batchNumber: batchNumber.trim(),
-        supplierName: supplierName.trim(),
-        supplierContact: supplierContact.trim() || undefined,
-        invoiceNumber: invoiceNumber.trim() || undefined,
-        purchaseDate,
-        notes: notes.trim() || undefined,
-        totalSupplierCostCents: calculationPreview.totalSupplierCostCents?.toString() || '0',
-        totalExpensesCents: calculationPreview.totalExpensesCents?.toString() || '0',
-        totalLandedCostCents: calculationPreview.totalLandedCostCents?.toString() || '0',
-        totalPurchasedUnits: calculationPreview.totalPurchasedUnits,
-        expenses: expenses
-          .filter(e => e.amountLkr > 0)
-          .map(e => ({
-            expenseType: e.expenseType,
-            amountCents: decimalLkrToCents(e.amountLkr).toString(),
-            description: e.description.trim() || undefined,
-          })),
-        items: items.map(item => {
+      const validItems = items
+        .map((item) => {
           let itemSupplierCents = BigInt(0);
           let itemAllocExpenseCents = BigInt(0);
           let itemLandedCents = BigInt(0);
           let itemQty = 0;
 
-          const variations = item.variations.map(v => {
+          const purchasedVariations = item.variations.filter(
+            (v) => v.isSelected !== false && typeof v.quantityPurchased === 'number' && v.quantityPurchased > 0
+          );
+
+          const mappedVariations = purchasedVariations.map((v) => {
+            const qty = Math.floor(v.quantityPurchased as number);
+            const unitCost = typeof v.supplierUnitPriceLkr === 'number' && v.supplierUnitPriceLkr > 0
+              ? v.supplierUnitPriceLkr
+              : 0;
+            const supplierUnitCents = decimalLkrToCents(unitCost);
             const alloc = calculationPreview.allocMap.get(v.id);
-            const qty = Math.max(1, Math.floor(v.quantityPurchased || 0));
-            const supplierUnitCents = v.supplierUnitPriceLkr > 0 ? decimalLkrToCents(v.supplierUnitPriceLkr) : BigInt(0);
             const lineSupplierCents = alloc?.lineSupplierCostCents ?? (BigInt(qty) * supplierUnitCents);
             const lineAllocExpenseCents = alloc?.lineAllocatedExpenseCents ?? BigInt(0);
             const lineLandedCents = alloc?.lineTotalLandedCostCents ?? (lineSupplierCents + lineAllocExpenseCents);
@@ -578,9 +728,30 @@ export function BatchCreateForm() {
             totalSupplierCostCents: itemSupplierCents.toString(),
             totalAllocatedExpenseCents: itemAllocExpenseCents.toString(),
             totalLandedCostCents: itemLandedCents.toString(),
-            variations,
+            variations: mappedVariations,
           };
-        }),
+        })
+        .filter((i) => i.variations.length > 0);
+
+      const payload: CreateBatchPayload = {
+        batchNumber: batchNumber.trim(),
+        supplierName: supplierName.trim(),
+        supplierContact: supplierContact.trim() || undefined,
+        invoiceNumber: invoiceNumber.trim() || undefined,
+        purchaseDate,
+        notes: notes.trim() || undefined,
+        totalSupplierCostCents: calculationPreview.totalSupplierCostCents?.toString() || '0',
+        totalExpensesCents: calculationPreview.totalExpensesCents?.toString() || '0',
+        totalLandedCostCents: calculationPreview.totalLandedCostCents?.toString() || '0',
+        totalPurchasedUnits: calculationPreview.totalPurchasedUnits,
+        expenses: expenses
+          .filter(e => e.amountLkr > 0)
+          .map(e => ({
+            expenseType: e.expenseType,
+            amountCents: decimalLkrToCents(e.amountLkr).toString(),
+            description: e.description.trim() || undefined,
+          })),
+        items: validItems,
       };
 
       const res = await createPurchaseBatchAction(payload);
@@ -806,16 +977,29 @@ export function BatchCreateForm() {
                 </div>
 
                 <div className="flex items-center gap-2 self-end sm:self-center">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleAddVariation(item.id)}
-                    className="h-7 text-[11px] text-luxury-gold hover:bg-luxury-gold/10"
-                  >
-                    <Plus className="w-3 h-3 mr-1" />
-                    Add Variation
-                  </Button>
+                  {item.itemType === 'new' ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleAddVariation(item.id)}
+                      className="h-7 text-[11px] text-luxury-gold hover:bg-luxury-gold/10"
+                    >
+                      <Plus className="w-3 h-3 mr-1" />
+                      Add Variation
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleAddVariation(item.id)}
+                      className="h-7 text-[11px] text-amber-400 border-amber-500/30 hover:bg-amber-500/10"
+                    >
+                      <Plus className="w-3 h-3 mr-1" />
+                      Add New Variation...
+                    </Button>
+                  )}
                   {items.length > 1 && (
                     <Button
                       type="button"
@@ -829,6 +1013,41 @@ export function BatchCreateForm() {
                   )}
                 </div>
               </div>
+
+              {/* Guided Workflow for New Variations under Existing Product */}
+              {showNewVariationGuideId === item.id && item.itemType === 'existing' && (
+                <div className="p-3.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold flex items-center gap-1.5 text-amber-300">
+                      <Sparkles className="w-4 h-4 text-luxury-gold" />
+                      <span>Adding a New Variation to an Existing Product</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowNewVariationGuideId(null)}
+                      className="text-neutral-400 hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-neutral-300 leading-relaxed">
+                    To preserve inventory provenance (<span className="font-mono text-luxury-gold">NO PURCHASE = NO ITEM TO SELL</span>) and prevent SKU conflicts, new variations for existing products must first be registered in the Product Catalog with 0 initial stock. Once registered, selecting this product will automatically load the new variation here for purchase ordering and landed-cost calculation.
+                  </p>
+                  {item.existingProductId && (
+                    <div className="pt-1">
+                      <a
+                        href={`/admin/products/${item.existingProductId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-luxury-gold/20 text-luxury-gold text-xs font-medium hover:bg-luxury-gold/30 border border-luxury-gold/30 transition-colors"
+                      >
+                        <span>Open Product in Catalog to Add Variation</span>
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Product Identity Section */}
               {item.itemType === 'new' ? (
@@ -984,132 +1203,306 @@ export function BatchCreateForm() {
                 </div>
               )}
 
-              {/* Variations Table */}
+              {/* Variations Display (Dual Desktop Table & Mobile Cards) */}
               {item.variations.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="text-neutral-400 border-b border-neutral-800 text-[11px]">
-                        <th className="py-2 px-2 font-medium">Variation Title / Size</th>
-                        <th className="py-2 px-2 font-medium">Supplier / Target SKU</th>
-                        {item.itemType === 'existing' && (
-                          <th className="py-2 px-2 font-medium text-center w-28">Current Stock</th>
-                        )}
-                        <th className="py-2 px-2 font-medium w-24">Qty *</th>
-                        <th className="py-2 px-2 font-medium w-36">Supplier Cost (LKR) *</th>
-                        <th className="py-2 px-2 font-medium text-right w-32">Allocated Exp.</th>
-                        <th className="py-2 px-2 font-medium text-right w-32">Unit Landed</th>
-                        <th className="py-2 px-2 font-medium text-right w-32">Line Landed</th>
-                        <th className="py-2 px-2 text-right w-10"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-neutral-800/40">
+                <div className="space-y-4">
+                  {/* Desktop Table View */}
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="text-neutral-400 border-b border-neutral-800 text-[11px]">
+                          {item.itemType === 'existing' && (
+                            <th className="py-2 px-2 font-medium w-16 text-center">Include</th>
+                          )}
+                          <th className="py-2 px-2 font-medium">Variation Title / Size</th>
+                          <th className="py-2 px-2 font-medium">Supplier / Target SKU</th>
+                          {item.itemType === 'existing' && (
+                            <th className="py-2 px-2 font-medium text-center w-28">Current Stock</th>
+                          )}
+                          <th className="py-2 px-2 font-medium w-24">Qty *</th>
+                          <th className="py-2 px-2 font-medium w-36">Supplier Cost (LKR) *</th>
+                          <th className="py-2 px-2 font-medium text-right w-32">Allocated Exp.</th>
+                          <th className="py-2 px-2 font-medium text-right w-32">Unit Landed</th>
+                          <th className="py-2 px-2 font-medium text-right w-32">Line Landed</th>
+                          <th className="py-2 px-2 text-right w-10"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-800/40">
+                        {item.variations.map((v) => {
+                          const isIncluded = v.isSelected !== false && typeof v.quantityPurchased === 'number' && v.quantityPurchased > 0;
+                          const alloc = isIncluded ? calculationPreview.allocMap.get(v.id) : undefined;
+                          const allocExpenseLkr = alloc ? centsToDecimalLkr(alloc.lineAllocatedExpenseCents) : 0;
+                          const unitCostLkr = typeof v.supplierUnitPriceLkr === 'number' && v.supplierUnitPriceLkr > 0 ? v.supplierUnitPriceLkr : 0;
+                          const unitLandedLkr = alloc ? centsToDecimalLkr(alloc.unitLandedCostCents) : unitCostLkr;
+                          const qty = typeof v.quantityPurchased === 'number' && v.quantityPurchased > 0 ? v.quantityPurchased : 0;
+                          const lineLandedLkr = alloc ? centsToDecimalLkr(alloc.lineTotalLandedCostCents) : (qty * unitCostLkr);
+
+                          return (
+                            <tr
+                              key={v.id}
+                              className={`transition-colors hover:bg-neutral-900/40 ${
+                                !isIncluded && item.itemType === 'existing' ? 'opacity-60 bg-neutral-950/20' : ''
+                              }`}
+                            >
+                              {item.itemType === 'existing' && (
+                                <td className="py-2 px-2 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleVariationSelection(item.id, v.id)}
+                                    title={isIncluded ? 'Click to exclude' : 'Click to include'}
+                                    className={`h-5 w-5 rounded inline-flex items-center justify-center border transition-colors ${
+                                      isIncluded
+                                        ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                                        : 'bg-neutral-900 border-neutral-700 text-transparent hover:border-neutral-500'
+                                    }`}
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              )}
+                              <td className="py-2 px-2">
+                                <Input
+                                  placeholder="e.g. Size 7, Oval Cut"
+                                  value={v.variationTitle}
+                                  onChange={(e) => handleUpdateVariation(item.id, v.id, { variationTitle: e.target.value })}
+                                  className="h-7 bg-neutral-900 border-neutral-800 text-white text-xs"
+                                />
+                              </td>
+                              <td className="py-2 px-2">
+                                <Input
+                                  placeholder="SKU-..."
+                                  value={v.supplierSku}
+                                  onChange={(e) => handleUpdateVariation(item.id, v.id, { supplierSku: e.target.value })}
+                                  className="h-7 bg-neutral-900 border-neutral-800 text-neutral-300 font-mono text-xs"
+                                />
+                              </td>
+                              {item.itemType === 'existing' && (
+                                <td className="py-2 px-2 text-center">
+                                  {v.existingCurrentStock !== undefined ? (
+                                    <div className="flex flex-col items-center">
+                                      <span
+                                        className={`font-mono text-[11px] px-2 py-0.5 rounded border ${
+                                          v.existingCurrentStock === 0
+                                            ? 'text-rose-400 bg-rose-500/10 border-rose-500/20'
+                                            : 'text-neutral-300 bg-neutral-900 border-neutral-800'
+                                        }`}
+                                      >
+                                        {v.existingCurrentStock} units
+                                      </span>
+                                      {v.existingCurrentCost !== undefined && (
+                                        <span className="text-[10px] text-neutral-400 font-mono mt-0.5">
+                                          Ref: Rs. {v.existingCurrentCost.toFixed(2)}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-neutral-500 text-[11px]">—</span>
+                                  )}
+                                </td>
+                              )}
+                              <td className="py-2 px-2">
+                                <Input
+                                  type="text"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
+                                  value={v.quantityPurchased === '' ? '' : v.quantityPurchased}
+                                  onChange={(e) => handleQuantityChange(item.id, v.id, e.target.value)}
+                                  onBlur={() => handleQuantityBlur(item.id, v.id, item.itemType)}
+                                  placeholder="0"
+                                  className="h-7 bg-neutral-900 border-neutral-800 text-white text-xs font-mono text-center"
+                                />
+                              </td>
+                              <td className="py-2 px-2">
+                                <Input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={v.supplierUnitPriceLkr === '' ? '' : v.supplierUnitPriceLkr}
+                                  onChange={(e) => handlePriceChange(item.id, v.id, e.target.value)}
+                                  onBlur={() => handlePriceBlur(item.id, v.id)}
+                                  placeholder="0.00"
+                                  className="h-7 bg-neutral-900 border-neutral-800 text-white text-xs font-mono text-right"
+                                />
+                              </td>
+                              <td className="py-2 px-2 text-right font-mono text-neutral-400 text-xs">
+                                {isIncluded ? `Rs. ${allocExpenseLkr.toFixed(2)}` : '—'}
+                              </td>
+                              <td className="py-2 px-2 text-right font-mono text-luxury-gold font-medium text-xs">
+                                {isIncluded ? `Rs. ${unitLandedLkr.toFixed(2)}` : '—'}
+                              </td>
+                              <td className="py-2 px-2 text-right font-mono text-white font-medium text-xs">
+                                {isIncluded ? `Rs. ${lineLandedLkr.toFixed(2)}` : '—'}
+                              </td>
+                              <td className="py-2 px-2 text-right">
+                                {item.itemType === 'new' && item.variations.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveVariation(item.id, v.id)}
+                                    className="text-neutral-500 hover:text-rose-400 transition-colors p-1"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile Card-Based Stacked View (Zero Horizontal Scrolling) */}
+                  <div className="block md:hidden space-y-3">
                     {item.variations.map((v) => {
-                      const alloc = calculationPreview.allocMap.get(v.id);
+                      const isIncluded = v.isSelected !== false && typeof v.quantityPurchased === 'number' && v.quantityPurchased > 0;
+                      const alloc = isIncluded ? calculationPreview.allocMap.get(v.id) : undefined;
                       const allocExpenseLkr = alloc ? centsToDecimalLkr(alloc.lineAllocatedExpenseCents) : 0;
-                      const unitLandedLkr = alloc ? centsToDecimalLkr(alloc.unitLandedCostCents) : v.supplierUnitPriceLkr;
-                      const lineLandedLkr = alloc ? centsToDecimalLkr(alloc.lineTotalLandedCostCents) : (v.quantityPurchased * v.supplierUnitPriceLkr);
+                      const unitCostLkr = typeof v.supplierUnitPriceLkr === 'number' && v.supplierUnitPriceLkr > 0 ? v.supplierUnitPriceLkr : 0;
+                      const unitLandedLkr = alloc ? centsToDecimalLkr(alloc.unitLandedCostCents) : unitCostLkr;
+                      const qty = typeof v.quantityPurchased === 'number' && v.quantityPurchased > 0 ? v.quantityPurchased : 0;
+                      const lineLandedLkr = alloc ? centsToDecimalLkr(alloc.lineTotalLandedCostCents) : (qty * unitCostLkr);
 
                       return (
-                        <tr key={v.id} className="hover:bg-neutral-900/40">
-                          <td className="py-2 px-2">
-                            <Input
-                              placeholder="e.g. Size 7, Oval Cut"
-                              value={v.variationTitle}
-                              onChange={(e) => handleUpdateVariation(item.id, v.id, { variationTitle: e.target.value })}
-                              className="h-7 bg-neutral-900 border-neutral-800 text-white text-xs"
-                            />
-                          </td>
-                          <td className="py-2 px-2">
-                            <Input
-                              placeholder="SKU-..."
-                              value={v.supplierSku}
-                              onChange={(e) => handleUpdateVariation(item.id, v.id, { supplierSku: e.target.value })}
-                              className="h-7 bg-neutral-900 border-neutral-800 text-neutral-300 font-mono text-xs"
-                            />
-                          </td>
+                        <div
+                          key={v.id}
+                          className={`p-3.5 rounded-sm border transition-colors space-y-3 ${
+                            isIncluded
+                              ? 'bg-neutral-900/90 border-emerald-500/40 shadow-xs'
+                              : 'bg-neutral-950/60 border-neutral-800/80 opacity-75'
+                          }`}
+                        >
+                          {/* Header: Title, SKU, and Selection Toggle Pill */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="space-y-0.5">
+                              <div className="font-semibold text-white text-xs flex items-center gap-1.5">
+                                <span>{v.variationTitle || 'Default'}</span>
+                              </div>
+                              <div className="font-mono text-[11px] text-neutral-400">
+                                SKU: <span className="text-neutral-300">{v.supplierSku || '—'}</span>
+                              </div>
+                            </div>
+
+                            {item.itemType === 'existing' ? (
+                              <button
+                                type="button"
+                                onClick={() => handleToggleVariationSelection(item.id, v.id)}
+                                className={`px-2.5 py-1 text-[11px] font-medium rounded-full border flex items-center gap-1.5 transition-colors shrink-0 ${
+                                  isIncluded
+                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                    : 'bg-neutral-800/80 text-neutral-400 border-neutral-700 hover:text-white'
+                                }`}
+                              >
+                                {isIncluded ? (
+                                  <>
+                                    <Check className="w-3 h-3 text-emerald-400" />
+                                    <span>Included</span>
+                                  </>
+                                ) : (
+                                  <span>Not Purchasing</span>
+                                )}
+                              </button>
+                            ) : (
+                              <span className="px-2 py-0.5 text-[10px] font-mono rounded bg-luxury-gold/10 text-luxury-gold border border-luxury-gold/20">
+                                New Variation
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Existing Inventory Stock (Read-Only) */}
                           {item.itemType === 'existing' && (
-                            <td className="py-2 px-2 text-center">
-                              {v.existingCurrentStock !== undefined ? (
-                                <div className="flex flex-col items-center">
-                                  <span className={`font-mono text-[11px] px-2 py-0.5 rounded border ${
+                            <div className="flex items-center justify-between text-xs py-1.5 px-2.5 rounded bg-neutral-950/80 border border-neutral-800">
+                              <span className="text-neutral-400 text-[11px]">Current Stock:</span>
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`font-mono font-medium px-2 py-0.5 rounded text-[11px] ${
                                     v.existingCurrentStock === 0
-                                      ? 'text-rose-400 bg-rose-500/10 border-rose-500/20'
-                                      : 'text-neutral-300 bg-neutral-900 border-neutral-800'
-                                  }`}>
-                                    {v.existingCurrentStock} units
+                                      ? 'text-rose-400 bg-rose-500/10 border border-rose-500/20'
+                                      : 'text-neutral-200 bg-neutral-900 border border-neutral-800'
+                                  }`}
+                                >
+                                  {v.existingCurrentStock ?? 0} units
+                                </span>
+                                {v.existingCurrentCost !== undefined && (
+                                  <span className="text-[10px] text-neutral-400 font-mono">
+                                    Ref: Rs. {v.existingCurrentCost.toFixed(2)}
                                   </span>
-                                  {v.existingCurrentCost !== undefined && (
-                                    <span className="text-[10px] text-neutral-400 font-mono mt-0.5">
-                                      Ref: Rs. {v.existingCurrentCost.toFixed(2)}
-                                    </span>
-                                  )}
-                                </div>
-                              ) : (
-                                <span className="text-neutral-500 text-[11px]">—</span>
-                              )}
-                            </td>
+                                )}
+                              </div>
+                            </div>
                           )}
-                          <td className="py-2 px-2">
-                            <Input
-                              type="number"
-                              min="1"
-                              step="1"
-                              value={v.quantityPurchased}
-                              onChange={(e) =>
-                                handleUpdateVariation(item.id, v.id, {
-                                  quantityPurchased: Math.max(1, parseInt(e.target.value, 10) || 1),
-                                })
-                              }
-                              required
-                              className="h-7 bg-neutral-900 border-neutral-800 text-white text-xs font-mono"
-                            />
-                          </td>
-                          <td className="py-2 px-2">
-                            <Input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={v.supplierUnitPriceLkr || ''}
-                              onChange={(e) =>
-                                handleUpdateVariation(item.id, v.id, {
-                                  supplierUnitPriceLkr: parseFloat(e.target.value) || 0,
-                                })
-                              }
-                              required
-                              placeholder="0.00"
-                              className="h-7 bg-neutral-900 border-neutral-800 text-white text-xs font-mono"
-                            />
-                          </td>
-                          <td className="py-2 px-2 text-right font-mono text-neutral-400 text-xs">
-                            Rs. {allocExpenseLkr.toFixed(2)}
-                          </td>
-                          <td className="py-2 px-2 text-right font-mono text-luxury-gold font-medium text-xs">
-                            Rs. {unitLandedLkr.toFixed(2)}
-                          </td>
-                          <td className="py-2 px-2 text-right font-mono text-white font-medium text-xs">
-                            Rs. {lineLandedLkr.toFixed(2)}
-                          </td>
-                          <td className="py-2 px-2 text-right">
-                            {item.variations.length > 1 && (
+
+                          {/* Inputs: Quantity & Supplier Unit Cost */}
+                          <div className="grid grid-cols-2 gap-2.5 pt-1">
+                            <div>
+                              <Label className="text-[11px] text-neutral-300 block mb-1">
+                                New Purchase Qty *
+                              </Label>
+                              <Input
+                                type="text"
+                                inputMode="numeric"
+                                pattern="[0-9]*"
+                                placeholder="0"
+                                value={v.quantityPurchased === '' ? '' : v.quantityPurchased}
+                                onChange={(e) => handleQuantityChange(item.id, v.id, e.target.value)}
+                                onBlur={() => handleQuantityBlur(item.id, v.id, item.itemType)}
+                                className="h-9 bg-neutral-900 border-neutral-800 text-white font-mono text-sm text-center"
+                              />
+                            </div>
+
+                            <div>
+                              <Label className="text-[11px] text-neutral-300 block mb-1">
+                                Supplier Cost (LKR) *
+                              </Label>
+                              <Input
+                                type="text"
+                                inputMode="decimal"
+                                placeholder="0.00"
+                                value={v.supplierUnitPriceLkr === '' ? '' : v.supplierUnitPriceLkr}
+                                onChange={(e) => handlePriceChange(item.id, v.id, e.target.value)}
+                                onBlur={() => handlePriceBlur(item.id, v.id)}
+                                className="h-9 bg-neutral-900 border-neutral-800 text-white font-mono text-sm text-right"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Live Landed Cost Summary */}
+                          {isIncluded && (
+                            <div className="p-2 rounded bg-neutral-950/80 border border-neutral-800 text-[11px] font-mono grid grid-cols-3 gap-1 text-center">
+                              <div>
+                                <div className="text-[10px] text-neutral-500">Alloc. Exp.</div>
+                                <div className="text-neutral-300 mt-0.5">Rs. {allocExpenseLkr.toFixed(2)}</div>
+                              </div>
+                              <div>
+                                <div className="text-[10px] text-luxury-gold/80">Unit Landed</div>
+                                <div className="text-luxury-gold font-medium mt-0.5">Rs. {unitLandedLkr.toFixed(2)}</div>
+                              </div>
+                              <div>
+                                <div className="text-[10px] text-neutral-400">Line Total</div>
+                                <div className="text-white font-bold mt-0.5">Rs. {lineLandedLkr.toFixed(2)}</div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Remove button for new items */}
+                          {item.itemType === 'new' && item.variations.length > 1 && (
+                            <div className="flex justify-end pt-1">
                               <button
                                 type="button"
                                 onClick={() => handleRemoveVariation(item.id, v.id)}
-                                className="text-neutral-500 hover:text-rose-400 transition-colors p-1"
+                                className="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
+                                <span>Remove variation</span>
                               </button>
-                            )}
-                          </td>
-                        </tr>
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-          </div>
-        ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ))}
         </CardContent>
       </Card>
 
