@@ -60,7 +60,7 @@ export async function compileDailyOrderSummary(referenceDate: Date = new Date())
       created_at,
       order_items (
         id,
-        product_title,
+        product_name,
         variant_title,
         quantity,
         total_price
@@ -86,7 +86,7 @@ export async function compileDailyOrderSummary(referenceDate: Date = new Date())
     created_at: string;
     order_items: Array<{
       id: string;
-      product_title: string;
+      product_name: string;
       variant_title?: string;
       quantity: number;
       total_price: number;
@@ -105,7 +105,7 @@ export async function compileDailyOrderSummary(referenceDate: Date = new Date())
     totalUnits += itemCount;
 
     const itemsDescription = items
-      .map((it) => `${it.product_title}${it.variant_title ? ` (${it.variant_title})` : ''} x${it.quantity}`)
+      .map((it) => `${it.product_name}${it.variant_title ? ` (${it.variant_title})` : ''} x${it.quantity}`)
       .join(', ');
 
     return {
