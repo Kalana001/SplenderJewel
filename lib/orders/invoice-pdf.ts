@@ -193,11 +193,9 @@ export async function generateOrderInvoicePdf(order: InvoiceOrderData): Promise<
   doc.roundedRect(leftCardX, cardY, cardW, cardH, 2, 2, 'FD');
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
+  doc.setFontSize(7.5);
   doc.setTextColor(...brandGold);
-  doc.text('YOUR DETAILS:', leftCardX + textPad, cardY + 6);
-  doc.setTextColor(...textMuted);
-  doc.text('FROM', leftCardX + textPad + 22, cardY + 6);
+  doc.text('FROM', leftCardX + textPad, cardY + 6);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9.5);
@@ -221,11 +219,9 @@ export async function generateOrderInvoicePdf(order: InvoiceOrderData): Promise<
   doc.roundedRect(rightCardX, cardY, cardW, cardH, 2, 2, 'FD');
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
+  doc.setFontSize(7.5);
   doc.setTextColor(...brandGold);
-  doc.text("CLIENT'S DETAILS:", rightCardX + textPad, cardY + 6);
-  doc.setTextColor(...textMuted);
-  doc.text('TO', rightCardX + textPad + 26, cardY + 6);
+  doc.text('TO', rightCardX + textPad, cardY + 6);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9.5);
