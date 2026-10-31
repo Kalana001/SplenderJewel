@@ -96,7 +96,7 @@ export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps)
         alert(res.error || 'Failed to retrieve order details for invoice.');
         return;
       }
-      generateOrderInvoicePdf(res.invoice);
+      await generateOrderInvoicePdf(res.invoice);
     } catch (err: unknown) {
       console.error('[InvoiceDownload] Error:', err);
       alert('Failed to generate invoice PDF. Please try again.');

@@ -54,182 +54,288 @@ export function formatInvoiceDate(isoDate: string): string {
 }
 
 /**
- * Generates and downloads a luxury vector PDF invoice for Splender Jewel.
+ * Loads the brand logo as a Data URL for jsPDF.
  */
-export function generateOrderInvoicePdf(order: InvoiceOrderData) {
+async function loadLogoDataUrl(): Promise<string | null> {
+  if (typeof window === 'undefined') return null;
+  try {
+    const response = await fetch('/images/logo.png');
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Generates and downloads an A4 single-page luxury PDF invoice for Splender Jewel.
+ * Designed to strictly stay within page boundaries with zero text overflowing.
+ */
+export async function generateOrderInvoicePdf(order: InvoiceOrderData): Promise<void> {
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
     format: 'a4',
   });
 
-  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageWidth = 210;
   const margin = 14;
-  const contentWidth = pageWidth - margin * 2;
+  const contentWidth = pageWidth - margin * 2; // 182 mm
 
-  // Colors
-  const goldColor: [number, number, number] = [212, 175, 55]; // #d4af37
-  const darkBg: [number, number, number] = [24, 24, 27]; // #18181b
+  // Refined Color Palette
+  const brandDark: [number, number, number] = [24, 24, 27]; // #18181b
+  const brandGold: [number, number, number] = [190, 145, 45]; // #be912d
   const textDark: [number, number, number] = [35, 35, 35];
-  const textMuted: [number, number, number] = [105, 105, 105];
+  const textMuted: [number, number, number] = [110, 110, 110];
+  const borderLight: [number, number, number] = [225, 227, 230];
+  const cardBg: [number, number, number] = [252, 252, 252];
   const successGreen: [number, number, number] = [16, 140, 95];
   const pendingAmber: [number, number, number] = [190, 105, 5];
 
-  const isBankTransfer = order.paymentMethod === 'bank_transfer';
   const isPaid = order.paymentStatus === 'verified';
   const isCod = order.paymentMethod === 'cod';
 
-  // 1. Top Decorative Brand Bar
-  doc.setFillColor(...darkBg);
-  doc.rect(margin, margin, contentWidth, 24, 'F');
+  // 1. TOP HEADER: LOGO & INVOICE IDENTIFIER
+  const logoData = await loadLogoDataUrl();
+  const logoSize = 18; // 18x18 mm
 
-  // Brand Name
-  doc.setTextColor(...goldColor);
-  doc.setFont('times', 'bold');
-  doc.setFontSize(18);
-  doc.text('SPLENDER JEWEL', margin + 6, margin + 10);
-
-  doc.setTextColor(220, 220, 220);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.text('LUXURY JEWELRY & ACCESSORIES', margin + 6, margin + 15);
-  doc.text('66/A/38 St. Jude Place, Thaladuwa, Negombo', margin + 6, margin + 19);
-
-  // Right Header: Invoice Title
-  doc.setTextColor(...goldColor);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  const invoiceTypeTitle = isPaid ? 'OFFICIAL RECEIPT' : 'ORDER INVOICE';
-  doc.text(invoiceTypeTitle, pageWidth - margin - 6, margin + 10, { align: 'right' });
-
-  doc.setTextColor(240, 240, 240);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
-  doc.text(`Invoice #: INV-${order.orderNumber}`, pageWidth - margin - 6, margin + 15, { align: 'right' });
-
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Date: ${formatInvoiceDate(order.createdAt)}`, pageWidth - margin - 6, margin + 19, { align: 'right' });
-
-  let currentY = margin + 30;
-
-  // 2. Payment Status Banner
-  if (isPaid) {
-    // Green Paid Badge
-    doc.setFillColor(240, 253, 244);
-    doc.setDrawColor(...successGreen);
-    doc.setLineWidth(0.4);
-    doc.roundedRect(margin, currentY, contentWidth, 12, 1.5, 1.5, 'FD');
-
-    doc.setTextColor(...successGreen);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.text('PAID IN FULL', margin + 4, currentY + 7);
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8.5);
-    doc.text(`Payment Method: Bank Deposit / Transfer  |  Balance Due: Rs. 0.00`, margin + 34, currentY + 7);
-  } else if (isCod) {
-    // Amber COD Payment Due Badge
-    doc.setFillColor(254, 252, 232);
-    doc.setDrawColor(...pendingAmber);
-    doc.setLineWidth(0.4);
-    doc.roundedRect(margin, currentY, contentWidth, 12, 1.5, 1.5, 'FD');
-
-    doc.setTextColor(...pendingAmber);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.text('PAYMENT DUE ON DELIVERY', margin + 4, currentY + 7);
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8.5);
-    doc.text(
-      `Payment Method: Cash on Delivery (COD)  |  Amount Due to Courier: ${formatCurrency(order.totalAmount)}`,
-      margin + 62,
-      currentY + 7
-    );
-  } else {
-    // General Pending
-    doc.setFillColor(250, 250, 250);
-    doc.setDrawColor(...pendingAmber);
-    doc.setLineWidth(0.4);
-    doc.roundedRect(margin, currentY, contentWidth, 12, 1.5, 1.5, 'FD');
-
-    doc.setTextColor(...pendingAmber);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9.5);
-    doc.text(`PAYMENT PENDING: ${order.paymentStatus.toUpperCase()}`, margin + 4, currentY + 7);
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8.5);
-    doc.text(`Amount: ${formatCurrency(order.totalAmount)}`, margin + 70, currentY + 7);
+  if (logoData) {
+    try {
+      doc.addImage(logoData, 'JPEG', margin, margin, logoSize, logoSize);
+    } catch {
+      // Fallback gracefully
+    }
   }
 
-  currentY += 17;
+  // Brand Name & Tagline next to logo
+  const brandTextX = logoData ? margin + logoSize + 4 : margin;
+  doc.setFont('times', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(...brandDark);
+  doc.text('SPLENDER JEWEL', brandTextX, margin + 6);
 
-  // 3. Customer & Delivery Address Card
-  doc.setFillColor(250, 250, 250);
-  doc.setDrawColor(225, 225, 225);
-  doc.setLineWidth(0.3);
-  doc.rect(margin, currentY, contentWidth, 26, 'FD');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...brandGold);
+  doc.text('THE JEWEL GALLERY  •  LUXURY ACCESSORIES', brandTextX, margin + 11);
 
-  // Customer Information (Left)
-  doc.setTextColor(...darkBg);
+  doc.setTextColor(...textMuted);
+  doc.setFontSize(7);
+  doc.text('66/A/38 St. Jude Place, Thaladuwa, Negombo', brandTextX, margin + 15);
+
+  // Right Header Title
+  const invoiceTitle = isPaid ? 'OFFICIAL RECEIPT' : 'ORDER INVOICE';
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.text('CUSTOMER / RECIPIENT:', margin + 4, currentY + 6);
+  doc.setFontSize(14);
+  doc.setTextColor(...brandDark);
+  doc.text(invoiceTitle, pageWidth - margin, margin + 6, { align: 'right' });
+
+  // Right Status Tag Pill
+  const statusPillW = 46;
+  const statusPillH = 6.5;
+  const statusPillX = pageWidth - margin - statusPillW;
+  const statusPillY = margin + 9.5;
+
+  if (isPaid) {
+    doc.setFillColor(240, 253, 244);
+    doc.setDrawColor(...successGreen);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(statusPillX, statusPillY, statusPillW, statusPillH, 1, 1, 'FD');
+    doc.setTextColor(...successGreen);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.text('PAID IN FULL', statusPillX + statusPillW / 2, statusPillY + 4.5, { align: 'center' });
+  } else if (isCod) {
+    doc.setFillColor(254, 252, 232);
+    doc.setDrawColor(...pendingAmber);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(statusPillX, statusPillY, statusPillW, statusPillH, 1, 1, 'FD');
+    doc.setTextColor(...pendingAmber);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.text('PAYMENT DUE ON DELIVERY', statusPillX + statusPillW / 2, statusPillY + 4.5, { align: 'center' });
+  } else {
+    doc.setFillColor(250, 250, 250);
+    doc.setDrawColor(...pendingAmber);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(statusPillX, statusPillY, statusPillW, statusPillH, 1, 1, 'FD');
+    doc.setTextColor(...pendingAmber);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.text('PAYMENT PENDING', statusPillX + statusPillW / 2, statusPillY + 4.5, { align: 'center' });
+  }
+
+  // Header Divider
+  doc.setDrawColor(...borderLight);
+  doc.setLineWidth(0.4);
+  doc.line(margin, margin + 22, pageWidth - margin, margin + 22);
+
+  // 2. TWO DETAILS CARDS (FROM & TO)
+  const cardY = margin + 26;
+  const cardGap = 8;
+  const cardW = (contentWidth - cardGap) / 2; // 87 mm each
+  const cardH = 38; // 38 mm height
+  const leftCardX = margin;
+  const rightCardX = margin + cardW + cardGap;
+  const textPad = 4.5;
+  const usableTextW = cardW - textPad * 2; // 78 mm max width for text!
+
+  // Left Card: FROM (Splender Jewel)
+  doc.setFillColor(...cardBg);
+  doc.setDrawColor(...borderLight);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(leftCardX, cardY, cardW, cardH, 2, 2, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7);
+  doc.setTextColor(...brandGold);
+  doc.text('YOUR DETAILS:', leftCardX + textPad, cardY + 6);
+  doc.setTextColor(...textMuted);
+  doc.text('FROM', leftCardX + textPad + 22, cardY + 6);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9.5);
-  doc.setTextColor(...textDark);
-  doc.text(order.customerName, margin + 4, currentY + 12);
+  doc.setTextColor(...brandDark);
+  doc.text('Splender Jewel', leftCardX + textPad, cardY + 12);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8.5);
+  doc.setFontSize(7.5);
+  doc.setTextColor(...textDark);
+  doc.text('Luxury Jewelry & Accessories', leftCardX + textPad, cardY + 16.5);
+  doc.text('66/A/38 St. Jude Place, Thaladuwa, Negombo', leftCardX + textPad, cardY + 21);
   doc.setTextColor(...textMuted);
-  const phones = [order.phone1, order.phone2].filter(Boolean).join(' / ');
-  doc.text(`Phone: ${phones}`, margin + 4, currentY + 17);
-  if (order.email) {
-    doc.text(`Email: ${order.email}`, margin + 4, currentY + 22);
-  }
+  doc.text('WhatsApp: +94 76 468 9907', leftCardX + textPad, cardY + 26);
+  doc.text('Email: splenderjewel@gmail.com', leftCardX + textPad, cardY + 30.5);
+  doc.text('Web: https://splender-jewel.vercel.app', leftCardX + textPad, cardY + 35);
 
-  // Delivery Details (Right)
-  const rightColX = margin + (contentWidth / 2) + 4;
-  doc.setTextColor(...darkBg);
+  // Right Card: TO (Client Details)
+  doc.setFillColor(...cardBg);
+  doc.setDrawColor(...borderLight);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(rightCardX, cardY, cardW, cardH, 2, 2, 'FD');
+
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.text('DELIVERY ADDRESS (SRI LANKA):', rightColX, currentY + 6);
+  doc.setFontSize(7);
+  doc.setTextColor(...brandGold);
+  doc.text("CLIENT'S DETAILS:", rightCardX + textPad, cardY + 6);
+  doc.setTextColor(...textMuted);
+  doc.text('TO', rightCardX + textPad + 26, cardY + 6);
 
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.setTextColor(...brandDark);
+  const clientName = order.customerName || 'Valued Customer';
+  doc.text(clientName, rightCardX + textPad, cardY + 12);
+
+  // Strictly wrap address text to stay inside usable card width!
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8.5);
+  doc.setFontSize(7.5);
   doc.setTextColor(...textDark);
-  const addressParts = [
+
+  const addressRawParts = [
     order.addressLine,
     order.city,
     order.district ? `${order.district} District` : null,
     order.postalCode,
   ].filter(Boolean);
+  const fullAddressStr = addressRawParts.join(', ') || 'Domestic Delivery (Sri Lanka)';
 
-  const addressLine1 = addressParts.slice(0, 2).join(', ');
-  const addressLine2 = addressParts.slice(2).join(', ');
+  const wrappedAddressLines: string[] = doc.splitTextToSize(fullAddressStr, usableTextW);
+  let addressCursorY = cardY + 16.5;
 
-  doc.text(addressLine1 || 'Delivery Address Provided', rightColX, currentY + 12);
-  if (addressLine2) {
-    doc.text(addressLine2, rightColX, currentY + 17);
+  // Print first 2 wrapped lines safely
+  for (let i = 0; i < Math.min(wrappedAddressLines.length, 2); i++) {
+    doc.text(wrappedAddressLines[i], rightCardX + textPad, addressCursorY);
+    addressCursorY += 4.5;
   }
-  if (order.trackingNumber) {
+
+  // Client Phone & Contact
+  const phones = [order.phone1, order.phone2].filter(Boolean).join(' / ') || 'Not provided';
+  doc.setTextColor(...textMuted);
+  doc.text(`Phone: ${phones}`, rightCardX + textPad, cardY + 26);
+
+  if (order.email) {
+    doc.text(`Email: ${order.email}`, rightCardX + textPad, cardY + 30.5);
+  } else if (order.trackingNumber) {
     doc.setFont('helvetica', 'bold');
-    doc.text(`Courier Tracking: ${order.trackingNumber}`, rightColX, currentY + 22);
+    doc.setTextColor(...textDark);
+    doc.text(`Courier Tracking: ${order.trackingNumber}`, rightCardX + textPad, cardY + 30.5);
+    doc.setFont('helvetica', 'normal');
+  } else {
+    doc.text('Delivery Method: Doorstep Courier Delivery', rightCardX + textPad, cardY + 30.5);
   }
 
-  currentY += 32;
+  if (order.trackingNumber && order.email) {
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...textDark);
+    doc.text(`Courier Tracking: ${order.trackingNumber}`, rightCardX + textPad, cardY + 35);
+  }
 
-  // 4. Items Table via AutoTable
+  // 3. METADATA ROW (Below Cards, matching reference)
+  const metaY = cardY + cardH + 7;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(...brandDark);
+  doc.text('Invoice No : ', margin, metaY);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...textDark);
+  doc.text(order.orderNumber, margin + 18, metaY);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...brandDark);
+  doc.text('Invoice Date : ', margin, metaY + 5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...textDark);
+  doc.text(formatInvoiceDate(order.createdAt), margin + 20, metaY + 5);
+
+  // Right side of metadata row
+  const rightMetaColX = 118;
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...brandDark);
+  doc.text('Payment Method : ', rightMetaColX, metaY);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...textDark);
+  const paymentMethodLabel = isCod ? 'Cash on Delivery (COD)' : 'Bank Deposit / Transfer';
+  doc.text(paymentMethodLabel, rightMetaColX + 27, metaY);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...brandDark);
+  doc.text('Payment Status : ', rightMetaColX, metaY + 5);
+
+  if (isPaid) {
+    doc.setTextColor(...successGreen);
+    doc.text('Paid in Full (Balance Due: Rs. 0.00)', rightMetaColX + 25, metaY + 5);
+  } else if (isCod) {
+    doc.setTextColor(...pendingAmber);
+    doc.text(`Due on Delivery (${formatCurrency(order.totalAmount)})`, rightMetaColX + 25, metaY + 5);
+  } else {
+    doc.setTextColor(...pendingAmber);
+    doc.text(`${order.paymentStatus.toUpperCase()} (${formatCurrency(order.totalAmount)})`, rightMetaColX + 25, metaY + 5);
+  }
+
+  // 4. ITEMS TABLE (AutoTable)
+  const tableStartY = metaY + 9;
+
   const tableRows = (order.items || []).map((item, index) => {
-    const desc = item.variantTitle ? `${item.productName} (${item.variantTitle})` : item.productName;
+    const details = [
+      item.variantTitle ? `Variant: ${item.variantTitle}` : null,
+      item.sku ? `SKU: ${item.sku}` : null,
+    ]
+      .filter(Boolean)
+      .join('  |  ');
+
+    const desc = details ? `${item.productName}\n${details}` : item.productName;
+
     return [
       String(index + 1),
       desc,
-      item.sku || '-',
       String(item.quantity),
       formatCurrency(item.unitPrice),
       formatCurrency(item.totalPrice),
@@ -237,98 +343,151 @@ export function generateOrderInvoicePdf(order: InvoiceOrderData) {
   });
 
   autoTable(doc, {
-    startY: currentY,
-    head: [['#', 'Item Description', 'SKU', 'Qty', 'Unit Price', 'Line Total']],
+    startY: tableStartY,
+    head: [['#', 'Item Description', 'Qty', 'Unit Price', 'Line Total']],
     body: tableRows,
-    theme: 'grid',
+    theme: 'plain',
     margin: { left: margin, right: margin },
+    tableWidth: contentWidth,
     headStyles: {
-      fillColor: darkBg,
-      textColor: goldColor,
+      fillColor: [244, 245, 247],
+      textColor: [35, 35, 35],
       fontStyle: 'bold',
-      fontSize: 8.5,
-      cellPadding: 2.5,
+      fontSize: 8,
+      cellPadding: { top: 2.5, bottom: 2.5, left: 3, right: 3 },
+      lineColor: [220, 222, 226],
+      lineWidth: { bottom: 0.5, top: 0.5 },
     },
     columnStyles: {
       0: { cellWidth: 8, halign: 'center' },
-      1: { cellWidth: 'auto' },
-      2: { cellWidth: 26, halign: 'center' },
-      3: { cellWidth: 12, halign: 'center' },
-      4: { cellWidth: 26, halign: 'right' },
-      5: { cellWidth: 28, halign: 'right' },
+      1: { cellWidth: 98, halign: 'left' },
+      2: { cellWidth: 16, halign: 'center' },
+      3: { cellWidth: 30, halign: 'right' },
+      4: { cellWidth: 30, halign: 'right' },
     },
     bodyStyles: {
-      fontSize: 8.5,
-      textColor: textDark,
-      cellPadding: 2.5,
+      fontSize: 8,
+      textColor: [40, 40, 40],
+      cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
+      lineColor: [235, 237, 240],
+      lineWidth: { bottom: 0.3 },
     },
     alternateRowStyles: {
-      fillColor: [248, 248, 248],
+      fillColor: [253, 253, 254],
     },
   });
 
   const finalY = (doc as any).lastAutoTable.finalY + 6;
 
-  // 5. Financial Summary (Right aligned)
-  const summaryX = pageWidth - margin - 70;
-  const summaryValX = pageWidth - margin - 2;
-  let summaryY = finalY;
+  // 5. INVOICE SUMMARY BOX (Bottom Right, matching reference)
+  const summaryBoxW = 78;
+  const summaryBoxX = pageWidth - margin - summaryBoxW; // 118 mm
+  const summaryCursorY = finalY;
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8.5);
-  doc.setTextColor(...textMuted);
+  // Outer border card for summary
+  const hasDiscount = Boolean(order.discountAmount && order.discountAmount > 0);
+  const summaryBoxH = hasDiscount ? 42 : 36;
 
-  // Subtotal
-  doc.text('Subtotal:', summaryX, summaryY);
-  doc.text(formatCurrency(order.subtotal), summaryValX, summaryY, { align: 'right' });
-  summaryY += 5;
+  doc.setFillColor(...cardBg);
+  doc.setDrawColor(...borderLight);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(summaryBoxX, summaryCursorY, summaryBoxW, summaryBoxH, 1.5, 1.5, 'FD');
 
-  // Discount
-  if (order.discountAmount && order.discountAmount > 0) {
-    doc.text(`Discount (${order.couponCode || 'Promo'}):`, summaryX, summaryY);
-    doc.text(`-${formatCurrency(order.discountAmount)}`, summaryValX, summaryY, { align: 'right' });
-    summaryY += 5;
-  }
-
-  // Delivery Fee
-  doc.text('Delivery Fee:', summaryX, summaryY);
-  doc.text(formatCurrency(order.deliveryFee), summaryValX, summaryY, { align: 'right' });
-  summaryY += 6;
-
-  // Grand Total Line
-  doc.setDrawColor(...goldColor);
-  doc.setLineWidth(0.5);
-  doc.line(summaryX, summaryY - 2, pageWidth - margin, summaryY - 2);
+  // Header band for summary box
+  doc.setFillColor(244, 245, 247);
+  doc.roundedRect(summaryBoxX, summaryCursorY, summaryBoxW, 7, 1.5, 1.5, 'F');
+  doc.setDrawColor(...borderLight);
+  doc.line(summaryBoxX, summaryCursorY + 7, summaryBoxX + summaryBoxW, summaryCursorY + 7);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.setTextColor(...darkBg);
-  doc.text('Total Amount:', summaryX, summaryY + 2);
-  doc.setTextColor(...goldColor);
-  doc.text(formatCurrency(order.totalAmount), summaryValX, summaryY + 2, { align: 'right' });
+  doc.setFontSize(7.5);
+  doc.setTextColor(...brandDark);
+  doc.text('Invoice Summary', summaryBoxX + 4, summaryCursorY + 4.8);
 
-  // 6. Footer Notes
-  const footerY = 270;
-  doc.setDrawColor(230, 230, 230);
-  doc.setLineWidth(0.3);
-  doc.line(margin, footerY - 5, pageWidth - margin, footerY - 5);
+  const sumLabelX = summaryBoxX + 4;
+  const sumValX = summaryBoxX + summaryBoxW - 4;
+  let rowY = summaryCursorY + 12;
 
+  // Subtotal
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(...textMuted);
-  doc.text('Thank you for choosing Splender Jewel!', margin, footerY);
+  doc.text('Subtotal', sumLabelX, rowY);
+  doc.setTextColor(...textDark);
+  doc.text(formatCurrency(order.subtotal), sumValX, rowY, { align: 'right' });
+  rowY += 5;
+
+  // Discount (if any)
+  if (hasDiscount) {
+    doc.setTextColor(...textMuted);
+    doc.text(`Discount (${order.couponCode || 'Promo'})`, sumLabelX, rowY);
+    doc.setTextColor(190, 40, 40);
+    doc.text(`-${formatCurrency(order.discountAmount || 0)}`, sumValX, rowY, { align: 'right' });
+    rowY += 5;
+  }
+
+  // Delivery Fee
+  doc.setTextColor(...textMuted);
+  doc.text('Delivery Fee', sumLabelX, rowY);
+  doc.setTextColor(...textDark);
+  doc.text(formatCurrency(order.deliveryFee), sumValX, rowY, { align: 'right' });
+  rowY += 6;
+
+  // Divider line before Total
+  doc.setDrawColor(...borderLight);
+  doc.setLineWidth(0.4);
+  doc.line(sumLabelX, rowY - 2, sumValX, rowY - 2);
+
+  // Total Amount
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.setTextColor(...brandDark);
+  doc.text('Total Amount', sumLabelX, rowY + 1.5);
+  doc.setTextColor(...brandGold);
+  doc.text(formatCurrency(order.totalAmount), sumValX, rowY + 1.5, { align: 'right' });
+
+  // Status Note Pill inside Summary Card
+  const pillY = rowY + 4;
+  if (isPaid) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(...successGreen);
+    doc.text('✓ Paid in Full (Balance Due: Rs. 0.00)', sumLabelX, pillY + 3);
+  } else if (isCod) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(...pendingAmber);
+    doc.text(`• Amount Due to Courier: ${formatCurrency(order.totalAmount)}`, sumLabelX, pillY + 3);
+  }
+
+  // 6. FOOTER (Strictly pinned at bottom of A4 page: Y = 274 mm)
+  const footerY = 274;
+  doc.setDrawColor(...borderLight);
+  doc.setLineWidth(0.3);
+  doc.line(margin, footerY, pageWidth - margin, footerY);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(...textDark);
+  doc.text('Thank you for choosing Splender Jewel!', pageWidth / 2, footerY + 5, { align: 'center' });
+
+  doc.setFontSize(7);
+  doc.setTextColor(...textMuted);
   doc.text(
-    'For inquiries, WhatsApp customer support: +94 76 468 9907  |  Website: https://splender-jewel.vercel.app',
-    margin,
-    footerY + 4
+    'Store: 66/A/38 St. Jude Place, Thaladuwa, Negombo   •   WhatsApp: +94 76 468 9907   •   splenderjewel@gmail.com',
+    pageWidth / 2,
+    footerY + 9,
+    { align: 'center' }
   );
   doc.text(
-    'Store Address: 66/A/38 St. Jude Place, Thaladuwa, Negombo  |  Islandwide Delivery by Sri Lanka Post / Courier',
-    margin,
-    footerY + 8
+    'Website: https://splender-jewel.vercel.app   •   Priority Islandwide Doorstep Delivery by Courier',
+    pageWidth / 2,
+    footerY + 13,
+    { align: 'center' }
   );
 
   // Save the PDF
-  const filename = `SplenderJewel_Invoice_${order.orderNumber}.pdf`;
+  const cleanOrderNum = order.orderNumber.replace(/[^a-zA-Z0-9_-]/g, '');
+  const filename = `SplenderJewel_Invoice_${cleanOrderNum}.pdf`;
   doc.save(filename);
 }

@@ -69,7 +69,7 @@ export function OrderFulfillmentManager({ order: initialOrder }: OrderFulfillmen
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   // Download Invoice / Receipt PDF
-  const handleDownloadInvoice = () => {
+  const handleDownloadInvoice = async () => {
     try {
       setIsGeneratingPdf(true);
       const invoiceData: InvoiceOrderData = {
@@ -101,7 +101,7 @@ export function OrderFulfillmentManager({ order: initialOrder }: OrderFulfillmen
           totalPrice: Number(item.total_price) || 0,
         })),
       };
-      generateOrderInvoicePdf(invoiceData);
+      await generateOrderInvoicePdf(invoiceData);
     } catch (err) {
       console.error('Failed to generate invoice PDF:', err);
       alert('Failed to generate PDF. Please try again.');
