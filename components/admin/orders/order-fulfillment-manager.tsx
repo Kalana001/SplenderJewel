@@ -18,6 +18,7 @@ import {
   Check,
   Send,
   X,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -36,6 +37,7 @@ import {
   updateAdminNotesAction,
   updateTrackingNumberAction,
 } from '@/lib/orders/admin-actions';
+import { generateOrderInvoicePdf, type InvoiceOrderData } from '@/lib/orders/invoice-pdf';
 
 interface OrderFulfillmentManagerProps {
   order: any;
@@ -64,6 +66,49 @@ export function OrderFulfillmentManager({ order: initialOrder }: OrderFulfillmen
 
   // Print label modal state
   const [showPrintLabel, setShowPrintLabel] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  // Download Invoice / Receipt PDF
+  const handleDownloadInvoice = () => {
+    try {
+      setIsGeneratingPdf(true);
+      const invoiceData: InvoiceOrderData = {
+        orderNumber: order.order_number,
+        createdAt: order.created_at,
+        customerName: order.customer_name,
+        phone1: order.phone1,
+        phone2: order.phone2,
+        email: order.email,
+        addressLine: order.address_line,
+        city: order.city,
+        district: order.district,
+        postalCode: order.postal_code,
+        subtotal: Number(order.subtotal) || 0,
+        deliveryFee: Number(order.delivery_fee) || 0,
+        discountAmount: Number(order.discount_amount) || 0,
+        couponCode: order.coupon_code,
+        totalAmount: Number(order.total_amount) || 0,
+        paymentMethod: order.payment_method,
+        paymentStatus: order.payment_status,
+        orderStatus: order.order_status,
+        trackingNumber: order.tracking_number,
+        items: (order.order_items || []).map((item: any) => ({
+          productName: item.product_name,
+          variantTitle: item.variant_title,
+          sku: item.sku,
+          quantity: Number(item.quantity) || 1,
+          unitPrice: Number(item.unit_price) || 0,
+          totalPrice: Number(item.total_price) || 0,
+        })),
+      };
+      generateOrderInvoicePdf(invoiceData);
+    } catch (err) {
+      console.error('Failed to generate invoice PDF:', err);
+      alert('Failed to generate PDF. Please try again.');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
 
   // Update order status
   async function handleUpdateStatus() {
@@ -249,7 +294,27 @@ export function OrderFulfillmentManager({ order: initialOrder }: OrderFulfillmen
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDownloadInvoice}
+            disabled={isGeneratingPdf}
+            className="text-xs border-luxury-gold/60 bg-luxury-gold/10 text-luxury-gold hover:bg-luxury-gold/20 flex items-center gap-1.5"
+            title="Download PDF Invoice / Receipt for WhatsApp or Instagram sharing"
+          >
+            {isGeneratingPdf ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <FileText className="h-3.5 w-3.5" />
+            )}
+            <span>
+              {order.payment_status === 'verified'
+                ? 'Download Receipt PDF'
+                : 'Download Invoice PDF'}
+            </span>
+          </Button>
+
           {whatsAppPhone && (
             <a href={whatsAppCustomerUrl} target="_blank" rel="noopener noreferrer">
               <Button

@@ -14,6 +14,7 @@ import {
   Loader2,
   X,
   Layers,
+  FileText,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,8 +27,10 @@ import {
 } from '@/lib/config/constants';
 import {
   bulkUpdateOrderStatusAction,
+  getOrderInvoiceDataAction,
   type BulkOrderStatusResult,
 } from '@/lib/orders/admin-actions';
+import { generateOrderInvoicePdf } from '@/lib/orders/invoice-pdf';
 
 interface OrderItemRow {
   id: string;
@@ -81,6 +84,26 @@ export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps)
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [isProcessingBulk, setIsProcessingBulk] = useState(false);
   const [bulkFeedback, setBulkFeedback] = useState<BulkFeedbackState | null>(null);
+
+  // Single-order invoice download state
+  const [downloadingInvoiceId, setDownloadingInvoiceId] = useState<string | null>(null);
+
+  async function handleDownloadInvoice(orderId: string) {
+    try {
+      setDownloadingInvoiceId(orderId);
+      const res = await getOrderInvoiceDataAction(orderId);
+      if (!res.success || !res.invoice) {
+        alert(res.error || 'Failed to retrieve order details for invoice.');
+        return;
+      }
+      generateOrderInvoicePdf(res.invoice);
+    } catch (err: unknown) {
+      console.error('[InvoiceDownload] Error:', err);
+      alert('Failed to generate invoice PDF. Please try again.');
+    } finally {
+      setDownloadingInvoiceId(null);
+    }
+  }
 
   // Filter client-side
   const filteredOrders = orders.filter((order) => {
@@ -496,16 +519,35 @@ export function OrdersTable({ initialOrders, total, metrics }: OrdersTableProps)
                         {getStatusBadge(order.order_status)}
                       </td>
                       <td className="py-3.5 px-4 text-right">
-                        <Link href={`/admin/orders/${order.id}`}>
+                        <div className="flex items-center justify-end gap-1.5">
                           <Button
+                            type="button"
                             variant="outline"
                             size="sm"
-                            className="h-8 px-2.5 text-xs border-neutral-700 bg-neutral-900 hover:border-luxury-gold hover:text-luxury-gold"
+                            onClick={() => handleDownloadInvoice(order.id)}
+                            disabled={downloadingInvoiceId === order.id}
+                            title="Download Customer Invoice / Receipt PDF"
+                            className="h-8 px-2 text-xs border-neutral-700 bg-neutral-900 text-luxury-gold hover:border-luxury-gold hover:bg-luxury-gold/10 transition-colors"
                           >
-                            <Eye className="h-3.5 w-3.5 mr-1" />
-                            <span>Fulfill</span>
+                            {downloadingInvoiceId === order.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <FileText className="h-3.5 w-3.5" />
+                            )}
+                            <span className="hidden xl:inline ml-1">Receipt</span>
                           </Button>
-                        </Link>
+
+                          <Link href={`/admin/orders/${order.id}`}>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 px-2.5 text-xs border-neutral-700 bg-neutral-900 hover:border-luxury-gold hover:text-luxury-gold"
+                            >
+                              <Eye className="h-3.5 w-3.5 mr-1" />
+                              <span>Fulfill</span>
+                            </Button>
+                          </Link>
+                        </div>
                       </td>
                     </tr>
                   );

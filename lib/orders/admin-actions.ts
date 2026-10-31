@@ -1072,3 +1072,49 @@ export async function getAdminPaymentSettlements(filter: AdminPaymentFilter = {}
     };
   }
 }
+
+/**
+ * Retrieves full order and items data formatted specifically for customer invoice / receipt generation.
+ * Enforces requireAdminAuth().
+ */
+export async function getOrderInvoiceDataAction(orderId: string) {
+  await requireAdminAuth();
+
+  const res = await getAdminOrderById(orderId);
+  if (!res.success || !res.order) {
+    return { success: false, error: res.error || 'Order not found.' };
+  }
+
+  const o = res.order;
+  const invoiceData = {
+    orderNumber: o.order_number,
+    createdAt: o.created_at,
+    customerName: o.customer_name || 'Valued Customer',
+    phone1: o.phone1 || '',
+    phone2: o.phone2 || null,
+    email: o.email || null,
+    addressLine: o.address_line || null,
+    city: o.city || null,
+    district: o.district || '',
+    postalCode: o.postal_code || null,
+    subtotal: Number(o.subtotal) || 0,
+    deliveryFee: Number(o.delivery_fee) || 0,
+    discountAmount: Number(o.discount_amount) || 0,
+    couponCode: o.coupon_code || null,
+    totalAmount: Number(o.total_amount) || 0,
+    paymentMethod: o.payment_method || 'cod',
+    paymentStatus: o.payment_status || 'pending',
+    orderStatus: o.order_status || 'pending',
+    trackingNumber: o.tracking_number || null,
+    items: (o.order_items || []).map((it: any) => ({
+      productName: it.product_name || 'Item',
+      variantTitle: it.variant_title || null,
+      sku: it.sku || null,
+      quantity: Number(it.quantity) || 1,
+      unitPrice: Number(it.unit_price) || 0,
+      totalPrice: Number(it.total_price) || 0,
+    })),
+  };
+
+  return { success: true, invoice: invoiceData };
+}
