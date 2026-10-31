@@ -153,7 +153,7 @@ describe('Daily Order Summary & Gmail Notification Suite', () => {
     assert.equal(invalidQuery === cronSecret, false);
   });
 
-  it('7. verifies vercel.json cron schedule is configured for 12:30 UTC (6:00 PM Sri Lanka Time)', async () => {
+  it('7. verifies vercel.json cron schedules are configured for 7:30 AM and 6:00 PM Sri Lanka Time', async () => {
     const fs = await import('fs');
     const path = await import('path');
     const vercelConfigPath = path.resolve(process.cwd(), 'vercel.json');
@@ -162,8 +162,13 @@ describe('Daily Order Summary & Gmail Notification Suite', () => {
     const config = JSON.parse(fs.readFileSync(vercelConfigPath, 'utf8'));
 
     assert.ok(Array.isArray(config.crons), 'crons array must be defined');
-    const dailyCron = config.crons.find((c: any) => c.path === '/api/cron/daily-order-summary');
-    assert.ok(dailyCron, 'daily-order-summary cron must be defined');
-    assert.equal(dailyCron.schedule, '30 12 * * *', 'Schedule must be 30 12 * * * (12:30 UTC = 18:00 SLT)');
+    const summaryCrons = config.crons.filter((c: any) => c.path === '/api/cron/daily-order-summary');
+    assert.equal(summaryCrons.length, 2, 'Must have 2 scheduled runs for daily-order-summary');
+
+    const morningCron = summaryCrons.find((c: any) => c.schedule === '0 2 * * *');
+    const eveningCron = summaryCrons.find((c: any) => c.schedule === '30 12 * * *');
+
+    assert.ok(morningCron, 'Morning schedule must be 0 2 * * * (02:00 UTC = 7:30 AM SLT)');
+    assert.ok(eveningCron, 'Evening schedule must be 30 12 * * * (12:30 UTC = 6:00 PM SLT)');
   });
 });

@@ -122,7 +122,7 @@ export async function compileDailyOrderSummary(referenceDate: Date = new Date())
     };
   });
 
-  // Format local Sri Lanka date string (UTC+5:30)
+  // Format local Sri Lanka date & time string (UTC+5:30)
   const sriLankaDateStr = windowEnd.toLocaleDateString('en-US', {
     timeZone: 'Asia/Colombo',
     weekday: 'short',
@@ -131,9 +131,16 @@ export async function compileDailyOrderSummary(referenceDate: Date = new Date())
     day: 'numeric',
   });
 
+  const sriLankaTimeStr = windowEnd.toLocaleTimeString('en-US', {
+    timeZone: 'Asia/Colombo',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+
   return {
     reportDate: sriLankaDateStr,
-    timeWindowDescription: 'Last 24 Hours (As of 6:00 PM Sri Lanka Time)',
+    timeWindowDescription: `Last 24 Hours (As of ${sriLankaTimeStr} Sri Lanka Time)`,
     totalOrders: summarizedOrders.length,
     totalRevenue,
     totalUnits,

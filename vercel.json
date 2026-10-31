@@ -3,6 +3,10 @@
   "crons": [
     {
       "path": "/api/cron/daily-order-summary",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/daily-order-summary",
       "schedule": "30 12 * * *"
     }
   ]
