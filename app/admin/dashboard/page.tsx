@@ -1,77 +1,34 @@
 import React from 'react';
 import Link from 'next/link';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import {
   ShoppingBag,
-  Package,
-  Settings,
   Shield,
-  Layers,
-  Archive,
-  Tag,
-  ArrowRight,
   DollarSign,
   Truck,
   MessageCircle,
-  CreditCard,
 } from 'lucide-react';
 import { requireAdminPageAuth } from '@/lib/auth/server';
-import { getAdminDashboardMetrics } from '@/lib/orders/admin-actions';
+import {
+  getAdminDashboardMetrics,
+  getAdminDashboardAnalytics,
+} from '@/lib/orders/admin-actions';
 import { formatCurrency } from '@/lib/config/store';
+import { DashboardCharts } from '@/components/admin/dashboard/dashboard-charts';
 
 export default async function AdminDashboardPage() {
   await requireAdminPageAuth();
 
-  const { metrics } = await getAdminDashboardMetrics();
+  const [metricsRes, analyticsRes] = await Promise.all([
+    getAdminDashboardMetrics(),
+    getAdminDashboardAnalytics(),
+  ]);
 
-  const adminModules = [
-    {
-      title: 'Order Management',
-      href: '/admin/orders',
-      icon: ShoppingBag,
-      description: 'Review customer orders, update delivery lifecycle status, and dispatch shipments islandwide.',
-    },
-    {
-      title: 'Payment Settlements',
-      href: '/admin/payments',
-      icon: CreditCard,
-      description: 'Reconcile manual COD courier remittances, track pending collections, and verify WhatsApp bank slips.',
-    },
-    {
-      title: 'Product Catalog & Variants',
-      href: '/admin/products',
-      icon: Package,
-      description: 'Manage jewelry products, multi-attribute variants, SKU codes, pricing, and confidential purchase costs.',
-    },
-    {
-      title: 'Categories',
-      href: '/admin/categories',
-      icon: Layers,
-      description: 'Organize jewelry collections (Rings, Necklaces, Bracelets, Men’s, Anklets).',
-    },
-    {
-      title: 'Inventory & Stock Movements',
-      href: '/admin/inventory',
-      icon: Archive,
-      description: 'Real-time stock level tracking, low-stock thresholds, and stock adjustments.',
-    },
-    {
-      title: 'Discounts & Coupons',
-      href: '/admin/coupons',
-      icon: Tag,
-      description: 'Configure promotional coupon codes and per-customer usage rules.',
-    },
-    {
-      title: 'Store & Delivery Settings',
-      href: '/admin/settings/store',
-      icon: Settings,
-      description: 'Manage store information, WhatsApp contact (+94764689907), and 25-district delivery rates.',
-    },
-  ];
+  const metrics = metricsRes.metrics;
+  const analytics = analyticsRes.analytics;
 
   return (
     <div className="space-y-8">
+      {/* Dashboard Top Header */}
       <div>
         <div className="inline-flex items-center space-x-2 px-2.5 py-1 rounded-full bg-luxury-gold/15 text-luxury-gold text-xs uppercase tracking-wider font-semibold mb-2">
           <Shield className="h-3.5 w-3.5" />
@@ -81,7 +38,7 @@ export default async function AdminDashboardPage() {
           Control Center
         </h1>
         <p className="text-xs text-neutral-400 mt-1 max-w-2xl">
-          Complete store administration workspace. All metrics reflect verified transactions and active store status.
+          Complete store administration workspace. Real-time performance analytics, regional demand, and fulfillment operations.
         </p>
       </div>
 
@@ -154,41 +111,8 @@ export default async function AdminDashboardPage() {
         </Link>
       </div>
 
-      {/* Admin Modules Grid */}
-      <div className="space-y-4">
-        <h2 className="text-base font-serif font-bold text-white tracking-wide">
-          Administrative Modules
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {adminModules.map((mod) => {
-            const Icon = mod.icon;
-            return (
-              <Card
-                key={mod.href}
-                className="border-neutral-800 bg-neutral-900/40 hover:border-luxury-gold/50 transition-all flex flex-col justify-between"
-              >
-                <CardHeader className="p-5">
-                  <div className="h-10 w-10 rounded-sm bg-neutral-800 flex items-center justify-center text-luxury-gold mb-3">
-                    <Icon className="h-5 w-5" />
-                  </div>
-                  <CardTitle className="text-base text-white">{mod.title}</CardTitle>
-                  <CardDescription className="text-xs text-neutral-400 mt-2 leading-relaxed">
-                    {mod.description}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="p-5 pt-0">
-                  <Link href={mod.href}>
-                    <Button variant="outline" size="sm" className="w-full text-xs space-x-2">
-                      <span>Open Module</span>
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </Button>
-                  </Link>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      </div>
+      {/* Interactive Charts & Analytics Section */}
+      <DashboardCharts analytics={analytics} />
     </div>
   );
 }

@@ -1118,3 +1118,181 @@ export async function getOrderInvoiceDataAction(orderId: string) {
 
   return { success: true, invoice: invoiceData };
 }
+
+export interface DailyChartPoint {
+  date: string;
+  label: string;
+  dayName: string;
+  revenue: number;
+  orders: number;
+}
+
+export interface AdminDashboardAnalytics {
+  dailySeries7d: DailyChartPoint[];
+  dailySeries30d: DailyChartPoint[];
+  paymentBreakdown: {
+    cod: { count: number; revenue: number };
+    bankTransfer: { count: number; revenue: number };
+  };
+  topDistricts: { district: string; count: number; revenue: number }[];
+  recentOrders: {
+    id: string;
+    orderNumber: string;
+    customerName: string;
+    district: string;
+    totalAmount: number;
+    paymentMethod: string;
+    paymentStatus: string;
+    orderStatus: OrderStatus;
+    createdAt: string;
+  }[];
+}
+
+/**
+ * FETCH DASHBOARD ANALYTICS & TIME-SERIES CHART DATA
+ * Enforces requireAdminAuth() and aggregates daily revenue, order trajectories,
+ * payment methods, district distribution, and recent orders.
+ */
+export async function getAdminDashboardAnalytics(): Promise<{
+  success: boolean;
+  analytics: AdminDashboardAnalytics;
+}> {
+  await requireAdminAuth();
+  const adminClient = createAdminClient();
+
+  const emptyAnalytics: AdminDashboardAnalytics = {
+    dailySeries7d: [],
+    dailySeries30d: [],
+    paymentBreakdown: {
+      cod: { count: 0, revenue: 0 },
+      bankTransfer: { count: 0, revenue: 0 },
+    },
+    topDistricts: [],
+    recentOrders: [],
+  };
+
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const [ordersRes, recentOrdersRes] = await Promise.all([
+      (adminClient.from('orders') as any)
+        .select(
+          'id, total_amount, payment_method, payment_status, order_status, district, created_at'
+        )
+        .gte('created_at', thirtyDaysAgo)
+        .not('order_status', 'in', '("cancelled","refunded")')
+        .order('created_at', { ascending: true }),
+      (adminClient.from('orders') as any)
+        .select(
+          'id, order_number, customer_name, district, total_amount, payment_method, payment_status, order_status, created_at'
+        )
+        .order('created_at', { ascending: false })
+        .limit(5),
+    ]);
+
+    // Build 30-day and 7-day date buckets
+    const now = new Date();
+    const map30: Record<string, DailyChartPoint> = {};
+    const dailySeries30d: DailyChartPoint[] = [];
+
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+      const dateKey = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Colombo' });
+      const label = d.toLocaleDateString('en-US', {
+        timeZone: 'Asia/Colombo',
+        month: 'short',
+        day: 'numeric',
+      });
+      const dayName = d.toLocaleDateString('en-US', {
+        timeZone: 'Asia/Colombo',
+        weekday: 'short',
+      });
+
+      const point: DailyChartPoint = {
+        date: dateKey,
+        label,
+        dayName,
+        revenue: 0,
+        orders: 0,
+      };
+      map30[dateKey] = point;
+      dailySeries30d.push(point);
+    }
+
+    const paymentBreakdown = {
+      cod: { count: 0, revenue: 0 },
+      bankTransfer: { count: 0, revenue: 0 },
+    };
+    const districtMap: Record<string, { count: number; revenue: number }> = {};
+
+    const activeOrders = ordersRes.data || [];
+    for (const ord of activeOrders) {
+      const ordTotal = Number(ord.total_amount) || 0;
+      const orderDate = new Date(ord.created_at);
+      const dateKey = orderDate.toLocaleDateString('en-CA', { timeZone: 'Asia/Colombo' });
+
+      // Add to daily time series if inside 30-day window
+      if (map30[dateKey]) {
+        map30[dateKey].revenue += ordTotal;
+        map30[dateKey].orders += 1;
+      }
+
+      // Payment method breakdown
+      if (ord.payment_method === 'cod') {
+        paymentBreakdown.cod.count += 1;
+        paymentBreakdown.cod.revenue += ordTotal;
+      } else if (ord.payment_method === 'bank_transfer') {
+        paymentBreakdown.bankTransfer.count += 1;
+        paymentBreakdown.bankTransfer.revenue += ordTotal;
+      }
+
+      // District breakdown
+      const dist = ord.district ? ord.district.trim() : 'Unspecified';
+      if (!districtMap[dist]) {
+        districtMap[dist] = { count: 0, revenue: 0 };
+      }
+      districtMap[dist].count += 1;
+      districtMap[dist].revenue += ordTotal;
+    }
+
+    // Slice last 7 days for the 7d view
+    const dailySeries7d = dailySeries30d.slice(23);
+
+    // Sort top districts
+    const topDistricts = Object.entries(districtMap)
+      .map(([district, data]) => ({
+        district,
+        count: data.count,
+        revenue: data.revenue,
+      }))
+      .sort((a, b) => b.count - a.count || b.revenue - a.revenue)
+      .slice(0, 6);
+
+    // Format recent orders
+    const recentOrders = (recentOrdersRes.data || []).map((r: any) => ({
+      id: r.id,
+      orderNumber: r.order_number,
+      customerName: r.customer_name || 'Customer',
+      district: r.district || 'Domestic',
+      totalAmount: Number(r.total_amount) || 0,
+      paymentMethod: r.payment_method || 'cod',
+      paymentStatus: r.payment_status || 'pending',
+      orderStatus: r.order_status || 'pending',
+      createdAt: r.created_at,
+    }));
+
+    return {
+      success: true,
+      analytics: {
+        dailySeries7d,
+        dailySeries30d,
+        paymentBreakdown,
+        topDistricts,
+        recentOrders,
+      },
+    };
+  } catch (err: unknown) {
+    console.error('[AdminDashboardAnalytics] Error:', err);
+    return { success: false, analytics: emptyAnalytics };
+  }
+}
