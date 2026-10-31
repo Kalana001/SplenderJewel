@@ -16,6 +16,7 @@ import {
   Sliders,
   FileText,
   BarChart3,
+  Banknote,
   Settings,
   ShieldCheck,
   History,
@@ -41,6 +42,7 @@ export function AdminSidebar({ mobileOpen, onCloseMobile }: AdminSidebarProps) {
       items: [
         { label: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
         { label: 'Analytics & Reports', href: '/admin/reports', icon: BarChart3 },
+        { label: 'Profit Allocation & Treasury', href: '/admin/profit-allocation', icon: Banknote },
       ],
     },
     {
